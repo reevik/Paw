@@ -37,7 +37,7 @@ function save() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => invoke("save_settings", { settings }).catch((e) => console.error(e)), 250);
 }
-const current = () => settings.agents.find((a) => a.id === selectedId);
+const current = () => settings?.agents.find((a) => a.id === selectedId);
 
 // ---------- general ----------
 function renderGeneral() {
@@ -237,8 +237,10 @@ $("d-skills-delivery").addEventListener("change", (e) => { current().skills_deli
 // ---------- Hive Agent ----------
 // The API key goes straight to the Keychain; Settings never reads it back.
 let keyStatus = null;
+let keySources = null; // where an Anthropic key was found (never the key)
 async function refreshKeyStatus() {
   try { keyStatus = await invoke("hive_key_status"); } catch { keyStatus = {}; }
+  try { keySources = await invoke("hive_key_sources"); } catch { keySources = []; }
   const a = current();
   if (a?.io === "hive") renderHive(a);
 }
@@ -253,8 +255,44 @@ function renderHive(a) {
   $("d-keystatus").textContent = keyStatus == null ? "Checking the Keychain…"
     : has ? "A key is saved in your Keychain. Enter a new one to replace it." : "No key yet. It's stored in your macOS Keychain, never in Hive's settings.";
   $("d-keydel").disabled = !has;
+  renderKeySources(a);
   renderAllowed(a);
 }
+
+function renderKeySources(a) {
+  const sel = $("d-keysource");
+  const list = keySources ?? [];
+  const usable = list.filter((k) => k.usable);
+  const name = (k) => `${k.label} — ${k.detail}`;
+  sel.innerHTML = "";
+  const add = (value, text, disabled = false) => {
+    const o = document.createElement("option");
+    o.value = value; o.textContent = text; o.disabled = disabled;
+    sel.appendChild(o);
+  };
+  add("", keySources == null ? "Automatic (looking…)" : usable.length ? `Automatic — ${name(usable[0])}` : "Automatic — no usable key found yet");
+  for (const k of usable) add(k.id, name(k));
+  // A saved choice that isn't there any more stays visible, so it can be changed.
+  if (a.key_source && !usable.some((k) => k.id === a.key_source)) add(a.key_source, `${a.key_source} (not found now)`);
+  sel.value = a.key_source || "";
+  const ul = $("d-keysources");
+  ul.innerHTML = "";
+  if (keySources != null && !list.length) {
+    ul.innerHTML = `<li><span class="ks-mark no">–</span><span class="ks-text">No Anthropic key found in your shell, Claude Code or opencode.</span></li>`;
+  }
+  for (const k of list) {
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="ks-mark ${k.usable ? "ok" : "no"}">${k.usable ? "✓" : "✕"}</span>` +
+      `<span class="ks-text">${esc(name(k))}${k.note ? `<span class="ks-note">${esc(k.note)}</span>` : ""}</span>`;
+    ul.appendChild(li);
+  }
+}
+$("d-keysource").addEventListener("change", (e) => {
+  const a = current();
+  a.key_source = e.target.value;
+  save();
+  rescan();
+});
 $("d-provider").addEventListener("change", (e) => {
   const a = current();
   a.provider = e.target.value;
@@ -371,6 +409,7 @@ $("a-rescan").onclick = rescan;
 
 listen("agents:detected", ({ payload }) => {
   detections = payload;
+  refreshKeyStatus(); // a key set up since may be there now
   setScanning(false);
   renderGeneral();
   renderList();

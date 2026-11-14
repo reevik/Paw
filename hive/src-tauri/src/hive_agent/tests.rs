@@ -550,3 +550,41 @@ fn start_sends_nothing_before_it_returns() {
     assert!(started.lines[0].1.starts_with(r#"{"type":"system","subtype":"init""#));
     assert_eq!(started.info.status, Status::Running);
 }
+
+/// What reaches the server: an API key as `x-api-key`, an auth token as
+/// `Authorization: Bearer`, at the address that came with it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn anthropic_credentials_on_the_wire() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    async fn capture(cred: keys::Credential) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 65536];
+            let mut got = Vec::new();
+            loop {
+                let n = sock.read(&mut buf).await.unwrap();
+                got.extend_from_slice(&buf[..n]);
+                if n == 0 || got.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let body = r#"{"type":"error","error":{"type":"authentication_error","message":"test"}}"#;
+            let resp = format!("HTTP/1.1 401 Unauthorized\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len());
+            let _ = sock.write_all(resp.as_bytes()).await;
+            String::from_utf8_lossy(&got).to_lowercase()
+        });
+        let model = make_model("anthropic", "claude-sonnet-5-5", &format!("http://{addr}"), Some(cred)).unwrap();
+        let agent = AgentBuilder::new(model).max_tokens(16).build();
+        assert!(agent.prompt("hi").await.is_err(), "the fake server refuses");
+        server.await.unwrap()
+    }
+    let key = capture(keys::Credential { secret: "sk-test-key".into(), bearer: false, base_url: None, source: "t".into() }).await;
+    assert!(key.starts_with("post /v1/messages"), "{key}");
+    assert!(key.contains("x-api-key: sk-test-key"), "{key}");
+    assert!(!key.contains("authorization:"), "{key}");
+    let token = capture(keys::Credential { secret: "tok-test".into(), bearer: true, base_url: None, source: "t".into() }).await;
+    assert!(token.contains("authorization: bearer tok-test"), "{token}");
+    assert!(!token.contains("x-api-key"), "{token}");
+}

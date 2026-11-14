@@ -252,7 +252,14 @@
             <p class="hint" id="d-baseurl-hint"></p>
           </div>
 
-          <label for="d-apikey" class="d-anthropic-only">API key</label>
+          <label for="d-keysource" class="d-anthropic-only">Key from</label>
+          <div class="d-anthropic-only">
+            <select id="d-keysource"></select>
+            <ul class="key-sources" id="d-keysources"></ul>
+            <p class="hint">Hive looks where other tools keep an Anthropic key: your login shell, Claude Code, opencode. It reads the key from there when a session starts and never copies it.</p>
+          </div>
+
+          <label for="d-apikey" class="d-anthropic-only">Hive's own key</label>
           <div class="d-anthropic-only">
             <form class="key-row" id="d-keyform" autocomplete="off">
               <input id="d-apikey" type="password" spellcheck="false" autocomplete="off" placeholder="sk-ant-…" />

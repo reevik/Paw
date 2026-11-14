@@ -800,18 +800,30 @@ pub fn split_provider<'a>(provider: &'a str, model: &'a str) -> (&'a str, &'a st
     (if provider == "anthropic" { "anthropic" } else { "ollama" }, model)
 }
 
-pub fn make_model(provider: &str, model: &str, base_url: &str, api_key: Option<String>) -> Result<DynModel<Completion>, String> {
+/// The Anthropic configuration for a credential: `x-api-key`, or a
+/// gateway's auth token as `Authorization: Bearer`.
+pub fn anthropic_config(cred: &keys::Credential, base_url: &str) -> rig_core::providers::anthropic::AnthropicConfig {
+    use rig_core::providers::anthropic::{wire::Auth, AnthropicConfig, ANTHROPIC};
+    let mut cfg = if cred.bearer {
+        let mut dialect = ANTHROPIC;
+        dialect.quirks.auth = Auth::OptionalBearer;
+        AnthropicConfig::with_key(&dialect, cred.secret.clone())
+    } else {
+        AnthropicConfig::new(cred.secret.clone())
+    };
+    if !base_url.trim().is_empty() {
+        cfg = cfg.with_base_url(base_url.trim());
+    }
+    cfg
+}
+
+pub fn make_model(provider: &str, model: &str, base_url: &str, cred: Option<keys::Credential>) -> Result<DynModel<Completion>, String> {
     match provider {
         "anthropic" => {
-            use rig_core::providers::anthropic::AnthropicConfig;
-            let key = api_key.filter(|k| !k.is_empty()).ok_or(
+            let cred = cred.filter(|c| !c.secret.is_empty()).ok_or(
                 "No Anthropic API key yet — add one in Settings › Agents › Hive Agent (it's kept in your Keychain).",
             )?;
-            let mut cfg = AnthropicConfig::new(key);
-            if !base_url.trim().is_empty() {
-                cfg = cfg.with_base_url(base_url.trim());
-            }
-            Ok(cfg.client().completion(model).into())
+            Ok(anthropic_config(&cred, base_url).client().completion(model).into())
         }
         _ => {
             use rig_core::providers::ollama::OllamaConfig;
@@ -955,6 +967,9 @@ pub struct StartOpts {
     /// The conversation to continue, if any.
     #[serde(default)]
     pub session: Option<String>,
+    /// Where the Anthropic key comes from (keys::list ids; empty: automatic).
+    #[serde(default)]
+    pub key_source: String,
 }
 
 fn valid_conversation_id(s: &str) -> bool {
@@ -978,21 +993,28 @@ pub async fn hive_agent_start(
     if model.is_empty() {
         return Err("Hive Agent needs a model — pick one with /model (Ollama models with tool support are listed).".into());
     }
-    let base_url = if opts.base_url.trim().is_empty() && provider == "ollama" { DEFAULT_OLLAMA_URL.to_string() } else { opts.base_url.trim().to_string() };
+    let mut base_url = if opts.base_url.trim().is_empty() && provider == "ollama" { DEFAULT_OLLAMA_URL.to_string() } else { opts.base_url.trim().to_string() };
     let approval = if ["ask", "edits", "plan", "full"].contains(&opts.approval.as_str()) { opts.approval.clone() } else { "edits".into() };
 
     let app2 = app.clone();
-    let (cwd2, provider2, model2, base2, approval2) = (cwd.clone(), provider.clone(), model.clone(), base_url.clone(), approval.clone());
-    // Keychain, `ollama show` and the skill folders: off the async threads.
-    let (api_key, tools, preamble) = tauri::async_runtime::spawn_blocking(move || {
-        let key = (provider2 == "anthropic").then(|| keychain::get("anthropic")).flatten();
+    let (cwd2, provider2, model2, base2, approval2, source2) =
+        (cwd.clone(), provider.clone(), model.clone(), base_url.clone(), approval.clone(), opts.key_source.clone());
+    // Keys, `ollama show` and the skill folders: off the async threads.
+    let (cred, tools, preamble) = tauri::async_runtime::spawn_blocking(move || {
+        let cred = (provider2 == "anthropic").then(|| keys::resolve(&keys::System, &source2)).transpose()?;
         let tools = provider2 == "anthropic" || ollama_supports_tools(&base2, &model2).unwrap_or(true);
         let skills = crate::skills::agent_skills_index(&app2, &cwd2);
-        (key, tools, build_preamble(&cwd2, &approval2, tools, &skills))
+        Ok::<_, String>((cred, tools, build_preamble(&cwd2, &approval2, tools, &skills)))
     })
     .await
-    .map_err(|e| e.to_string())?;
-    let model_handle = make_model(&provider, &model, &base_url, api_key)?;
+    .map_err(|e| e.to_string())??;
+    // The agent's own address wins; else the one that came with the key.
+    if base_url.is_empty() {
+        if let Some(b) = cred.as_ref().and_then(|c| c.base_url.clone()) {
+            base_url = b;
+        }
+    }
+    let model_handle = make_model(&provider, &model, &base_url, cred)?;
 
     let conversation = opts.session.filter(|s| valid_conversation_id(s)).unwrap_or_else(new_conversation_id);
     let history_path = crate::paths::config_dir(&app).map(|d| d.join("hive-agent").join(format!("{conversation}.json")));
@@ -1051,6 +1073,12 @@ pub async fn hive_agent_approve(
     hive.approve(id, request, &decision, rule)
 }
 
+/// Where an Anthropic key was found on this Mac (never the key itself).
+#[tauri::command]
+pub async fn hive_key_sources() -> Result<Vec<keys::KeySource>, String> {
+    tauri::async_runtime::spawn_blocking(|| keys::list(&keys::System)).await.map_err(|e| e.to_string())
+}
+
 /// Which providers have an API key in the Keychain (never the key itself).
 #[tauri::command]
 pub async fn hive_key_status() -> Result<HashMap<String, bool>, String> {
@@ -1075,6 +1103,8 @@ pub async fn hive_key_set(provider: String, key: String) -> Result<(), String> {
 pub async fn hive_key_delete(provider: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || keychain::delete(&provider)).await.map_err(|e| e.to_string())?
 }
+
+pub mod keys;
 
 #[cfg(test)]
 mod tests;

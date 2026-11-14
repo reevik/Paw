@@ -119,6 +119,14 @@ body.prefs { display: flex; flex-direction: column; height: 100vh; }
 .models input[type="radio"] { accent-color: var(--accent); margin: 0; }
 .add-model { display: flex; gap: 8px; }
 .key-row { display: flex; gap: 8px; }
+#d-keysource { width: 100%; }
+.key-sources { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.key-sources li { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
+.key-sources .ks-mark { flex: 0 0 auto; width: 1em; text-align: center; }
+.key-sources .ks-mark.ok { color: var(--green, #2a9d4b); }
+.key-sources .ks-mark.no { color: var(--text-3); }
+.key-sources .ks-text { min-width: 0; }
+.key-sources .ks-note { color: var(--text-3); display: block; }
 .key-row input { flex: 1; min-width: 0; }
 .cmd-preview {
   font: 11px/1.5 var(--mono); padding: 7px 9px; border-radius: 7px; background: var(--card-2);

@@ -120,7 +120,7 @@ function renderList() {
 
 // ---------- agent detail ----------
 // True when {model} appears outside an optional [[ ]] segment.
-const needsModel = (a) => /\{model\}/.test(a.template.replace(/\[\[[\s\S]*?\]\]/g, ""));
+const needsModel = (a) => a.io === "hive" || /\{model\}/.test(a.template.replace(/\[\[[\s\S]*?\]\]/g, ""));
 function allModels(a) {
   const d = detections[a.id];
   const found = d?.models ?? [];
@@ -143,7 +143,8 @@ function renderDetail() {
   $("d-name").readOnly = a.builtin;
   $("d-enabled").checked = a.enabled;
 
-  if (!d) $("d-status").innerHTML = `<span class="missing">Checking…</span>`;
+  if (a.io === "hive") $("d-status").innerHTML = `<span class="ok">● Built into Hive</span><span>· ${esc(a.provider === "anthropic" ? "Anthropic" : "Ollama")}</span>`;
+  else if (!d) $("d-status").innerHTML = `<span class="missing">Checking…</span>`;
   else if (!d.installed) $("d-status").innerHTML = `<span class="missing">Not found on your PATH</span> <span>· looked for <code>${esc(a.binary)}</code></span>`;
   else $("d-status").innerHTML = `<span class="ok">● Installed</span>${d.version ? `<span>· ${esc(d.version)}</span>` : ""}<span>· <code>${esc(d.path)}</code></span>`;
 
@@ -158,6 +159,12 @@ function renderDetail() {
       custom: a.custom_models.includes(m) && !(d?.models ?? []).includes(m),
     }));
   }
+
+  // Hive Agent: provider instead of a command line
+  const hive = a.io === "hive";
+  $("d-hive").classList.toggle("hidden", !hive);
+  $("d-command").classList.toggle("hidden", hive);
+  if (hive) { renderHive(a); return; }
 
   // Command
   $("d-binary").value = a.binary;
@@ -226,6 +233,56 @@ $("d-continuity").addEventListener("change", (e) => { current().continuity = e.t
 $("d-allow").addEventListener("input", (e) => { current().allow_template = e.target.value; save(); });
 $("d-skills").addEventListener("input", (e) => { current().skills_template = e.target.value; save(); });
 $("d-skills-delivery").addEventListener("change", (e) => { current().skills_delivery = e.target.value; save(); });
+
+// ---------- Hive Agent ----------
+// The API key goes straight to the Keychain; Settings never reads it back.
+let keyStatus = null;
+async function refreshKeyStatus() {
+  try { keyStatus = await invoke("hive_key_status"); } catch { keyStatus = {}; }
+  const a = current();
+  if (a?.io === "hive") renderHive(a);
+}
+function renderHive(a) {
+  const anthropic = a.provider === "anthropic";
+  $("d-provider").value = anthropic ? "anthropic" : "ollama";
+  $("d-baseurl").value = a.base_url || "";
+  $("d-baseurl").placeholder = anthropic ? "https://api.anthropic.com" : "http://localhost:11434";
+  $("d-baseurl-hint").textContent = anthropic ? "Leave empty for Anthropic's API." : "Leave empty for the Ollama on this Mac.";
+  document.querySelectorAll(".d-anthropic-only").forEach((el) => el.classList.toggle("hidden", !anthropic));
+  const has = keyStatus?.anthropic;
+  $("d-keystatus").textContent = keyStatus == null ? "Checking the Keychain…"
+    : has ? "A key is saved in your Keychain. Enter a new one to replace it." : "No key yet. It's stored in your macOS Keychain, never in Hive's settings.";
+  $("d-keydel").disabled = !has;
+  renderAllowed(a);
+}
+$("d-provider").addEventListener("change", (e) => {
+  const a = current();
+  a.provider = e.target.value;
+  a.default_model = null;
+  save();
+  renderDetail();
+  rescan();
+});
+$("d-baseurl").addEventListener("input", (e) => { current().base_url = e.target.value.trim(); save(); });
+$("d-baseurl").addEventListener("change", () => rescan());
+$("d-keyform").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const v = $("d-apikey").value.trim();
+  if (!v) return;
+  try {
+    await invoke("hive_key_set", { provider: "anthropic", key: v });
+    $("d-apikey").value = "";
+  } catch (err) { $("d-keystatus").textContent = `Couldn't save the key: ${err}`; return; }
+  await refreshKeyStatus();
+  rescan();
+});
+$("d-keydel").onclick = async () => {
+  if (!confirm("Remove the Anthropic API key from your Keychain?")) return;
+  try { await invoke("hive_key_delete", { provider: "anthropic" }); } catch (err) { $("d-keystatus").textContent = String(err); return; }
+  await refreshKeyStatus();
+  rescan();
+};
+refreshKeyStatus();
 
 /** Actions the user chose "Always in this folder" for, on approval cards. */
 function renderAllowed(a) {

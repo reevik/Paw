@@ -68,6 +68,12 @@ pub struct AgentConfig {
     /// skills' text itself (agents that can't open files).
     #[serde(default)]
     pub skills_delivery: String,
+    /// Hive Agent only: "ollama" or "anthropic".
+    #[serde(default)]
+    pub provider: String,
+    /// Hive Agent only: the provider's address (empty: its default).
+    #[serde(default)]
+    pub base_url: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -200,7 +206,20 @@ fn builtin_with(id: &str, name: &str, binary: &str, template: &str, io: &str, co
         allow_template: String::new(),
         skills_template: Some(String::new()),
         skills_delivery: "index".into(),
+        provider: String::new(),
+        base_url: String::new(),
     }
+}
+
+/// Init event Hive Agent (and Claude Code) print first; group 1 is the session id.
+const INIT_SESSION_PATTERN: &str = r#"^\{"type":"system","subtype":"init".*?"session_id":"([0-9a-fA-F-]{8,})""#;
+
+/// Hive's own agent: runs inside Hive (io "hive"), no binary or template.
+fn hive_agent() -> AgentConfig {
+    let mut a = builtin_with("hive", "Hive Agent", "", "", "hive", "session", INIT_SESSION_PATTERN)
+        .with_approvals(&[("ask", "ask"), ("edits", "edits"), ("plan", "plan"), ("full", "full")]);
+    a.provider = "ollama".into();
+    a
 }
 
 impl AgentConfig {
@@ -235,7 +254,7 @@ pub fn catalog() -> Vec<AgentConfig> {
             "{bin} -p --input-format stream-json --output-format stream-json --verbose [[--permission-mode {permission}]] [[--model {model}]] [[--resume {session}]]",
             "claude-stream-json",
             "session",
-            r#"^\{"type":"system","subtype":"init".*?"session_id":"([0-9a-fA-F-]{8,})""#,
+            INIT_SESSION_PATTERN,
         )
         // Claude Code's --permission-mode choices for Hive's approval levels.
         .with_approvals(&[("ask", "manual"), ("edits", "acceptEdits"), ("plan", "plan"), ("full", "bypassPermissions")])
@@ -266,6 +285,7 @@ pub fn catalog() -> Vec<AgentConfig> {
         builtin("qwen", "Qwen Code", "qwen", "{bin} [[-m {model}]] -p {prompt}", "text"),
         builtin("goose", "Goose", "goose", "{bin} run -t {prompt}", "text"),
         builtin("ollama", "Ollama", "ollama", "{bin} run {model} {prompt}", "text").skills_inline(),
+        hive_agent(),
     ]
 }
 
@@ -294,7 +314,7 @@ fn suggested_models(id: &str) -> &'static [&'static str] {
 // ---------------------------------------------------------------------------
 
 fn settings_path(app: &AppHandle) -> Option<PathBuf> {
-    app.path().app_config_dir().ok().map(|d| d.join("settings.json"))
+    crate::paths::config_dir(&app).map(|d| d.join("settings.json"))
 }
 
 /// Templates earlier versions of Hive shipped. A saved built-in agent whose
@@ -334,6 +354,14 @@ fn migrate_agents(agents: &mut [AgentConfig]) {
         }
         if a.skills_delivery.is_empty() {
             a.skills_delivery = def.skills_delivery.clone();
+        }
+        if a.io == "hive" {
+            a.continuity = def.continuity.clone();
+            a.session_pattern = def.session_pattern.clone();
+            if a.provider.is_empty() {
+                a.provider = def.provider.clone();
+            }
+            continue;
         }
         if !pristine && a.continuity.is_empty() {
             // Edited template: keep it, and fall back to Hive's own history.
@@ -442,6 +470,82 @@ fn run_timeout(program: &str, args: &[&str], timeout: Duration) -> Option<String
     let o = t_out.join().unwrap_or_default();
     let e = t_err.join().unwrap_or_default();
     Some(if o.trim().is_empty() { e } else { o })
+}
+
+/// Run a program found on the login PATH with extra environment variables.
+pub fn run_with_env(binary: &str, args: &[&str], env: &[(&str, &str)], timeout: Duration) -> Option<String> {
+    let path = which(binary)?;
+    let mut cmd = Command::new(&path);
+    cmd.args(args)
+        .env("PATH", login_path())
+        .env("NO_COLOR", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    for (k, v) in env {
+        if !v.is_empty() {
+            cmd.env(k, v);
+        }
+    }
+    let mut child = cmd.spawn().ok()?;
+    let start = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if start.elapsed() > timeout => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            Ok(None) => thread::sleep(Duration::from_millis(30)),
+            Err(_) => return None,
+        }
+    }
+    let mut out = String::new();
+    child.stdout.take()?.read_to_string(&mut out).ok()?;
+    Some(out)
+}
+
+/// Hive Agent: built in, so always available. Its models are the
+/// provider's: Ollama's that can call tools, or Anthropic's.
+fn detect_hive(cfg: &AgentConfig) -> Detection {
+    let mut d = Detection { installed: true, version: Some("built-in".into()), ..Default::default() };
+    if cfg.provider == "anthropic" {
+        d.models = crate::hive_agent::ANTHROPIC_MODELS.iter().map(|m| m.to_string()).collect();
+        let key = crate::hive_agent::keychain::get("anthropic").is_some();
+        d.models_source = if key { "Anthropic API (key in Keychain)".into() } else { "Anthropic API — no API key yet, add one in Settings".into() };
+        return d;
+    }
+    let host = if cfg.base_url.trim().is_empty() { crate::hive_agent::DEFAULT_OLLAMA_URL } else { cfg.base_url.trim() };
+    let Some(list) = run_with_env("ollama", &["list"], &[("OLLAMA_HOST", host)], Duration::from_secs(15)) else {
+        d.models_source = "Ollama not found — install it, or switch Hive Agent to Anthropic in Settings".into();
+        return d;
+    };
+    let names: Vec<String> = list.lines().skip(1).filter_map(|l| l.split_whitespace().next()).map(String::from).collect();
+    let host = host.to_string();
+    let checks: Vec<_> = names
+        .into_iter()
+        .map(|m| {
+            let host = host.clone();
+            thread::spawn(move || {
+                let tools = crate::hive_agent::ollama_supports_tools(&host, &m);
+                (m, tools)
+            })
+        })
+        .collect();
+    let (mut with, mut without) = (vec![], vec![]);
+    for h in checks {
+        if let Ok((m, tools)) = h.join() {
+            if tools == Some(false) { without.push(m) } else { with.push(m) }
+        }
+    }
+    d.models = with;
+    d.models_source = if without.is_empty() {
+        "ollama list (models with tool support)".into()
+    } else {
+        format!("ollama list (models with tool support; left out: {})", without.join(", "))
+    };
+    d
 }
 
 fn which(binary: &str) -> Option<String> {
@@ -556,6 +660,9 @@ fn discover_models(id: &str, path: &str) -> (Vec<String>, String, Option<String>
 }
 
 fn detect_one(cfg: &AgentConfig) -> Detection {
+    if cfg.io == "hive" {
+        return detect_hive(cfg);
+    }
     let Some(path) = which(&cfg.binary) else {
         return Detection { models_source: "not installed".into(), ..Default::default() };
     };
@@ -836,6 +943,26 @@ mod tests {
     }
 
     #[test]
+    fn hive_agent_in_catalog_and_migrated() {
+        let h = catalog().into_iter().find(|a| a.id == "hive").expect("Hive Agent in the catalog");
+        assert_eq!((h.io.as_str(), h.continuity.as_str(), h.provider.as_str()), ("hive", "session", "ollama"));
+        assert_eq!(h.approvals.get("edits").map(String::as_str), Some("edits"));
+        // Settings saved by this version, read back; and a damaged entry gets its defaults again.
+        let json = serde_json::to_string(&h).unwrap();
+        let mut saved: AgentConfig = serde_json::from_str(&json).unwrap();
+        saved.continuity.clear();
+        saved.provider.clear();
+        let mut v = vec![saved];
+        migrate_agents(&mut v);
+        assert_eq!((v[0].continuity.as_str(), v[0].provider.as_str()), ("session", "ollama"));
+        assert!(v[0].session_pattern.contains("session_id"));
+        // Settings from before Hive Agent existed still load (no provider/base_url fields).
+        let old = r#"{"id":"x","name":"X","binary":"x","template":"{bin} {prompt}","io":"text","enabled":true,"builtin":false}"#;
+        let a: AgentConfig = serde_json::from_str(old).unwrap();
+        assert_eq!((a.provider.as_str(), a.base_url.as_str()), ("", ""));
+    }
+
+    #[test]
     fn required_model() {
         assert!(render("{bin} run {model} {prompt}", &vals("hi", "")).is_err());
     }
@@ -868,7 +995,7 @@ mod scan_tests {
 // ---------------------------------------------------------------------------
 
 fn workspace_path(app: &AppHandle) -> Option<PathBuf> {
-    app.path().app_config_dir().ok().map(|d| d.join("workspace.json"))
+    crate::paths::config_dir(&app).map(|d| d.join("workspace.json"))
 }
 
 #[tauri::command]

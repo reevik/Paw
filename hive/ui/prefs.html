@@ -237,7 +237,37 @@
         </form>
       </div>
 
-      <div class="group">
+      <div class="group hidden" id="d-hive">
+        <div class="group-head"><h4>Provider</h4></div>
+        <div class="form-grid tight">
+          <label for="d-provider">Models from</label>
+          <select id="d-provider">
+            <option value="ollama">Ollama — local models on this Mac</option>
+            <option value="anthropic">Anthropic — Claude models with your API key</option>
+          </select>
+
+          <label for="d-baseurl">Address</label>
+          <div>
+            <input id="d-baseurl" spellcheck="false" />
+            <p class="hint" id="d-baseurl-hint"></p>
+          </div>
+
+          <label for="d-apikey" class="d-anthropic-only">API key</label>
+          <div class="d-anthropic-only">
+            <form class="key-row" id="d-keyform" autocomplete="off">
+              <input id="d-apikey" type="password" spellcheck="false" autocomplete="off" placeholder="sk-ant-…" />
+              <button class="btn-ghost small" type="submit">Save</button>
+              <button class="btn-ghost small" type="button" id="d-keydel">Remove</button>
+            </form>
+            <p class="hint" id="d-keystatus"></p>
+          </div>
+
+          <span>How it works</span>
+          <p class="hint">Hive Agent runs inside Hive: it reads, searches and edits files in the tab's folder and runs commands there, asking first as the tab's approval level says (<code>/approval</code>). Ollama models need tool support (<code>ollama show &lt;model&gt;</code> lists “tools”); the list above only shows those. A model written <code>anthropic/…</code> or <code>ollama/…</code> uses that provider.</p>
+        </div>
+      </div>
+
+      <div class="group" id="d-command">
         <div class="group-head"><h4>Command</h4></div>
         <div class="form-grid tight">
           <label for="d-binary">Executable</label>
@@ -282,11 +312,6 @@
             <p class="hint">How this agent gets the skills from the External folders in the sidebar. With a flag, <code>{skills}</code> is a plugin folder Hive keeps up to date. Without one, Hive tells the agent about them in the conversation: a list it can read from, or — for agents that can't open files — the instructions themselves.</p>
           </div>
 
-          <span class="d-allowed-only">Always allowed</span>
-          <div class="d-allowed-only">
-            <ul class="allowed-list" id="d-allowed"></ul>
-          </div>
-
           <label for="d-continuity">Conversation</label>
           <div>
             <select id="d-continuity">
@@ -306,6 +331,11 @@
           <span>Preview</span>
           <code class="cmd-preview" id="d-preview"></code>
         </div>
+      </div>
+
+      <div class="group d-allowed-only">
+        <div class="group-head"><h4>Always allowed</h4></div>
+        <ul class="allowed-list" id="d-allowed"></ul>
       </div>
 
       <div class="detail-footer">

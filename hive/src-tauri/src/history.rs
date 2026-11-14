@@ -14,7 +14,7 @@ pub struct History {
 }
 
 fn history_path(app: &AppHandle) -> Option<PathBuf> {
-    app.path().app_config_dir().ok().map(|d| d.join("shell_history.json"))
+    crate::paths::config_dir(&app).map(|d| d.join("shell_history.json"))
 }
 
 fn limit(app: &AppHandle) -> usize {

@@ -45,9 +45,14 @@ function fmtElapsed(ms) {
 }
 
 // ---------- registry ----------
-const needsModel = (a) => /\{model\}/.test(a.template.replace(/\[\[[\s\S]*?\]\]/g, ""));
+/** Hive Agent: Hive's own agent, running inside Hive (no process). */
+const isHive = (a) => a?.io === "hive";
+const needsModel = (a) => isHive(a) || /\{model\}/.test(a.template.replace(/\[\[[\s\S]*?\]\]/g, ""));
+// Hive Agent speaks the same events as Claude Code's stream-json.
 const sessionMode = (a) =>
-  a.io === "claude-stream-json" ? "claude" : a.template.includes("{prompt}") ? "oneshot" : "stdin";
+  a.io === "claude-stream-json" || isHive(a) ? "claude" : a.template.includes("{prompt}") ? "oneshot" : "stdin";
+/** Whether the agent can follow Hive's approval levels (/approval). */
+const hasLevels = (a) => isHive(a) || a.template.includes("{permission}");
 
 function availableAgents() {
   return settings.agents
@@ -131,7 +136,8 @@ async function newSession(agentId, opts = {}) {
 
 function banner(S) {
   const d = detections[S.agent.id];
-  const ver = d?.version ? ` <span class="dim">${esc(d.version)}</span>` : "";
+  const ver = isHive(S.agent) ? ` <span class="dim">built-in · ${esc(S.agent.provider === "anthropic" ? "Anthropic" : "Ollama")}</span>`
+    : d?.version ? ` <span class="dim">${esc(d.version)}</span>` : "";
   info(S,
     `<b>${esc(S.agent.name)}</b>${ver}\n` +
     `<span class="dim">model</span> ${esc(S.model || "default")}  <span class="dim">cwd</span> ${esc(tildify(S.cwd))}\n` +
@@ -142,6 +148,7 @@ function banner(S) {
 const shq = (s) => (/^[\w\-./:=@+,]+$/.test(s) ? s : "'" + s.replace(/'/g, `'\\''`) + "'");
 
 async function startProc(S, prompt, { resume = false } = {}) {
+  if (isHive(S.agent)) return hiveStart(S, { resume });
   try {
     // Which session to continue: a long-lived agent only when asked to resume
     // (restart, /model…); a one-shot agent on every prompt after the first.
@@ -178,7 +185,64 @@ async function startProc(S, prompt, { resume = false } = {}) {
 }
 
 async function stopProc(S, force = false) {
-  if (isRunning(S)) await invoke("stop_agent", { id: S.proc, force });
+  if (!isRunning(S)) return;
+  if (isHive(S.agent)) await invoke("hive_agent_close", { id: S.proc }).catch(() => {});
+  else await invoke("stop_agent", { id: S.proc, force });
+}
+
+// ---------- Hive Agent ----------
+// A session lives in the Hive process. Its conversation is saved there after
+// every prompt (by S.session), so restarts and a new Hive continue it.
+async function hiveStart(S, { resume = false } = {}) {
+  try {
+    const ext = await externalSetup();
+    S.skillsSig = ext.signature; // its system prompt lists the skills
+    const saved = (settings.allow_rules ?? []).filter((r) => r.agent === S.agent.id && r.folder === S.cwd).map((r) => r.rule);
+    const pinfo = await invoke("hive_agent_start", { opts: {
+      name: `${S.agent.name} — ${basename(S.cwd)}`,
+      provider: S.agent.provider || "ollama",
+      model: S.model || "",
+      base_url: S.agent.base_url || "",
+      cwd: S.cwd,
+      approval: S.approval,
+      allow_rules: saved,
+      session: resume && S.session ? S.session : null,
+    } });
+    S.runWithSession = !!(resume && S.session);
+    S.resuming = false;
+    S.proc = pinfo.id;
+    S.info = pinfo;
+    S.agentCwd = S.cwd;
+    procToSid.set(pinfo.id, S.sid);
+  } catch (e) {
+    sys(S, `✗ ${e}`);
+  }
+  refresh(S);
+}
+
+listen("hive:delta", ({ payload: d }) => {
+  const S = sessions.get(procToSid.get(d.id));
+  if (!S || S.proc !== d.id) return;
+  S.partial = d.text || null;
+  S.partialMd = true;
+  inPane(S, () => renderPartial(S));
+});
+
+listen("hive:approval", ({ payload: r }) => {
+  const S = sessions.get(procToSid.get(r.id));
+  if (!S || S.proc !== r.id) return;
+  S.waitingApproval = (S.waitingApproval ?? 0) + 1;
+  addApprovalCard(S, { kind: "hive", proc: r.id, request: r.request, tool: r.tool, canAllow: true,
+    items: [{ label: r.label, rule: r.rule, broad: r.broad, detail: r.detail }] });
+  refresh(S);
+});
+
+/** Cards of a turn that ended (or of an earlier run) can't be answered any more. */
+function expireHiveCards(S) {
+  let n = 0;
+  for (const l of S.lines) if (l.stream === "approval" && l.kind === "hive" && l.state === "pending") { l.state = "expired"; n++; }
+  S.waitingApproval = 0;
+  if (n) { inPane(S, renderOutput); saveWorkspaceSoon(); }
 }
 
 /** Restart the agent process. `resume` continues the Claude conversation;
@@ -197,7 +261,7 @@ async function closeSession(sid) {
   const S = sessions.get(sid);
   if (!S) return;
   if (isBusy(S) && !confirm(`${S.agent.name} is still working. Close the tab and stop it?`)) return;
-  if (S.proc != null) invoke("remove_agent", { id: S.proc });
+  if (S.proc != null) invoke(isHive(S.agent) ? "hive_agent_close" : "remove_agent", { id: S.proc }).catch(() => {});
   disposeTerm(S);
   if (S.shell != null) { invoke("shell_close", { id: S.shell }); shellToSid.delete(S.shell); }
   const P = paneOf(S);
@@ -282,6 +346,20 @@ async function sendToAgent(S, text, atts = []) {
   // Echo the prompt (with its attachments) ourselves; the backend's copy of
   // the stdin line would carry the raw JSON / image data.
   pushLine(S, { stream: "stdin", text, attachments: atts, shared: ctx.count, skills: skillNote.count, ts: Date.now() });
+  if (isHive(S.agent)) {
+    S.busy = true;
+    S.busySince = Date.now();
+    refresh(S);
+    try {
+      // Attached files go as paths; the agent reads them (images too).
+      await invoke("hive_agent_send", { id: S.proc, text: withPaths(full, atts) });
+    } catch (e) {
+      S.busy = false;
+      sys(S, `✗ ${e}`);
+    }
+    refresh(S);
+    return;
+  }
   const payload = S.mode === "claude"
     ? JSON.stringify({ type: "user", message: { role: "user", content: claudeContent(full, atts) } })
     : withPaths(full, atts);
@@ -331,7 +409,7 @@ function helpHtml(S) {
     row("/model [name]", "show or switch the model (conversation continues)"),
     row("/agent [id]", "switch the agent in this tab (new conversation)"));
   const levels = approvalLevels(S.agent);
-  if (levels.length && S.agent.template.includes("{permission}")) {
+  if (levels.length && hasLevels(S.agent)) {
     out.push(row("/approval [level]", `how much ${name} may do on its own: ${levels.join(" · ")}`));
   }
   out.push(
@@ -415,14 +493,14 @@ async function slashCommand(S, line) {
     case "/approval": {
       echo();
       const levels = approvalLevels(S.agent);
-      if (!levels.length || !S.agent.template.includes("{permission}")) {
+      if (!levels.length || !hasLevels(S.agent)) {
         info(S, `<span class="dim">${esc(S.agent.name)} has no approval levels set up. Add them in Settings › Agents › ${esc(S.agent.name)} › Approval levels.</span>`);
         return true;
       }
       if (!arg || !levels.includes(arg)) {
         if (arg) sys(S, `✗ ${S.agent.name} doesn't support "${arg}"`);
         info(S, levels.map((l) => (l === S.approval ? `<span class="ok">● ${l.padEnd(6)}</span>` : `<span class="dim">○</span> ${l.padEnd(6)}`) +
-          ` <span class="dim">${esc(APPROVAL_TEXT[l])}</span>`).join("\n"));
+          ` <span class="dim">${esc(approvalText(S.agent, l))}</span>`).join("\n"));
         return true;
       }
       S.approval = arg;
@@ -497,6 +575,7 @@ async function runShell(S, command) {
 async function interrupt(S) {
   if (S.raw && S.shell != null) return invoke("shell_write_raw", { id: S.shell, data: "\x03" });
   if (S.shellBusy && S.shell != null) return invoke("shell_interrupt", { id: S.shell });
+  if (isHive(S.agent)) return isRunning(S) && invoke("hive_agent_cancel", { id: S.proc }).catch(() => {});
   return stopProc(S);
 }
 
@@ -560,8 +639,11 @@ const APPROVAL_TEXT = {
   plan: "read-only: plan, don't change anything",
   full: "no confirmations at all — use with care",
 };
+/** Hive Agent asks instead of declining. */
+const HIVE_APPROVAL_TEXT = { ...APPROVAL_TEXT, ask: "asks before every file change and command", edits: "edits files on its own; asks before commands" };
+const approvalText = (agent, l) => (isHive(agent) ? HIVE_APPROVAL_TEXT : APPROVAL_TEXT)[l];
 const approvalLevels = (agent) => APPROVAL_LEVELS.filter((l) => agent.approvals?.[l]);
-const approvalValue = (S) => (S.agent.template.includes("{permission}") ? S.agent.approvals?.[S.levelOverride ?? S.approval] ?? "" : "");
+const approvalValue = (S) => (hasLevels(S.agent) ? S.agent.approvals?.[S.levelOverride ?? S.approval] ?? "" : "");
 const defaultApproval = () => settings.general.approval || "edits";
 /** Old workspaces stored Claude's mode names. */
 const approvalFromLegacy = (perm) =>
@@ -645,10 +727,10 @@ function renderPartial(S) {
   let el = out.querySelector(".partial-line");
   if (!S.partial) { el?.remove(); return; }
   if (!el) {
-    el = div("tl out partial partial-line");
+    el = div(S.partialMd ? "tl say md-msg partial partial-line" : "tl out partial partial-line");
     out.appendChild(el);
   }
-  el.innerHTML = ansi(S.partial);
+  el.innerHTML = S.partialMd ? `<span class="b">⏺</span><div class="md">${renderMarkdown(S.partial)}</div>` : ansi(S.partial);
   out.scrollTop = out.scrollHeight;
 }
 
@@ -663,6 +745,7 @@ listen("shell:output", ({ payload: o }) => {
   }
   if (o.partial != null) {
     S.partial = o.partial;
+    S.partialMd = false;
     inPane(S, () => renderPartial(S));
   }
 });
@@ -1310,7 +1393,8 @@ function persistableLine(l) {
   if (l.attachments) out.attachments = l.attachments.map((a) => ({ name: a.name, path: a.path, size: a.size }));
   if (l.shared) out.shared = l.shared;
   if (l.skills) out.skills = l.skills;
-  if (l.stream === "approval") Object.assign(out, { id: l.id, kind: l.kind, items: l.items, state: l.state, target: l.target, canAllow: l.canAllow, agentName: l.agentName });
+  if (l.stream === "approval") Object.assign(out, { id: l.id, kind: l.kind, items: l.items, state: l.state === "pending" && l.kind === "hive" ? "expired" : l.state,
+    target: l.target, canAllow: l.canAllow, agentName: l.agentName, tool: l.tool });
   return out;
 }
 
@@ -1476,6 +1560,7 @@ function checkApprovalText(S) {
 
 async function decideApproval(S, card, choice) {
   if (card.state !== "pending") return;
+  if (card.kind === "hive") return decideHive(S, card, choice);
   if (choice === "deny") {
     card.state = "denied";
     inPane(S, renderOutput);
@@ -1508,6 +1593,30 @@ async function decideApproval(S, card, choice) {
   await sendToAgent(S, `Approved: ${what}. Please go ahead and do it now.`);
 }
 
+/** Hive Agent waits on the tool call: the decision goes straight to it. */
+async function decideHive(S, card, choice) {
+  const it = card.items[0] ?? {};
+  const decision = choice === "denied" ? "deny" : choice;
+  try {
+    await invoke("hive_agent_approve", { id: card.proc, request: card.request, decision, rule: it.rule ?? null });
+    card.state = choice;
+  } catch (e) {
+    card.state = "expired";
+    sys(S, `✗ ${e}`);
+  }
+  S.waitingApproval = Math.max(0, (S.waitingApproval ?? 1) - 1);
+  if (choice === "always" && card.state === "always") {
+    settings.allow_rules ??= [];
+    if (!settings.allow_rules.some((r) => r.agent === S.agent.id && r.folder === S.cwd && r.rule === it.rule)) {
+      settings.allow_rules.push({ agent: S.agent.id, folder: S.cwd, rule: it.rule, label: it.broad ? "every file change" : it.label });
+      await invoke("save_settings", { settings }).catch(() => {});
+    }
+  }
+  inPane(S, renderOutput);
+  saveWorkspaceSoon();
+  refresh(S);
+}
+
 /** After the approved turn, a one-time allowance is withdrawn again. */
 async function endOnceAllowance(S) {
   if (!S.onceTurn) return;
@@ -1520,11 +1629,19 @@ async function endOnceAllowance(S) {
 function renderApprovalCard(S, l) {
   const el = div("tl approval-card " + l.state);
   const title = l.state === "pending"
-    ? (l.kind === "rules" ? `${esc(l.agentName)} needs your approval for:` : `${esc(l.agentName)} couldn't do something that needs approval.`)
-    : { once: "✓ Allowed once", always: "✓ Always allowed in this folder", denied: "✗ Denied" }[l.state] ?? "";
-  const list = (l.items ?? []).filter(() => l.kind === "rules")
-    .map((i) => `<div class="ap-item"><code>${esc(i.label)}</code>${i.broad && l.state === "pending" ? ` <span class="dim">(allows every ${esc(i.rule)} action)</span>` : ""}</div>`).join("");
+    ? (l.kind === "rules" || l.kind === "hive" ? `${esc(l.agentName)} needs your approval for:` : `${esc(l.agentName)} couldn't do something that needs approval.`)
+    : { once: "✓ Allowed once", always: "✓ Always allowed in this folder", denied: "✗ Denied",
+        expired: "— No longer waiting (the turn ended)" }[l.state] ?? "";
+  const hive = l.kind === "hive";
+  const broadText = (i) => (hive ? "allows every file change in this folder" : `allows every ${esc(i.rule)} action`);
+  const list = (l.items ?? []).filter(() => l.kind === "rules" || hive)
+    .map((i) => `<div class="ap-item"><code>${esc(i.label)}</code>${i.broad && l.state === "pending" ? ` <span class="dim">(“Always” ${broadText(i)})</span>` : ""}</div>`).join("");
   el.innerHTML = `<div class="ap-title"><span class="ap-icon">${l.state === "pending" ? "⚠" : ""}</span>${title}</div>${list}`;
+  // The change or command in full, folded.
+  const detail = hive && l.items?.[0]?.detail;
+  if (detail && detail !== l.items[0].label.replace(/^\$ /, "")) {
+    el.appendChild(fold("ap-detail", `<span class="dim">Show ${l.tool === "shell" ? "command" : "change"}</span>`, detail));
+  }
   if (l.state !== "pending") return el;
   const row = div("ap-actions");
   const btn = (label, choice, cls = "") => {
@@ -1534,7 +1651,7 @@ function renderApprovalCard(S, l) {
     b.onclick = (e) => { e.stopPropagation(); decideApproval(S, l, choice); };
     row.appendChild(b);
   };
-  if (l.kind === "rules" && l.canAllow) {
+  if ((l.kind === "rules" || hive) && l.canAllow) {
     btn("Allow once", "once", "primary");
     btn("Always in this folder", "always");
   } else if (l.kind === "level" && l.target) {
@@ -1681,7 +1798,7 @@ function refreshExternal() {
   return extPromise;
 }
 const externalSetup = () => (skills.ext ? Promise.resolve(skills.ext) : extPromise ?? refreshExternal());
-const nativeSkills = (S) => (S.agent.skills_template ?? "").includes("{skills}");
+const nativeSkills = (S) => isHive(S.agent) || (S.agent.skills_template ?? "").includes("{skills}");
 
 async function skillsArgs(S) {
   if (!nativeSkills(S)) return "";
@@ -2164,7 +2281,8 @@ function renderClaudeEvent(ev) {
       ev.duration_ms != null ? `${(ev.duration_ms / 1000).toFixed(1)}s` : "",
       ev.total_cost_usd != null ? `$${ev.total_cost_usd.toFixed(4)}` : "",
     ].filter(Boolean).join(" · ");
-    return div("tl done" + (ev.is_error ? " bad" : ""), `${ev.is_error ? "✗ Failed" : "✓ Done"}${bits ? " · " + bits : ""}`);
+    const head = ev.stopped ? "■ Stopped" : ev.is_error ? "✗ Failed" : "✓ Done";
+    return div("tl done" + (ev.is_error ? " bad" : ""), `${head}${bits ? " · " + bits : ""}`);
   }
   if (ev.type === "stream_event" || ev.type === "rate_limit_event") return null;
   // Other bookkeeping events (tool_progress, keep-alives…) from the same stream.
@@ -2181,7 +2299,8 @@ function renderBusy() {
   $("busy").classList.toggle("hidden", !busy);
   if (!busy) return;
   $("busy-spin").textContent = SPIN[spinFrame % SPIN.length];
-  $("busy-text").textContent = S.shellBusy ? `Running ${S.shellCmd}…` : S.mode === "claude" ? "Working…" : "Running…";
+  $("busy-text").textContent = S.shellBusy ? `Running ${S.shellCmd}…` : S.waitingApproval ? "Waiting for your approval…"
+    : S.mode === "claude" ? "Working…" : "Running…";
   $("busy-time").textContent = fmtElapsed(Date.now() - ((S.shellBusy ? S.shellSince : S.busySince) ?? Date.now()));
 }
 setInterval(() => { spinFrame++; for (const P of panes.values()) withPane(P, renderBusy); }, 90);
@@ -2241,7 +2360,14 @@ listen("agent:output", ({ payload: l }) => {
   if (S.mode === "oneshot" && l.stream === "system" && l.text === "Process exited with code 0") return;
   captureSession(S, l);
   if (S.mode === "claude" && l.stream === "stdout" && l.text.includes('"type":"result"')) {
-    try { if (JSON.parse(l.text).type === "result") { S.busy = false; refresh(S); setTimeout(() => reloadNativeSkills(S), 0); } } catch {}
+    try {
+      if (JSON.parse(l.text).type === "result") {
+        S.busy = false;
+        if (isHive(S.agent)) { expireHiveCards(S); S.partial = null; inPane(S, () => renderPartial(S)); }
+        refresh(S);
+        setTimeout(() => reloadNativeSkills(S), 0);
+      }
+    } catch {}
   }
   pushLine(S, l);
   checkDenials(S, l);

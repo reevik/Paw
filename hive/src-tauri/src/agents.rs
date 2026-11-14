@@ -66,6 +66,12 @@ pub struct AgentManager {
 }
 
 impl AgentManager {
+    /// A process id for the UI; Hive Agent sessions take theirs from here too,
+    /// so the two never collide.
+    pub fn alloc_id(&self) -> u32 {
+        self.next_id.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
     pub fn kill_all(&self) {
         let agents = self.agents.lock().unwrap();
         for a in agents.values() {
@@ -83,7 +89,7 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-fn expand_home(p: &str) -> PathBuf {
+pub fn expand_home(p: &str) -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
     if p.is_empty() || p == "~" {
         PathBuf::from(home)
@@ -311,7 +317,7 @@ pub fn spawn_agent(
     }
 
     let mut child = cmd.spawn().map_err(|e| format!("Failed to start: {e}"))?;
-    let id = state.next_id.fetch_add(1, Ordering::SeqCst) + 1;
+    let id = state.alloc_id();
     let info = AgentInfo {
         id,
         name: if name.trim().is_empty() { format!("Agent {id}") } else { name },

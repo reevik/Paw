@@ -10,7 +10,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 const MARKER: &str = ".hive-installed";
 
@@ -301,11 +301,11 @@ fn project_skills(cwd: &Path) -> (Vec<Skill>, Option<String>) {
 // ---------- catalogue ----------
 
 fn sources_file(app: &AppHandle) -> Option<PathBuf> {
-    app.path().app_config_dir().ok().map(|d| d.join("skill_sources.json"))
+    crate::paths::config_dir(&app).map(|d| d.join("skill_sources.json"))
 }
 
 fn clones_dir(app: &AppHandle) -> Option<PathBuf> {
-    app.path().app_data_dir().ok().map(|d| d.join("skill-catalogue"))
+    crate::paths::data_dir(&app).map(|d| d.join("skill-catalogue"))
 }
 
 fn load_sources(app: &AppHandle) -> Vec<SkillSource> {
@@ -547,7 +547,7 @@ pub async fn skills_remove_source(app: AppHandle, id: String) -> Result<(), Stri
 // them in the conversation.
 
 fn external_file(app: &AppHandle) -> Option<PathBuf> {
-    app.path().app_config_dir().ok().map(|d| d.join("external_skills.json"))
+    crate::paths::config_dir(&app).map(|d| d.join("external_skills.json"))
 }
 
 fn load_external(app: &AppHandle) -> Vec<String> {
@@ -716,12 +716,25 @@ sometimes with scripts or reference files next to it.";
     setup
 }
 
+/// The skills index for Hive Agent: every skill it can use (project, user,
+/// external and system), each once, with the path of its SKILL.md, which the
+/// agent reads with its read tool when a request matches.
+pub fn agent_skills_index(app: &AppHandle, cwd: &Path) -> String {
+    let mut all: Vec<Skill> = project_skills(cwd).0;
+    all.extend(user_skills());
+    all.extend(external_skills(app).0);
+    all.extend(system_skills());
+    let mut seen = std::collections::HashSet::new();
+    all.retain(|s| !s.paths.is_empty() && seen.insert(s.name.to_lowercase()));
+    external_setup_for(&all, None).index
+}
+
 /// Prepare the external skills for sessions (and refresh the plugin folder).
 #[tauri::command]
 pub async fn skills_external_setup(app: AppHandle) -> Result<ExternalSetup, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let (skills, _) = external_skills(&app);
-        let base = app.path().app_data_dir().ok().map(|d| d.join("external-skills-plugin"));
+        let base = crate::paths::data_dir(&app).map(|d| d.join("external-skills-plugin"));
         external_setup_for(&skills, base.as_deref())
     })
     .await

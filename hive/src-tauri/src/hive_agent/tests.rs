@@ -76,7 +76,13 @@ impl Harness {
     fn start(cfg: SessionConfig, model: MockCompletionModel) -> Self {
         let (tx, rx) = mpsc::unbounded_channel();
         let hive = HiveAgents::default();
-        hive.start(7, cfg, model.into(), Arc::new(TestSink { tx }));
+        let sink = TestSink { tx };
+        let started = hive.start(7, cfg, model.into(), Arc::new(TestSink { tx: sink.tx.clone() }));
+        // What the UI does with the reply: the session is running, its first lines show.
+        sink.status(&started.info);
+        for (stream, text) in started.lines {
+            sink.line(7, stream, text);
+        }
         Harness { hive, rx, id: 7 }
     }
 
@@ -491,7 +497,8 @@ async fn real_ollama_reads_and_edits_after_approval() {
     let (tx, rx) = mpsc::unbounded_channel();
     let log = Arc::new(Mutex::new(vec![]));
     let hive = HiveAgents::default();
-    hive.start(7, cfg, model, Arc::new(RecordingSink { inner: TestSink { tx }, log: log.clone() }));
+    let started = hive.start(7, cfg, model, Arc::new(RecordingSink { inner: TestSink { tx }, log: log.clone() }));
+    assert_eq!(started.lines.len(), 1);
     let mut h = Harness { hive, rx, id: 7 };
     h.send("Read greet.txt, then use the edit tool to replace the word \"world\" with \"Hive\" in it. Don't run any commands.");
     let mut asked = vec![];
@@ -527,4 +534,19 @@ async fn real_ollama_reads_and_edits_after_approval() {
     assert!(used.iter().any(|t| t == "read"), "{used:?}");
     assert!(asked.iter().any(|a| a.tool == "edit" || a.tool == "write"), "no approval asked: {asked:?}");
     assert_eq!(std::fs::read_to_string(dir.0.join("greet.txt")).unwrap(), "hello Hive\nhave a nice day\n");
+}
+
+#[test]
+fn start_sends_nothing_before_it_returns() {
+    // The UI maps a session's id only once hive_agent_start returns; lines
+    // sent before that would be dropped (the init line carries the
+    // conversation id the tab keeps).
+    let dir = Tmp::new("quiet");
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let conv = new_conversation_id();
+    let started = HiveAgents::default().start(3, config(&dir.0, "ask", &conv), script(vec![]).into(), Arc::new(TestSink { tx }));
+    assert!(rx.try_recv().is_err(), "start emitted before returning");
+    assert_eq!(started.conversation, conv);
+    assert!(started.lines[0].1.starts_with(r#"{"type":"system","subtype":"init""#));
+    assert_eq!(started.info.status, Status::Running);
 }

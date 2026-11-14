@@ -118,6 +118,8 @@ body.prefs { display: flex; flex-direction: column; height: 100vh; }
 .models .rm:hover { color: var(--red); background: var(--hover); }
 .models input[type="radio"] { accent-color: var(--accent); margin: 0; }
 .add-model { display: flex; gap: 8px; }
+.key-row { display: flex; gap: 8px; }
+.key-row input { flex: 1; min-width: 0; }
 .cmd-preview {
   font: 11px/1.5 var(--mono); padding: 7px 9px; border-radius: 7px; background: var(--card-2);
   white-space: pre-wrap; word-break: break-all; color: var(--text-2);

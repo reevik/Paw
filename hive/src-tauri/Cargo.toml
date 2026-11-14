@@ -2,6 +2,7 @@
 name = "hive"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.97.1"
 description = "Orchestrate multiple agent processes in a native macOS window"
 
 [build-dependencies]
@@ -15,3 +16,14 @@ libc = "0.2"
 portable-pty = "0.9"
 tauri-plugin-dialog = "2"
 base64 = "0.22"
+rig-core = { version = "0.46.0", features = ["reqwest"] }
+rig-agent = "0.46.0"
+rig-tools = "0.46.0"
+rig-reqwest = "0.46.0"
+tokio = { version = "1", features = ["sync", "macros", "rt", "time"] }
+futures = "0.3"
+security-framework = "3"
+
+[dev-dependencies]
+rig-core = { version = "0.46.0", features = ["reqwest", "test-utils"] }
+tokio = { version = "1", features = ["sync", "macros", "rt", "rt-multi-thread", "time"] }

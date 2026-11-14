@@ -3,12 +3,15 @@
 mod agents;
 mod attachments;
 mod history;
+mod hive_agent;
+mod paths;
 mod registry;
 mod shell;
 mod skills;
 
 use agents::AgentManager;
 use history::History;
+use hive_agent::HiveAgents;
 use registry::Registry;
 use shell::ShellManager;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
@@ -125,6 +128,7 @@ fn main() {
         .manage(Registry::default())
         .manage(ShellManager::default())
         .manage(History::default())
+        .manage(HiveAgents::default())
         .menu(build_menu)
         .on_menu_event(|app, event| {
             if event.id() == "preferences" {
@@ -190,6 +194,14 @@ fn main() {
             skills::skills_external_add,
             skills::skills_external_remove,
             skills::skills_external_setup,
+            hive_agent::hive_agent_start,
+            hive_agent::hive_agent_send,
+            hive_agent::hive_agent_cancel,
+            hive_agent::hive_agent_close,
+            hive_agent::hive_agent_approve,
+            hive_agent::hive_key_status,
+            hive_agent::hive_key_set,
+            hive_agent::hive_key_delete,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Hive");
@@ -199,6 +211,7 @@ fn main() {
             // Never leave orphaned agent processes behind.
             handle.state::<AgentManager>().kill_all();
             handle.state::<ShellManager>().kill_all();
+            handle.state::<HiveAgents>().close_all();
         }
     });
 }

@@ -207,6 +207,7 @@ async function hiveStart(S, { resume = false } = {}) {
       approval: S.approval,
       allow_rules: saved,
       session: resume && S.session ? S.session : null,
+      key_source: S.agent.key_source || "",
     } });
     const { lines, session, ...pinfo } = reply;
     S.runWithSession = !!(resume && S.session);

@@ -74,6 +74,9 @@ pub struct AgentConfig {
     /// Hive Agent only: the provider's address (empty: its default).
     #[serde(default)]
     pub base_url: String,
+    /// Hive Agent only: where the Anthropic key comes from (empty: automatic).
+    #[serde(default)]
+    pub key_source: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -208,6 +211,7 @@ fn builtin_with(id: &str, name: &str, binary: &str, template: &str, io: &str, co
         skills_delivery: "index".into(),
         provider: String::new(),
         base_url: String::new(),
+        key_source: String::new(),
     }
 }
 
@@ -512,8 +516,12 @@ fn detect_hive(cfg: &AgentConfig) -> Detection {
     let mut d = Detection { installed: true, version: Some("built-in".into()), ..Default::default() };
     if cfg.provider == "anthropic" {
         d.models = crate::hive_agent::ANTHROPIC_MODELS.iter().map(|m| m.to_string()).collect();
-        let key = crate::hive_agent::keychain::get("anthropic").is_some();
-        d.models_source = if key { "Anthropic API (key in Keychain)".into() } else { "Anthropic API — no API key yet, add one in Settings".into() };
+        let sources = crate::hive_agent::keys::list(&crate::hive_agent::keys::System);
+        let chosen = sources.iter().find(|s| s.usable && (cfg.key_source.is_empty() || s.id == cfg.key_source));
+        d.models_source = match chosen {
+            Some(s) => format!("Anthropic API · key from {} ({})", s.label, s.detail),
+            None => "Anthropic API · no usable API key found yet".into(),
+        };
         return d;
     }
     let host = if cfg.base_url.trim().is_empty() { crate::hive_agent::DEFAULT_OLLAMA_URL } else { cfg.base_url.trim() };

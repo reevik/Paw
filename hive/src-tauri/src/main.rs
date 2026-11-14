@@ -200,6 +200,7 @@ fn main() {
             hive_agent::hive_agent_close,
             hive_agent::hive_agent_approve,
             hive_agent::hive_key_status,
+            hive_agent::hive_key_sources,
             hive_agent::hive_key_set,
             hive_agent::hive_key_delete,
         ])

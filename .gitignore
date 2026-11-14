@@ -1,0 +1,5 @@
+# Rust build output
+hive/src-tauri/target/
+# Tauri-generated schemas
+hive/src-tauri/gen/
+.DS_Store

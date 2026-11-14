@@ -622,6 +622,24 @@ fn friendly_error(cfg: &SessionConfig, e: &str) -> String {
 // The session table
 // ---------------------------------------------------------------------------
 
+/// A session that just started: what the UI shows first.
+pub struct Started {
+    pub info: AgentInfo,
+    pub conversation: String,
+    /// (stream, text) lines, the init event first.
+    pub lines: Vec<(&'static str, String)>,
+}
+
+/// What `hive_agent_start` answers: the session, its conversation id and its
+/// first lines (shaped like `agent:output` lines).
+#[derive(Serialize)]
+pub struct StartReply {
+    #[serde(flatten)]
+    pub info: AgentInfo,
+    pub session: String,
+    pub lines: Vec<crate::agents::OutputLine>,
+}
+
 #[derive(Default)]
 pub struct HiveAgents {
     sessions: Mutex<HashMap<u32, Arc<Session>>>,
@@ -632,8 +650,10 @@ impl HiveAgents {
         self.sessions.lock().unwrap().get(&id).cloned()
     }
 
-    /// Start a session: load its conversation, report it to the UI.
-    pub fn start(&self, id: u32, cfg: SessionConfig, model: DynModel<Completion>, sink: Arc<dyn Sink>) -> AgentInfo {
+    /// Start a session and load its conversation. Its first lines (the init
+    /// event, a warning) are returned, not sent: the UI only knows the
+    /// session's id once this returns, and would drop lines sent before.
+    pub fn start(&self, id: u32, cfg: SessionConfig, model: DynModel<Completion>, sink: Arc<dyn Sink>) -> Started {
         // A tab that restarts its session (new model, approval level…) or a
         // reloaded window: the conversation has one live session at a time.
         let old: Vec<u32> = self
@@ -674,10 +694,8 @@ impl HiveAgents {
             cfg,
         });
         self.sessions.lock().unwrap().insert(id, sess.clone());
-        sink.status(&info);
         let tools: Vec<&str> = if sess.cfg.tools { vec!["read", "edit", "write", "search", "list", "shell"] } else { vec![] };
-        sink.line(
-            id,
+        let mut lines = vec![(
             "stdout",
             event(json!({
                 "type": "system",
@@ -688,11 +706,11 @@ impl HiveAgents {
                 "tools": tools,
                 "messages": sess.history_len(),
             })),
-        );
+        )];
         if !sess.cfg.tools {
-            sink.line(id, "stderr", format!("{} can't call tools, so Hive Agent can only talk here (no reading or editing files). Pick a model with tool support (/model).", sess.cfg.model));
+            lines.push(("stderr", format!("{} can't call tools, so Hive Agent can only talk here (no reading or editing files). Pick a model with tool support (/model).", sess.cfg.model)));
         }
-        info
+        Started { info, conversation: sess.cfg.conversation.clone(), lines }
     }
 
     /// Start a prompt. Returns the future that runs it (the caller spawns it).
@@ -949,7 +967,7 @@ pub async fn hive_agent_start(
     procs: tauri::State<'_, crate::agents::AgentManager>,
     hive: tauri::State<'_, HiveAgents>,
     opts: StartOpts,
-) -> Result<AgentInfo, String> {
+) -> Result<StartReply, String> {
     let cwd = crate::agents::expand_home(opts.cwd.trim());
     if !cwd.is_dir() {
         return Err(format!("Working directory does not exist: {}", cwd.display()));
@@ -993,7 +1011,14 @@ pub async fn hive_agent_start(
     };
     let id = procs.alloc_id();
     let sink: Arc<dyn Sink> = Arc::new(TauriSink { app, seq: Mutex::default() });
-    Ok(hive.start(id, cfg, model_handle, sink))
+    let started = hive.start(id, cfg, model_handle, sink);
+    let lines = started
+        .lines
+        .into_iter()
+        .enumerate()
+        .map(|(i, (stream, text))| crate::agents::OutputLine { id, seq: i as u64, stream, text, ts: now_ms() })
+        .collect();
+    Ok(StartReply { info: started.info, session: started.conversation, lines })
 }
 
 #[tauri::command]

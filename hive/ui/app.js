@@ -198,7 +198,7 @@ async function hiveStart(S, { resume = false } = {}) {
     const ext = await externalSetup();
     S.skillsSig = ext.signature; // its system prompt lists the skills
     const saved = (settings.allow_rules ?? []).filter((r) => r.agent === S.agent.id && r.folder === S.cwd).map((r) => r.rule);
-    const pinfo = await invoke("hive_agent_start", { opts: {
+    const reply = await invoke("hive_agent_start", { opts: {
       name: `${S.agent.name} — ${basename(S.cwd)}`,
       provider: S.agent.provider || "ollama",
       model: S.model || "",
@@ -208,12 +208,16 @@ async function hiveStart(S, { resume = false } = {}) {
       allow_rules: saved,
       session: resume && S.session ? S.session : null,
     } });
+    const { lines, session, ...pinfo } = reply;
     S.runWithSession = !!(resume && S.session);
     S.resuming = false;
     S.proc = pinfo.id;
     S.info = pinfo;
     S.agentCwd = S.cwd;
     procToSid.set(pinfo.id, S.sid);
+    if (session && session !== S.session) { S.session = session; saveWorkspaceSoon(); }
+    // Its first lines (init with the conversation id) come with the reply.
+    for (const l of lines ?? []) onAgentOutput(l);
   } catch (e) {
     sys(S, `✗ ${e}`);
   }
@@ -2351,7 +2355,9 @@ function resumeRejected(S, pinfo) {
 }
 
 // ---------- backend events ----------
-listen("agent:output", ({ payload: l }) => {
+listen("agent:output", ({ payload: l }) => onAgentOutput(l));
+
+function onAgentOutput(l) {
   const S = sessions.get(procToSid.get(l.id));
   if (!S) return;
   if (l.stream === "stdin") return; // echoed locally by sendToAgent
@@ -2379,7 +2385,7 @@ listen("agent:output", ({ payload: l }) => {
     renderTabs();
     renderSidebar();
   }
-});
+}
 
 listen("agent:status", ({ payload: pinfo }) => {
   const S = sessions.get(procToSid.get(pinfo.id));

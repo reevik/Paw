@@ -289,6 +289,22 @@ pub fn catalog() -> Vec<AgentConfig> {
         builtin("qwen", "Qwen Code", "qwen", "{bin} [[-m {model}]] -p {prompt}", "text"),
         builtin("goose", "Goose", "goose", "{bin} run -t {prompt}", "text"),
         builtin("ollama", "Ollama", "ollama", "{bin} run {model} {prompt}", "text").skills_inline(),
+        // GitHub Copilot CLI, on the user's Copilot subscription. `-p` runs one
+        // prompt and ends with a `copilot --resume=SESSION-ID` hint.
+        // Without a permission flag, actions that need approval are declined
+        // (Hive's "ask"); deny rules beat allows, so plan mode holds.
+        builtin_with(
+            "copilot",
+            "GitHub Copilot CLI",
+            "copilot",
+            "{bin} -p {prompt} --no-color --no-auto-update [[--model {model}]] [[{permission}]] [[--resume={session}]]",
+            "text",
+            "session",
+            r"copilot --resume=([0-9a-fA-F-]{8,})",
+        )
+        .with_approvals(&[("edits", "--allow-tool=write"), ("plan", "--deny-tool=shell,write"), ("full", "--allow-all-tools")])
+        // Skills' text goes in the prompt: reading files outside the folder needs approval.
+        .skills_inline(),
         hive_agent(),
     ]
 }
@@ -307,6 +323,8 @@ fn suggested_models(id: &str) -> &'static [&'static str] {
             "claude-fable-5-2",
         ],
         "codex" => &["gpt-5-codex", "gpt-5"],
+        // From GitHub's docs; `auto` lets Copilot choose. `copilot` lists more in /model.
+        "copilot" => &["auto", "claude-haiku-4.5", "gpt-5.3-codex"],
         "gemini" | "qwen" => &[],
         "aider" => &["sonnet", "opus", "gpt-5"],
         _ => &[],
@@ -645,6 +663,7 @@ fn discover_models(id: &str, path: &str) -> (Vec<String>, String, Option<String>
                 "codex" => read_home(".codex/config.toml").and_then(|t| toml_model(&t)),
                 "gemini" => read_home(".gemini/settings.json").and_then(|t| json_model(&t)),
                 "qwen" => read_home(".qwen/settings.json").and_then(|t| json_model(&t)),
+                "copilot" => read_home(".copilot/settings.json").and_then(|t| json_model(&t)),
                 "aider" => read_home(".aider.conf.yml").and_then(|t| {
                     t.lines()
                         .find_map(|l| l.trim().strip_prefix("model:").map(|v| v.trim().trim_matches('"').to_string()))
@@ -968,6 +987,37 @@ mod tests {
         let old = r#"{"id":"x","name":"X","binary":"x","template":"{bin} {prompt}","io":"text","enabled":true,"builtin":false}"#;
         let a: AgentConfig = serde_json::from_str(old).unwrap();
         assert_eq!((a.provider.as_str(), a.base_url.as_str()), ("", ""));
+    }
+
+    #[test]
+    fn copilot_cli_commands() {
+        let c = catalog().into_iter().find(|a| a.id == "copilot").expect("Copilot CLI in the catalog");
+        assert_eq!((c.io.as_str(), c.continuity.as_str(), c.skills_delivery.as_str()), ("text", "session", "inline"));
+        let mut v = HashMap::from([
+            ("bin", "/opt/homebrew/bin/copilot".to_string()),
+            ("prompt", "fix the tests".to_string()),
+            ("model", String::new()),
+            ("permission", String::new()),
+            ("session", String::new()),
+        ]);
+        // A first prompt at "ask": no permission flag, so approvals are declined.
+        assert_eq!(render(&c.template, &v).unwrap(), "/opt/homebrew/bin/copilot -p 'fix the tests' --no-color --no-auto-update");
+        // A follow-up at "plan", with a model, continuing the session.
+        v.insert("model", "gpt-5.3-codex".into());
+        v.insert("permission", c.approvals["plan"].clone());
+        v.insert("session", "8f301db2-a3ad-41fe-8280-e01ae850076a".into());
+        assert_eq!(
+            render(&c.template, &v).unwrap(),
+            "/opt/homebrew/bin/copilot -p 'fix the tests' --no-color --no-auto-update --model gpt-5.3-codex \
+--deny-tool=shell,write --resume=8f301db2-a3ad-41fe-8280-e01ae850076a"
+        );
+        v.insert("permission", c.approvals["edits"].clone());
+        assert!(render(&c.template, &v).unwrap().contains(" --allow-tool=write "));
+        assert!(!c.approvals.contains_key("ask"));
+        // The session id comes from the exit summary's resume hint.
+        let line = "Resume this session with: copilot --resume=8f301db2-a3ad-41fe-8280-e01ae850076a";
+        let id = line.split("copilot --resume=").nth(1).unwrap();
+        assert!(c.session_pattern.contains("copilot --resume=") && id.len() == 36);
     }
 
     #[test]

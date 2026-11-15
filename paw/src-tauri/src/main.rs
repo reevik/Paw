@@ -35,6 +35,16 @@ fn open_url(url: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Open a folder in Finder (the status bar's folder).
+#[tauri::command]
+fn open_folder(path: String) -> Result<(), String> {
+    let dir = agents::expand_home(path.trim());
+    if !dir.is_dir() {
+        return Err(format!("{} isn't a folder any more", dir.display()));
+    }
+    std::process::Command::new("/usr/bin/open").arg(&dir).spawn().map(|_| ()).map_err(|e| e.to_string())
+}
+
 /// A tab's session folder (`~/.paw/session/<id>`), created if needed;
 /// `reveal` also opens it in Finder.
 #[tauri::command]
@@ -326,6 +336,7 @@ fn main() {
             attachments::save_pasted_text,
             session_dir,
             session_log,
+            open_folder,
             session_launch,
             sessions::list_sessions,
             sessions::prune_sessions,

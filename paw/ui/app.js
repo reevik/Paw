@@ -58,6 +58,7 @@ function availableAgents() {
   return settings.agents
     .filter((a) => a.enabled && (!settings.general.only_installed || detections[a.id]?.installed))
     .sort((a, b) =>
+      (isPaw(a) ? 0 : 1) - (isPaw(b) ? 0 : 1) ||
       (detections[a.id]?.installed ? 0 : 1) - (detections[b.id]?.installed ? 0 : 1) || a.name.localeCompare(b.name));
 }
 function defaultAgent() {
@@ -1501,7 +1502,9 @@ async function restoreWorkspace() {
   const tabs = ws?.tabs ?? [];
   let restored = 0;
   for (const t of tabs) {
-    const agent = settings.agents.find((a) => a.id === t.agent);
+    // The Ollama agent is gone; Paw Agent runs Ollama models now.
+    const agentId = t.agent === "ollama" ? settings.agents.find(isPaw)?.id : t.agent;
+    const agent = settings.agents.find((a) => a.id === agentId);
     if (!agent) continue;
     let cwd = t.cwd;
     try { cwd = await invoke("resolve_dir", { path: cwd, base: homeDir }); } catch { cwd = homeDir; }
@@ -2973,7 +2976,8 @@ function openMenu() {
   const def = defaultAgent();
   menu.innerHTML = "";
   if (!list.length) menu.appendChild(div("menu-empty", detectionsReady ? "No agents available" : "Detecting agents…"));
-  for (const a of list) {
+  for (const [i, a] of list.entries()) {
+    if (i > 0 && isPaw(list[i - 1]) && !isPaw(a)) menu.appendChild(div("menu-sep")); // Paw Agent, then the CLI agents
     const b = document.createElement("button");
     b.className = "menu-item";
     const d = detections[a.id];

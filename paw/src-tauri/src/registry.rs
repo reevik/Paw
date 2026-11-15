@@ -288,7 +288,6 @@ pub fn catalog() -> Vec<AgentConfig> {
         builtin("cursor-agent", "Cursor Agent", "cursor-agent", "{bin} -p [[--model {model}]] {prompt}", "text"),
         builtin("qwen", "Qwen Code", "qwen", "{bin} [[-m {model}]] -p {prompt}", "text"),
         builtin("goose", "Goose", "goose", "{bin} run -t {prompt}", "text"),
-        builtin("ollama", "Ollama", "ollama", "{bin} run {model} {prompt}", "text").skills_inline(),
         // GitHub Copilot CLI, on the user's Copilot subscription. `-p` runs one
         // prompt and ends with a `copilot --resume=SESSION-ID` hint.
         // Without a permission flag, actions that need approval are declined
@@ -350,7 +349,6 @@ const OLD_TEMPLATES: &[(&str, &str)] = &[
     ("cursor-agent", "{bin} -p [[--model {model}]] {prompt}"),
     ("qwen", "{bin} [[-m {model}]] -p {prompt}"),
     ("goose", "{bin} run -t {prompt}"),
-    ("ollama", "{bin} run {model} {prompt}"),
 ];
 
 /// Bring saved built-in agents up to the current catalog without losing edits.
@@ -427,12 +425,23 @@ fn rename_from_hive(s: &mut Settings) {
     }
 }
 
+/// Built-in agents Paw no longer ships. Ollama runs inside Paw Agent now, so
+/// the old `ollama run` agent goes, and Paw Agent takes over as the default.
+const RETIRED: &[&str] = &["ollama"];
+fn drop_retired_agents(s: &mut Settings) {
+    s.agents.retain(|a| !(a.builtin && RETIRED.contains(&a.id.as_str())));
+    if s.general.default_agent.as_deref().is_some_and(|d| RETIRED.contains(&d)) {
+        s.general.default_agent = Some("paw".into());
+    }
+}
+
 fn load(app: &AppHandle) -> Settings {
     let mut s: Settings = settings_path(app)
         .and_then(|p| std::fs::read_to_string(p).ok())
         .and_then(|t| serde_json::from_str(&t).ok())
         .unwrap_or_default();
     rename_from_hive(&mut s);
+    drop_retired_agents(&mut s);
     migrate_agents(&mut s.agents);
     // Add built-ins that are missing (new catalog entries, or a fresh install).
     for b in catalog() {
@@ -660,18 +669,6 @@ fn discover_models(id: &str, path: &str) -> (Vec<String>, String, Option<String>
         s.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect()
     };
     match id {
-        "ollama" => {
-            if let Some(out) = run_timeout(path, &["list"], long) {
-                let models: Vec<String> = out
-                    .lines()
-                    .skip(1) // header: NAME ID SIZE MODIFIED
-                    .filter_map(|l| l.split_whitespace().next())
-                    .map(String::from)
-                    .collect();
-                return (models, "ollama list".into(), None);
-            }
-            (vec![], "ollama list (failed)".into(), None)
-        }
         "opencode" => {
             if let Some(out) = run_timeout(path, &["models"], long) {
                 let models: Vec<String> = lines(out).into_iter().filter(|l| l.contains('/')).collect();
@@ -1023,9 +1020,25 @@ mod tests {
         s.appearance.dark = "dracula".into();
         s.general.default_agent = Some("hive".into());
         rename_from_hive(&mut s);
+    drop_retired_agents(&mut s);
         let a = &s.agents[0];
         assert_eq!((a.id.as_str(), a.io.as_str(), a.name.as_str(), a.key_source.as_str()), ("paw", "paw", "Paw Agent", "paw"));
         assert_eq!((s.appearance.light.as_str(), s.appearance.dark.as_str()), ("paw-light", "dracula"));
+        assert_eq!(s.general.default_agent.as_deref(), Some("paw"));
+    }
+
+    #[test]
+    fn ollama_agent_is_retired() {
+        assert!(!catalog().iter().any(|a| a.id == "ollama"));
+        let mut s = Settings::default();
+        let mut builtin = catalog().into_iter().find(|a| a.id == "claude").unwrap();
+        builtin.id = "ollama".into();
+        let mut mine = builtin.clone();
+        (mine.id, mine.builtin) = ("my-ollama".into(), false);
+        s.agents = vec![builtin, mine];
+        s.general.default_agent = Some("ollama".into());
+        drop_retired_agents(&mut s);
+        assert_eq!(s.agents.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(), ["my-ollama"], "an agent you made yourself stays");
         assert_eq!(s.general.default_agent.as_deref(), Some("paw"));
     }
 

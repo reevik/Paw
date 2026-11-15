@@ -2163,8 +2163,9 @@ function mcpServerHtml(sc, s, showScope) {
     ...s.header_keys.map((k) => `<span class="sk-tag" title="Header (value not shown)">${esc(k)}:</span>`)].join("");
   return `<div class="mcp-srv${s.enabled ? "" : " off"}" data-scope="${esc(sc.id)}" data-name="${esc(s.name)}" title="${esc(tildify(sc.file))}">
       <div class="mcp-row"><span class="mcp-name">${esc(s.name)}</span><span class="sk-tag">${TRANSPORT_TAG[s.transport] ?? esc(s.transport)}</span>
-        ${showScope ? `<span class="mcp-scope">${esc(SCOPE_TAG[sc.id] ?? sc.id)}</span>` : ""}<span class="mcp-grow"></span>
-        ${sc.can_toggle ? `<label class="mcp-toggle" title="${s.enabled ? "On — click to switch off" : "Off — click to switch on"}"><input type="checkbox" data-mcp-toggle ${s.enabled ? "checked" : ""}><span></span></label>` : ""}
+        ${showScope ? `<span class="mcp-scope">${esc(SCOPE_TAG[sc.id] ?? sc.label)}</span>` : ""}
+        ${s.pending ? `<span class="sk-tag pending" title="A project server nobody has approved yet: Claude Code doesn't start it. Switch it on to approve it for this folder.">needs approval</span>` : ""}<span class="mcp-grow"></span>
+        ${sc.can_toggle ? `<label class="mcp-toggle" title="${s.pending ? "Switch on to approve it for this folder" : s.enabled ? "On — click to switch off" : "Off — click to switch on"}"><input type="checkbox" data-mcp-toggle ${s.enabled ? "checked" : ""}><span></span></label>` : ""}
         ${sc.writable ? `<button class="sk-x" data-mcp-remove title="Remove">×</button>` : ""}</div>
       <div class="mcp-cmd" title="${esc(target)}">${esc(target)}</div>
       ${keys ? `<div class="mcp-keys">${keys}</div>` : ""}
@@ -2216,7 +2217,7 @@ function renderMcp() {
 function applyMcp(agentId, cwd, scope) {
   for (const S of sessions.values()) {
     if (S.agent.id !== agentId || S.mode === "oneshot") continue;
-    if (!(scope === "user" || scope === "hive" || S.cwd === cwd)) continue;
+    if (!(scope === "user" || scope === "hive" || S.cwd === cwd)) continue; // "folder": this folder's tabs
     S.mcpStale = true;
     reloadForMcp(S);
   }
@@ -2265,8 +2266,11 @@ $("mcp-body").addEventListener("change", (e) => {
   const t = e.target.closest("[data-mcp-toggle]");
   if (t) {
     const row = t.closest(".mcp-srv");
-    mcpChange(async (c) => { await invoke("mcp_set_enabled", { ...c, scope: row.dataset.scope, name: row.dataset.name, enabled: t.checked }); return row.dataset.scope; },
-      `${row.dataset.name} ${t.checked ? "on" : "off"}`);
+    // Claude Code keeps its switches per project: only this folder's tabs reload.
+    mcpChange(async (c) => {
+      await invoke("mcp_set_enabled", { ...c, scope: row.dataset.scope, name: row.dataset.name, enabled: t.checked });
+      return c.agent === "claude" ? "folder" : row.dataset.scope;
+    }, `${row.dataset.name} ${t.checked ? "on" : "off"}`);
   }
 });
 $("mcp-body").addEventListener("submit", (e) => {

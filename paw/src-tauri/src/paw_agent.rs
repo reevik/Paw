@@ -379,6 +379,16 @@ fn prompt_message(notes: &[String], prompt: &str) -> Message {
 }
 
 impl Session {
+    /// Its process info (the daemon reports it to a window that comes back).
+    pub fn info(&self) -> AgentInfo {
+        self.info.lock().unwrap().clone()
+    }
+
+    /// Working on a prompt.
+    pub fn working(&self) -> bool {
+        self.cancel.lock().unwrap().is_some()
+    }
+
     #[cfg(test)]
     pub fn busy(&self) -> bool {
         self.cancel.lock().unwrap().is_some()

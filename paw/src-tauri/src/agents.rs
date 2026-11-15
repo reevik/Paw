@@ -72,6 +72,11 @@ impl AgentManager {
         self.next_id.fetch_add(1, Ordering::SeqCst) + 1
     }
 
+    /// A process's info, if Paw still knows it.
+    pub fn info(&self, id: u32) -> Option<AgentInfo> {
+        self.agents.lock().unwrap().get(&id).map(|a| a.info.clone())
+    }
+
     pub fn kill_all(&self) {
         let agents = self.agents.lock().unwrap();
         for a in agents.values() {

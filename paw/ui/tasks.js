@@ -426,13 +426,15 @@ function taskSnapshot(S) {
 }
 
 /** A restored task: whatever was in flight is stopped. */
-function restoreTask(saved) {
+/** `live`: the daemon that ran it still runs, so its steps are still working. */
+function restoreTask(saved, { live = false } = {}) {
   const t = structuredClone(saved);
   t.steps ??= [];
   for (const s of t.steps) {
     s.sid = null;
-    if (activeStep(s)) { s.state = "stopped"; s.endedAt = Date.now(); }
+    if (activeStep(s) && !live) { s.state = "stopped"; s.endedAt = Date.now(); }
   }
+  if (live) return t;
   if (t.state === "planning") { t.state = t.goal ? "draft" : "new"; t.note = t.goal ? "Paw restarted while planning. Ask the planner again below." : ""; }
   if (t.state === "running") { t.state = "stopped"; t.note = "Paw restarted while this task ran. Press Run to carry on where it stopped."; }
   return t;

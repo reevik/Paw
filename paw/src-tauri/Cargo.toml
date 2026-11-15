@@ -22,7 +22,7 @@ rig-agent = "0.46.0"
 rig-tools = "0.46.0"
 rig-reqwest = "0.46.0"
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
-tokio = { version = "1", features = ["sync", "macros", "rt", "time"] }
+tokio = { version = "1", features = ["sync", "macros", "rt", "time", "net", "io-util"] }
 futures = "0.3"
 security-framework = "3"
 rmcp = { version = "3.10", features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest"] }

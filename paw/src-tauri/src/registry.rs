@@ -49,7 +49,7 @@ pub struct AgentConfig {
     /// Regex with one capture group that finds the session id in the output.
     #[serde(default)]
     pub session_pattern: String,
-    /// Paw's approval levels (ask, edits, plan, full) → this agent's value for
+    /// Paw's approval levels (ask, edits, auto, plan, full) → this agent's value for
     /// `{permission}`. A missing level is one the agent can't express.
     #[serde(default)]
     pub approvals: std::collections::BTreeMap<String, String>,
@@ -90,7 +90,7 @@ pub struct General {
     pub history_size: usize,
     /// Where typed lines go in new tabs: "auto", "shell" or "agent".
     pub input_mode: String,
-    /// Approval level for new tabs: "ask", "edits", "plan" or "full".
+    /// Approval level for new tabs: "ask", "edits", "auto", "plan" or "full".
     pub approval: String,
     /// Send shell commands run in a tab (and their output) along with the next prompt.
     pub share_shell: bool,
@@ -221,7 +221,7 @@ const INIT_SESSION_PATTERN: &str = r#"^\{"type":"system","subtype":"init".*?"ses
 /// Paw's own agent: runs inside Paw (io "paw"), no binary or template.
 fn paw_agent() -> AgentConfig {
     let mut a = builtin_with("paw", "Paw Agent", "", "", "paw", "session", INIT_SESSION_PATTERN)
-        .with_approvals(&[("ask", "ask"), ("edits", "edits"), ("plan", "plan"), ("full", "full")]);
+        .with_approvals(&[("ask", "ask"), ("edits", "edits"), ("auto", "auto"), ("plan", "plan"), ("full", "full")]);
     a.provider = "ollama".into();
     a
 }
@@ -261,7 +261,7 @@ pub fn catalog() -> Vec<AgentConfig> {
             INIT_SESSION_PATTERN,
         )
         // Claude Code's --permission-mode choices for Paw's approval levels.
-        .with_approvals(&[("ask", "manual"), ("edits", "acceptEdits"), ("plan", "plan"), ("full", "bypassPermissions")])
+        .with_approvals(&[("ask", "manual"), ("edits", "acceptEdits"), ("auto", "auto"), ("plan", "plan"), ("full", "bypassPermissions")])
         .with_allow("--allowedTools {rule}")
         // External skills: a plugin folder Paw keeps (skills/ links to each one).
         .with_skills("--plugin-dir {skills}"),
@@ -351,6 +351,22 @@ const OLD_TEMPLATES: &[(&str, &str)] = &[
     ("goose", "{bin} run -t {prompt}"),
 ];
 
+/// Levels added to the catalog after an agent was saved (auto). They are
+/// added only while the agent's other levels are still the catalog's, so a
+/// mapping the user wrote stays as it is.
+fn add_new_levels(a: &mut AgentConfig, def: &AgentConfig) {
+    const NEW: &[&str] = &["auto"];
+    let untouched = a.approvals.iter().all(|(k, v)| def.approvals.get(k) == Some(v));
+    if !untouched {
+        return;
+    }
+    for l in NEW {
+        if let (false, Some(v)) = (a.approvals.contains_key(*l), def.approvals.get(*l)) {
+            a.approvals.insert(l.to_string(), v.clone());
+        }
+    }
+}
+
 /// Bring saved built-in agents up to the current catalog without losing edits.
 fn migrate_agents(agents: &mut [AgentConfig]) {
     let cat = catalog();
@@ -366,6 +382,7 @@ fn migrate_agents(agents: &mut [AgentConfig]) {
         if a.approvals.is_empty() {
             a.approvals = def.approvals.clone();
         }
+        add_new_levels(a, def);
         if a.allow_template.is_empty() {
             a.allow_template = def.allow_template.clone();
         }
@@ -959,6 +976,25 @@ mod tests {
         assert_eq!(render(t, &v).unwrap(), "/usr/bin/codex exec hi");
         v.insert("session", "0199a-b".into());
         assert_eq!(render(t, &v).unwrap(), "/usr/bin/codex exec resume 0199a-b hi");
+    }
+
+    #[test]
+    fn auto_level_reaches_saved_agents() {
+        let cat = catalog();
+        let claude = cat.iter().find(|a| a.id == "claude").unwrap();
+        assert_eq!(claude.approvals.get("auto").map(String::as_str), Some("auto"));
+        // Saved before auto existed: it's added.
+        let mut old = claude.clone();
+        old.approvals.remove("auto");
+        // Edited by the user: left alone.
+        let mut edited = claude.clone();
+        edited.approvals.remove("auto");
+        edited.approvals.insert("edits".into(), "--my-edits".into());
+        let mut agents = vec![old, edited];
+        migrate_agents(&mut agents);
+        assert_eq!(agents[0].approvals.get("auto").map(String::as_str), Some("auto"));
+        assert!(!agents[1].approvals.contains_key("auto"));
+        assert!(paw_agent().approvals.contains_key("auto"));
     }
 
     #[test]

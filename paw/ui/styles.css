@@ -597,6 +597,7 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
 .ap-title { font-weight: 600; color: var(--t-strong); display: flex; gap: 8px; align-items: baseline; }
 .ap-icon { color: var(--t-yellow); }
 .ap-item { margin: 6px 0 0 2ch; }
+.ap-why { margin: 6px 0 0 2ch; color: var(--t-dim, var(--text-2)); }
 .ap-item code { font: inherit; color: var(--t-fg); background: color-mix(in srgb, var(--t-fg) 7%, transparent); padding: 1px 6px; border-radius: 4px; word-break: break-all; }
 .tl.approval-card:not(.pending) .ap-item { opacity: .7; margin-top: 3px; }
 .ap-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0 0 2ch; }

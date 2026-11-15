@@ -181,7 +181,7 @@ function renderDetail() {
   $("d-skills").value = a.skills_template ?? "";
   $("d-skills-delivery").value = a.skills_delivery || "index";
   renderAllowed(a);
-  for (const l of ["ask", "edits", "plan", "full"]) $(`d-ap-${l}`).value = a.approvals?.[l] ?? "";
+  for (const l of ["ask", "edits", "auto", "plan", "full"]) $(`d-ap-${l}`).value = a.approvals?.[l] ?? "";
   $("d-pattern").value = a.session_pattern || "";
   document.querySelectorAll(".d-session-only").forEach((el) => el.classList.toggle("hidden", (a.continuity || "replay") !== "session"));
   $("d-reset").textContent = a.builtin ? "Restore Defaults" : "Remove Agent";
@@ -346,7 +346,7 @@ function renderAllowed(a) {
     ul.appendChild(li);
   }
 }
-for (const l of ["ask", "edits", "plan", "full"]) {
+for (const l of ["ask", "edits", "auto", "plan", "full"]) {
   $(`d-ap-${l}`).addEventListener("input", (e) => {
     const a = current();
     a.approvals ??= {};

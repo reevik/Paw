@@ -66,10 +66,11 @@
         <select id="g-approval">
           <option value="ask">Ask — actions that need approval are declined</option>
           <option value="edits">Edits — may edit files without asking</option>
+          <option value="auto">Auto — decides routine actions itself, asks before risky ones</option>
           <option value="plan">Plan — read-only</option>
           <option value="full">Full — no confirmations</option>
         </select>
-        <p class="hint">For new tabs, on agents that support it. Change a tab with <code>/approval</code>.</p>
+        <p class="hint">For new tabs, on agents that support it (an agent without Auto starts at Edits). Change a tab with <code>/approval</code>.</p>
       </div>
 
       <label for="g-history">Shell history</label>
@@ -297,6 +298,7 @@
             <div class="approval-grid">
               <label>ask <input id="d-ap-ask" spellcheck="false" /></label>
               <label>edits <input id="d-ap-edits" spellcheck="false" /></label>
+              <label>auto <input id="d-ap-auto" spellcheck="false" /></label>
               <label>plan <input id="d-ap-plan" spellcheck="false" /></label>
               <label>full <input id="d-ap-full" spellcheck="false" /></label>
             </div>

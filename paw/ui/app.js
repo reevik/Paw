@@ -115,7 +115,7 @@ async function newSession(agentId, opts = {}) {
     mode: sessionMode(agent),
     cwd,
     model: opts.model ?? defaultModel(agent),
-    approval: defaultApproval(),
+    approval: defaultApproval(agent),
     proc: null,
     info: null,
     lines: [],
@@ -246,7 +246,7 @@ listen("paw:approval", ({ payload: r }) => {
   if (!S || S.proc !== r.id) return;
   S.waitingApproval = (S.waitingApproval ?? 0) + 1;
   addApprovalCard(S, { kind: "paw", proc: r.id, request: r.request, tool: r.tool, canAllow: true,
-    items: [{ label: r.label, rule: r.rule, broad: r.broad, detail: r.detail }] });
+    items: [{ label: r.label, rule: r.rule, broad: r.broad, detail: r.detail, why: r.why }] });
   refresh(S);
 });
 
@@ -658,22 +658,33 @@ const forgetLookups = () => { for (const [k, v] of lookupCache) if (!v) lookupCa
 // ---------- approval levels ----------
 // Paw's own, vendor-neutral levels. Each agent maps them to its flags
 // (Settings › Agents › Approval levels); `{permission}` gets the mapped value.
-const APPROVAL_LEVELS = ["ask", "edits", "plan", "full"];
+const APPROVAL_LEVELS = ["ask", "edits", "auto", "plan", "full"];
 const APPROVAL_TEXT = {
   ask: "ask before acting (actions that need approval are declined)",
   edits: "may edit files without asking",
+  auto: "decides routine actions itself; asks before risky ones",
   plan: "read-only: plan, don't change anything",
   full: "no confirmations at all — use with care",
 };
 /** Paw Agent asks instead of declining. */
-const PAW_APPROVAL_TEXT = { ...APPROVAL_TEXT, ask: "asks before every file change and command", edits: "edits files on its own; asks before commands" };
+const PAW_APPROVAL_TEXT = {
+  ...APPROVAL_TEXT,
+  ask: "asks before every file change and command",
+  edits: "edits files on its own; asks before commands",
+  auto: "edits files in this folder and runs routine commands on its own; asks before risky ones",
+};
 const approvalText = (agent, l) => (isPaw(agent) ? PAW_APPROVAL_TEXT : APPROVAL_TEXT)[l];
 const approvalLevels = (agent) => APPROVAL_LEVELS.filter((l) => agent.approvals?.[l]);
 const approvalValue = (S) => (hasLevels(S.agent) ? S.agent.approvals?.[S.levelOverride ?? S.approval] ?? "" : "");
-const defaultApproval = () => settings.general.approval || "edits";
+/** The level new tabs start at; an agent without Auto starts at Edits instead. */
+const defaultApproval = (agent) => {
+  const l = settings.general.approval || "edits";
+  const levels = agent ? approvalLevels(agent) : [];
+  return l === "auto" && levels.length && !levels.includes("auto") && levels.includes("edits") ? "edits" : l;
+};
 /** Old workspaces stored Claude's mode names. */
 const approvalFromLegacy = (perm) =>
-  ({ acceptEdits: "edits", plan: "plan", bypassPermissions: "full", default: "ask", manual: "ask" })[perm] ?? null;
+  ({ acceptEdits: "edits", auto: "auto", plan: "plan", bypassPermissions: "full", default: "ask", manual: "ask" })[perm] ?? null;
 
 // ---------- input mode ----------
 // Auto guesses per line (see classify); Shell and Agent send every line one
@@ -1529,7 +1540,7 @@ async function restoreWorkspace() {
     try { cwd = await invoke("resolve_dir", { path: cwd, base: homeDir }); } catch { cwd = homeDir; }
     const S = {
       sid: nextSid++, agent: structuredClone(agent), mode: sessionMode(agent), cwd,
-      model: t.model ?? defaultModel(agent), approval: t.approval ?? approvalFromLegacy(t.perm) ?? defaultApproval(),
+      model: t.model ?? defaultModel(agent), approval: t.approval ?? approvalFromLegacy(t.perm) ?? defaultApproval(agent),
       proc: null, info: null, lines: (t.lines ?? []).slice(-WS_LINES), busy: false,
       history: t.history ?? [], histIdx: (t.history ?? []).length, draft: "", unread: 0,
       shell: null, shellBusy: false, inputMode: t.inputMode || settings.general.input_mode || "auto",
@@ -1568,7 +1579,7 @@ async function restoreWorkspace() {
 // re-runs once at a higher approval level instead.
 
 let nextCardId = 1;
-const LEVEL_ORDER = ["plan", "ask", "edits", "full"];
+const LEVEL_ORDER = ["plan", "ask", "edits", "auto", "full"];
 
 /** What the user approves, and the agent's rule for it. */
 function denialToItem(d) {
@@ -1701,7 +1712,9 @@ function renderApprovalCard(S, l) {
   const broadText = (i) => (paw ? "allows every file change in this folder" : `allows every ${esc(i.rule)} action`);
   const list = (l.items ?? []).filter(() => l.kind === "rules" || paw)
     .map((i) => `<div class="ap-item"><code>${esc(i.label)}</code>${i.broad && l.state === "pending" ? ` <span class="dim">(“Always” ${broadText(i)})</span>` : ""}</div>`).join("");
-  el.innerHTML = `<div class="ap-title"><span class="ap-icon">${l.state === "pending" ? "⚠" : ""}</span>${title}</div>${list}`;
+  // Auto mode stopped to ask: say why.
+  const why = paw && l.items?.[0]?.why ? `<div class="ap-why">Auto mode asks because ${esc(l.items[0].why)}.</div>` : "";
+  el.innerHTML = `<div class="ap-title"><span class="ap-icon">${l.state === "pending" ? "⚠" : ""}</span>${title}</div>${list}${why}`;
   // The change or command in full, folded.
   const detail = paw && l.items?.[0]?.detail;
   if (detail && detail !== l.items[0].label.replace(/^\$ /, "")) {
@@ -3243,7 +3256,7 @@ function waitForDetections(timeoutMs) {
       (detections[a.id]?.path && pinfo.command.startsWith(detections[a.id].path)) || pinfo.command.startsWith(a.binary + " "))
       ?? { id: "restored", name: pinfo.name, binary: "", template: "", io: "text", custom_models: [] };
     const S = {
-      sid: nextSid++, agent, mode: sessionMode(agent), cwd: pinfo.cwd, model: "", approval: defaultApproval(),
+      sid: nextSid++, agent, mode: sessionMode(agent), cwd: pinfo.cwd, model: "", approval: defaultApproval(agent),
       proc: pinfo.id, info: pinfo, lines: await invoke("agent_output", { id: pinfo.id }),
       busy: false, history: [], histIdx: 0, draft: "", unread: 0, inputMode: settings.general.input_mode || "auto",
     };

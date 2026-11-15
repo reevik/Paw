@@ -866,7 +866,11 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
 .tk-empty .spin-ch { color: var(--t-accent); font-family: var(--mono); }
 
 .tk-body { margin-top: 12px; flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, 34%); gap: 14px; }
-.tk-graph { position: relative; display: flex; gap: 34px; align-items: center; overflow: auto; padding: 4px 4px 8px; min-height: 0; }
+/* Columns are centered with auto margins, not align-items: a column taller
+   than the board then starts at the top and scrolls, instead of being cut
+   off above where scrolling can't reach. */
+.tk-graph { position: relative; display: flex; gap: 34px; align-items: flex-start; overflow: auto; padding: 4px 4px 8px; min-height: 0; }
+.tk-graph > .tk-col { margin-block: auto; }
 .tk-edges { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
 .tk-edges path { fill: none; stroke: var(--tk-line); stroke-width: 1.5; }
 .tk-edges path.live { stroke: color-mix(in srgb, var(--t-accent) 60%, transparent); }

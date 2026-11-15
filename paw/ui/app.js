@@ -3033,6 +3033,17 @@ $("sidebar-toggle").onclick = toggleSidebar;
 listen("ui:toggle-sidebar", toggleSidebar);
 try { setSidebar(localStorage.getItem("paw.sidebar") !== "0", false); } catch { setSidebar(true, false); }
 
+// ---------- side panels give way to the prompt ----------
+// Clicking into the prompt box, or typing in it, closes the sidebar and the
+// MCP panel. Only the user's own click or keystroke counts: Paw moves focus to
+// the prompt by itself all the time, and that must not close anything.
+function closeSidePanels() {
+  if (sidebarVisible()) setSidebar(false);
+  if (mcp.open) setMcpOpen(false);
+}
+document.addEventListener("pointerdown", (e) => { if (e.target.closest?.(".prompt-line")) closeSidePanels(); }, true);
+document.addEventListener("input", (e) => { if (e.isTrusted && e.target.matches?.('textarea[data-id="input"]')) closeSidePanels(); }, true);
+
 // ---------- sidebar width ----------
 // Drag the sidebar's edge to resize it (remembered); double-click resets it.
 const SIDEBAR_W = { min: 200, max: 480, normal: 272 };

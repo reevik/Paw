@@ -123,6 +123,10 @@ button, input, textarea, select { font: inherit; color: inherit; }
   color: var(--text-2); cursor: default;
 }
 .tab:hover { background: var(--hover); }
+/* Dragging a tab (app.js › dragging tabs): it rides above the others. */
+.tab.dragging, .tab-group.dragging { position: relative; z-index: 3; }
+.tab.dragging { background: var(--card); box-shadow: 0 4px 14px rgba(0,0,0,.22), 0 0 0 0.5px var(--hair); }
+body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; }
 .tab.active { background: var(--card); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.08), 0 0 0 0.5px var(--hair); }
 .tab .label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tab .dot, .tab .close { flex-shrink: 0; }

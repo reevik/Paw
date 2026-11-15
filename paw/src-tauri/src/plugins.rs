@@ -20,7 +20,7 @@ use tauri::{AppHandle, Emitter};
 pub const OFFICIAL_SOURCE: &str = "https://raw.githubusercontent.com/reevik/Paw/main/plugins/";
 
 /// What a plugin may do; Settings shows these before installing.
-pub const PERMISSIONS: &[&str] = &["commands", "statusbar", "events", "prompt", "shell", "network"];
+pub const PERMISSIONS: &[&str] = &["commands", "statusbar", "events", "prompt", "shell", "network", "tasks", "views"];
 
 /// Largest plugin file Paw downloads.
 const FILE_LIMIT: usize = 2 * 1024 * 1024;

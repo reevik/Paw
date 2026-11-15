@@ -485,6 +485,7 @@ function taskChanged(T) {
   saveWorkspaceSoon();
   renderTabs();
   inPane(T, () => { renderTaskView(); renderHeader(); });
+  pluginTaskChanged(T);
 }
 
 // ---------- the board ----------
@@ -528,10 +529,16 @@ function renderTaskView() {
     t.state === "planning" && `<button class="tk-btn" data-act="stop-plan">Stop planning</button>`,
     t.state === "draft" && t.steps.length > 0 && `<button class="tk-btn" data-act="add">Add step</button>`,
   ].filter(Boolean).join("");
+  // Views plugins add (Settings › Plugins), next to the graph.
+  const views = t.steps.length ? boardViews() : [];
+  let viewKey = S.boardView && views.some(([k]) => k === S.boardView) ? S.boardView : "graph";
+  if (viewKey === "graph" && S.view) closeBoardView(S);
+  const switcher = views.length ? `<div class="tk-views" role="tablist">${[["graph", { label: "Graph" }], ...views].map(([k, v]) =>
+    `<button class="tk-viewbtn${k === viewKey ? " on" : ""}" data-view="${esc(k)}">${esc(v.label)}</button>`).join("")}</div>` : "";
   const head = `<div class="tk-head">
       <span class="tk-title" title="${esc(t.goal)}">${esc(t.title || "New task")}</span>
       <span class="tk-state st-${esc(t.state)}">${esc(taskStatusText(t))}</span>
-      <span class="grow"></span>${buttons}
+      ${switcher}<span class="grow"></span>${buttons}
     </div>${t.note ? `<div class="tk-note">${esc(t.note)}</div>` : ""}`;
   let body;
   if (t.state === "new" || (!t.steps.length && t.state !== "planning")) {
@@ -541,9 +548,18 @@ function renderTaskView() {
   } else if (!t.steps.length) {
     body = `<div class="tk-empty"><span class="spin-ch">${SPIN[spinFrame % SPIN.length]}</span> ${esc(S.agent.name)} is planning…</div>`;
   } else {
-    body = `<div class="tk-body"><div class="tk-graph">${graphHtml(t)}</div><aside class="tk-side">${sideHtml(S)}</aside></div>`;
+    body = viewKey === "graph"
+      ? `<div class="tk-body"><div class="tk-graph">${graphHtml(t)}</div><aside class="tk-side">${sideHtml(S)}</aside></div>`
+      : `<div class="tk-body"><div class="tk-viewslot"></div><aside class="tk-side">${sideHtml(S)}</aside></div>`;
   }
+  // A plugin's view keeps its canvas across redraws: take it out first.
+  S.view?.el.remove();
   host.innerHTML = head + body;
+  const slot = host.querySelector(".tk-viewslot");
+  if (slot) {
+    const el = boardViewElement(S, viewKey);
+    if (el) slot.replaceWith(el);
+  }
   const g = host.querySelector(".tk-graph");
   if (g) {
     g.scrollLeft = scroll;
@@ -667,6 +683,13 @@ function bindTaskView(P) {
     const T = S();
     if (!T?.task) return;
     const t = T.task;
+    const vb = e.target.closest(".tk-viewbtn");
+    if (vb) {
+      T.boardView = vb.dataset.view;
+      if (T.boardView === "graph") closeBoardView(T);
+      withPane(P, renderTaskView);
+      return;
+    }
     const node = e.target.closest(".tk-node");
     if (node) {
       t.selected = t.selected === node.dataset.step ? null : node.dataset.step;

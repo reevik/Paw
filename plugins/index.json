@@ -9,7 +9,10 @@
       "author": "Erhan Bağdemir",
       "license": "MIT",
       "homepage": "https://github.com/reevik/Paw/tree/main/plugins/pomodoro",
-      "permissions": ["commands", "statusbar"],
+      "permissions": [
+        "commands",
+        "statusbar"
+      ],
       "path": "pomodoro"
     },
     {
@@ -20,7 +23,11 @@
       "author": "Erhan Bağdemir",
       "license": "MIT",
       "homepage": "https://github.com/reevik/Paw/tree/main/plugins/usage-meter",
-      "permissions": ["commands", "statusbar", "events"],
+      "permissions": [
+        "commands",
+        "statusbar",
+        "events"
+      ],
       "path": "usage-meter"
     },
     {
@@ -31,8 +38,24 @@
       "author": "Erhan Bağdemir",
       "license": "MIT",
       "homepage": "https://github.com/reevik/Paw/tree/main/plugins/snippets",
-      "permissions": ["commands", "prompt"],
+      "permissions": [
+        "commands",
+        "prompt"
+      ],
       "path": "snippets"
+    },
+    {
+      "id": "task-graph-3d",
+      "name": "Task Graph 3D",
+      "version": "1.0.0",
+      "description": "A task's plan as a 3D graph on its board: steps in layers, colored by state; drag to turn it, click a step for its details.",
+      "author": "Erhan Bağdemir",
+      "license": "MIT",
+      "homepage": "https://github.com/reevik/Paw/tree/main/plugins/task-graph-3d",
+      "permissions": [
+        "views"
+      ],
+      "path": "task-graph-3d"
     }
   ]
 }

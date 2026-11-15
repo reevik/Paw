@@ -34,6 +34,16 @@ let detectionsReady = false;
 // ---------- helpers ----------
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const tildify = (p) => (p && homeDir && p.startsWith(homeDir) ? "~" + p.slice(homeDir.length) : p);
+/** A folder for tight spots (the status bar): `~/…/parent/name` when it's long. */
+function shortPath(p, max = 36) {
+  const t = tildify(p) ?? "";
+  if (t.length <= max) return t;
+  const parts = t.split("/");
+  const head = parts[0] === "~" ? "~" : "";
+  const tail2 = parts.slice(-2).join("/");
+  const short = `${head}/…/${tail2}`;
+  return short.length <= max + 4 ? short : `…/${parts.at(-1)}`;
+}
 const basename = (p) => (p === homeDir ? "~" : String(p).split("/").filter(Boolean).pop() || "/");
 
 function fmtElapsed(ms) {
@@ -104,7 +114,14 @@ const info = (S, html) => pushLine(S, { stream: "info", html, ts: Date.now() });
 // every command run in it, yours and the agent's (commands.log), and the
 // command its agent was last started with (launch.sh).
 
-const newPawId = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 10)}-tab`);
+/** A tab's id: 8 hex characters, not used by an open or stored session. */
+function newPawId() {
+  const taken = new Set([...sessions.values()].map((S) => S.pawId).concat(archive.ids ?? []));
+  for (;;) {
+    const id = crypto.getRandomValues(new Uint32Array(1))[0].toString(16).padStart(8, "0");
+    if (!taken.has(id)) return id;
+  }
+}
 /** The tab's folder (created on first use). */
 async function sessionDir(S) {
   S.sessionDir ??= await invoke("session_dir", { id: S.pawId }).catch(() => null);
@@ -1691,7 +1708,7 @@ async function reloadThumbs(S) {
 // Closed sessions sets how many are kept; the oldest go first. A tab closed
 // before anything happened in it leaves nothing behind.
 
-const archive = { closed: 0, size: 0 };
+const archive = { closed: 0, size: 0, ids: [] };
 const maxSessions = () => Math.max(0, Number(settings.general.max_sessions ?? 50) || 0);
 const openIds = () => [...sessions.values()].map((S) => S.pawId);
 
@@ -1707,6 +1724,7 @@ async function refreshArchive() {
     const open = openIds();
     await invoke("prune_sessions", { max: maxSessions(), open });
     const list = await invoke("list_sessions");
+    archive.ids = list.map((x) => x.id);
     const closed = list.filter((x) => !open.includes(x.id));
     archive.closed = closed.length;
     archive.size = closed.reduce((n, x) => n + x.size, 0);
@@ -1750,7 +1768,7 @@ async function sessionsListHtml() {
     const d = desc.length > 44 ? desc.slice(0, 43) + "…" : desc;
     const when = S ? lastActive(S) : x.last_active;
     const status = S ? `<span class="ok">● active   </span>` : `<span class="dim">○ completed</span>`;
-    return `${status} <span class="dim">${esc(x.id.slice(0, 8))}</span>  ` +
+    return `${status} <span class="dim">${esc(x.id.length > 8 ? x.id.slice(0, 8) + "…" : x.id)}</span>  ` +
       `<a href="#" class="task-link" data-open-session="${esc(x.id)}" title="${S ? "Go to its tab" : "Reopen it in a new tab"}">${esc(d)}</a>${" ".repeat(44 - d.length)}` +
       `  ${esc(ago(when).padEnd(10))}  ${esc(fmtSize(x.size).padStart(7))}  <span class="dim">${esc(agentName(x.agent))}${x.cwd ? " · " + esc(tildify(x.cwd)) : ""}${x.task ? " · task" : ""}</span>`;
   });
@@ -1789,7 +1807,8 @@ async function restoreTab(t, note = null) {
   try { cwd = await invoke("resolve_dir", { path: cwd, base: homeDir }); } catch { cwd = homeDir; }
   // Tabs from before session folders take their conversation's id (Paw
   // Agent's conversation moved into session/<that id>), or a new one.
-  const pawId = t.id ?? (isPaw(agent) && /^[0-9a-f-]{8,64}$/i.test(t.session ?? "") ? t.session : newPawId());
+  // (its first 8 characters, as the folder is called since ids were shortened).
+  const pawId = t.id ?? (isPaw(agent) && /^[0-9a-f-]{8,64}$/i.test(t.session ?? "") ? t.session.slice(0, 8) : newPawId());
   const S = {
     sid: nextSid++, pawId, agent: structuredClone(agent), mode: sessionMode(agent), cwd,
     model: t.model ?? defaultModel(agent), approval: t.approval ?? approvalFromLegacy(t.perm) ?? defaultApproval(agent),
@@ -2344,7 +2363,8 @@ function renderHeader() {
   }[S.mode];
   $("input").placeholder = S.shellBusy ? "Input for the running command…  (Ctrl-C interrupts)" : S.task ? taskPlaceholder(S) : ph;
   updateGlyph();
-  $("sl-left").textContent = [S.agent.name, S.model || "default model", tildify(S.cwd)].join("  ·  ");
+  $("sl-left").textContent = [S.agent.name, S.model || "default model", shortPath(S.cwd)].join("  ·  ");
+  $("sl-left").title = tildify(S.cwd);
   renderModePill();
   renderBusy();
 }

@@ -1185,8 +1185,10 @@ pub async fn paw_agent_start(
     // shared folder): it moves here.
     if let (Some(path), Some(home)) = (&history_path, crate::paths::home()) {
         if !path.exists() {
+            let short: String = conversation.chars().take(8).collect();
             let elsewhere = [
                 crate::paths::session_dir_in(&home, &conversation).map(|d| d.join("conversations").join(format!("{conversation}.json"))),
+                crate::paths::session_dir_in(&home, &short).map(|d| d.join("conversations").join(format!("{conversation}.json"))),
                 Some(home.join("paw-agent").join(format!("{conversation}.json"))),
             ];
             if let Some(old) = elsewhere.into_iter().flatten().find(|p| p.is_file()) {

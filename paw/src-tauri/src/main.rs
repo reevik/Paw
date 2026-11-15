@@ -34,6 +34,46 @@ fn open_url(url: String) -> Result<(), String> {
     Ok(())
 }
 
+/// A tab's session folder (`~/.paw/session/<id>`), created if needed;
+/// `reveal` also opens it in Finder.
+#[tauri::command]
+fn session_dir(id: String, reveal: Option<bool>) -> Result<String, String> {
+    let dir = paths::ensure_session_dir(&id)?;
+    if reveal.unwrap_or(false) {
+        std::process::Command::new("/usr/bin/open").arg(&dir).spawn().map_err(|e| e.to_string())?;
+    }
+    Ok(dir.display().to_string())
+}
+
+/// The command Paw last started the tab's agent with, as `launch.sh`.
+#[tauri::command]
+fn session_launch(id: String, cwd: String, command: String) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = paths::ensure_session_dir(&id)?;
+    let q = |s: &str| format!("'{}'", s.replace('\'', r"'\''"));
+    let script = format!(
+        "#!/bin/sh\n# How Paw last started this tab's agent. Running it starts the agent the same way.\ncd {} || exit 1\nPAW_SESSION_DIR={} exec {command}\n",
+        q(&cwd),
+        q(&dir.display().to_string()),
+    );
+    let path = dir.join("launch.sh");
+    std::fs::write(&path, script).map_err(|e| e.to_string())?;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())
+}
+
+/// Add lines to a tab's `commands.log` (commands you and the agent ran).
+#[tauri::command]
+fn session_log(id: String, text: String) -> Result<(), String> {
+    use std::io::Write;
+    let dir = paths::ensure_session_dir(&id)?;
+    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("commands.log")).map_err(|e| e.to_string())?;
+    let mut text = text;
+    if !text.ends_with('\n') {
+        text.push('\n');
+    }
+    f.write_all(text.as_bytes()).map_err(|e| e.to_string())
+}
+
 /// Let the user pick a Ghostty / iTerm theme file; returns (file name, contents).
 #[tauri::command]
 async fn pick_theme_file(app: AppHandle) -> Result<Option<(String, String)>, String> {
@@ -234,7 +274,7 @@ fn main() {
         })
         .setup(|app| {
             // First start after the rename: bring Hive's settings along.
-            paths::carry_over_from_hive(app.handle());
+            paths::move_to_paw_home(app.handle());
             // Detect installed agent CLIs in the background right away.
             registry::start_scan(app.handle().clone());
             // Apply the saved light/dark choice before the first paint settles.
@@ -282,6 +322,10 @@ fn main() {
             open_url,
             attachments::pick_attachments,
             attachments::save_pasted_image,
+            attachments::save_pasted_text,
+            session_dir,
+            session_log,
+            session_launch,
             attachments::describe_attachment,
             skills::skills_scan,
             skills::skills_pick_folder,

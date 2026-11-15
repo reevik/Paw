@@ -114,12 +114,38 @@ pub fn setup(app: &AppHandle) -> tauri::Result<TrayIcon> {
 /// Bring the window (and the Dock icon) back.
 pub fn show_main<R: Runtime>(app: &AppHandle<R>) {
     #[cfg(target_os = "macos")]
-    let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+    {
+        let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+        set_dock_icon(app);
+    }
     if let Some(w) = app.get_webview_window(MAIN) {
         let _ = w.unminimize();
         let _ = w.show();
         let _ = w.set_focus();
     }
+}
+
+/// The paw in the Dock for a Paw that isn't an app bundle (a development
+/// build): macOS has no icon for it, and switching the Dock icon back on
+/// shows a plain "exec" tile. An app bundle keeps macOS's own icon handling.
+#[cfg(target_os = "macos")]
+pub fn set_dock_icon<R: Runtime>(app: &AppHandle<R>) {
+    let bundled = std::env::current_exe()
+        .map(|e| e.ancestors().any(|p| p.extension().is_some_and(|x| x == "app")))
+        .unwrap_or(true);
+    if bundled {
+        return;
+    }
+    let _ = app.run_on_main_thread(|| {
+        use objc2::{AllocAnyThread, MainThreadMarker};
+        use objc2_app_kit::{NSApplication, NSImage};
+        use objc2_foundation::NSData;
+        let Some(mtm) = MainThreadMarker::new() else { return };
+        let data = NSData::with_bytes(include_bytes!("../icons/128x128@2x.png"));
+        if let Some(img) = NSImage::initWithData(NSImage::alloc(), &data) {
+            unsafe { NSApplication::sharedApplication(mtm).setApplicationIconImage(Some(&img)) };
+        }
+    });
 }
 
 /// Closing the window hides it: Paw keeps running in the menu bar.
@@ -203,6 +229,8 @@ mod tests {
     #[test]
     fn the_icon_loads() {
         let i = icon();
-        assert_eq!((i.width(), i.height()), (44, 44));
+        // 22 pt @2x tall; the menu bar draws it 18 pt tall, so the paw fills it.
+        assert_eq!(i.height(), 44);
+        assert!((40..=48).contains(&i.width()));
     }
 }

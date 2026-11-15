@@ -338,6 +338,8 @@ fn main() {
             // Detect installed agent CLIs in the background right away.
             registry::start_scan(app.handle().clone());
             create_main_window(app.handle())?;
+            #[cfg(target_os = "macos")]
+            menubar::set_dock_icon(app.handle());
             // Talk to the daemon (starting it when it isn't running).
             daemon::start_link(app.handle());
             // Closing the window only hides it.

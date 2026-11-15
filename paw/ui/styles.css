@@ -369,6 +369,8 @@ button:disabled { opacity: .4; pointer-events: none; }
 .tl.info b { color: var(--t-strong); }
 .tl .cmd { color: var(--t-accent); }
 .tl .ok { color: var(--t-green); }
+.tl .err { color: var(--t-red); }
+.tl .warn { color: var(--t-yellow); }
 .session .pill.ready { color: var(--t-green); background: color-mix(in srgb, var(--t-green) 10%, transparent); }
 .session .pill.idle, .session .pill.starting { color: var(--t-dim); background: var(--card-2); }
 
@@ -944,3 +946,5 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
 .swatch { width: 16px; height: 16px; border-radius: 50%; border: 0; padding: 0; cursor: default; }
 .swatch.on { box-shadow: 0 0 0 2px var(--card, white), 0 0 0 3.5px currentColor; }
 .mi-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; margin-right: 2px; }
+.tl a.task-link { color: var(--t-fg); text-decoration: underline; text-decoration-color: var(--t-dim); text-underline-offset: 3px; cursor: pointer; }
+.tl a.task-link:hover { color: var(--t-accent); text-decoration-color: currentColor; }

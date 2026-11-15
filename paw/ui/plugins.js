@@ -289,6 +289,8 @@ async function pluginMessage(entry, m) {
       if (!v?.S.task) return;
       v.S.task.selected = m.step && v.S.task.steps.some((s) => s.id === m.step) ? m.step : null;
       inPane(v.S, renderTaskView);
+      v.S.pluginTaskAt = 0; // the view hears it now (it draws the selection)
+      pluginTaskChanged(v.S);
       return;
     }
     case "storage-get": {
@@ -452,10 +454,17 @@ function boardViewElement(S, key) {
     const r = canvas.getBoundingClientRect();
     return { x: e.clientX - r.left, y: e.clientY - r.top, buttons: e.buttons, button: e.button, shift: e.shiftKey, alt: e.altKey };
   };
+  // Hover moves: at most one a frame, always the latest (the last one must arrive).
+  let hover = null;
   for (const type of ["pointerdown", "pointermove", "pointerup", "pointerleave", "dblclick"]) {
     canvas.addEventListener(type, (e) => {
       if (type === "pointerdown") canvas.setPointerCapture?.(e.pointerId);
-      if (type === "pointermove" && !e.buttons && Math.random() < 0.5) return; // hover: half is plenty
+      if (type === "pointermove" && !e.buttons) {
+        if (!hover) setTimeout(() => { if (hover) send("pointer", hover); hover = null; }, 16);
+        hover = { type, ...pt(e) };
+        return;
+      }
+      hover = null;
       send("pointer", { type, ...pt(e) });
     });
   }

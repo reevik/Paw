@@ -1,19 +1,26 @@
-// Task Graph 3D: a task's plan as a 3D graph on its board ("3D", next to
-// "Graph"). Plain WebGL on the canvas Paw hands over; no libraries.
+// Task Graph 3D: a task's plan as a glowing 3D graph on its board ("3D",
+// next to "Graph"). Plain WebGL on the canvas Paw hands over; no libraries.
 //
-// Steps are slabs in layers, left to right by what they need; a layer's
-// steps sit around a ring. Colors show their state (running ones pulse);
-// curves join each step to the ones that need it. Drag to turn it, scroll to
-// zoom, double-click to reset; click a step for its details. Left alone (the
-// pointer elsewhere), it turns slowly.
+// Dots: the task (the hub), its steps (colored by state, sized by how long
+// they took) and the agents that run them (sized by how many). Lines join
+// each step to the steps it needs, to its agent, and to the task. A force
+// simulation lays them out: linked dots pull together, all push apart,
+// steps lean left to right by what they need. Hover a dot to light up its
+// neighborhood; click a step for its details; drag to turn, scroll to zoom,
+// double-click to reset. Left alone, it drifts and turns slowly.
 
-const STATE_COLOR = {
-  running: [0.29, 0.55, 0.97], needs: [0.91, 0.51, 0.23], done: [0.25, 0.65, 0.36], failed: [0.9, 0.33, 0.29],
-  stopped: [0.83, 0.65, 0.17], skipped: [0.42, 0.44, 0.48], waiting: [0.5, 0.52, 0.57], blocked: [0.29, 0.55, 0.97],
+const COLORS = {
+  task: [0.49, 0.86, 0.43],      // the hub: green
+  agent: [0.78, 0.43, 0.91],     // agents: violet
+  done: [0.34, 0.78, 0.64],      // teal
+  running: [0.36, 0.78, 0.9],    // cyan, pulsing
+  needs: [0.91, 0.43, 0.64],     // pink: waiting for you
+  failed: [0.91, 0.51, 0.42],    // salmon
+  stopped: [0.85, 0.72, 0.35],   // amber
+  waiting: [0.55, 0.58, 0.68],   // slate
+  skipped: [0.38, 0.4, 0.46],
 };
 const STATE_TEXT = { running: "running", needs: "needs you", done: "done", failed: "failed", stopped: "stopped", skipped: "skipped", waiting: "waiting", blocked: "running" };
-const BOX = [2.5, 1.0, 0.32];        // a step's slab
-const LAYER_GAP = 3.6;
 
 // ---------- math (column-major 4×4) ----------
 function mul(a, b) {
@@ -38,14 +45,13 @@ function lookAt(e, c, up) {
   return new Float32Array([xx, yx, zx, 0, xy, yy, zy, 0, xz, yz, zz, 0,
     -(xx * e[0] + xy * e[1] + xz * e[2]), -(yx * e[0] + yy * e[1] + yz * e[2]), -(zx * e[0] + zy * e[1] + zz * e[2]), 1]);
 }
-const model = (p, s) => new Float32Array([s[0], 0, 0, 0, 0, s[1], 0, 0, 0, 0, s[2], 0, p[0], p[1], p[2], 1]);
 function project(m, p) {
   const x = m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12], y = m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13];
   const z = m[2] * p[0] + m[6] * p[1] + m[10] * p[2] + m[14], w = m[3] * p[0] + m[7] * p[1] + m[11] * p[2] + m[15];
   return [x / w, y / w, z / w, w];
 }
 
-// ---------- GL helpers ----------
+// ---------- GL ----------
 function program(gl, vs, fs) {
   const sh = (type, src) => {
     const s = gl.createShader(type);
@@ -64,96 +70,86 @@ function program(gl, vs, fs) {
   for (let i = 0; i < gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS); i++) { const u = gl.getActiveUniform(p, i); loc[u.name] = gl.getUniformLocation(p, u.name); }
   return { p, loc };
 }
-function buffer(gl, data, target = gl.ARRAY_BUFFER) {
-  const b = gl.createBuffer();
-  gl.bindBuffer(target, b);
-  gl.bufferData(target, data, gl.STATIC_DRAW);
-  return b;
-}
-function boxGeometry() {
-  // 6 faces × 4 corners: position + normal.
-  const f = [[[1, 0, 0], [0, 1, 0], [0, 0, 1]], [[-1, 0, 0], [0, 0, 1], [0, 1, 0]], [[0, 1, 0], [0, 0, 1], [1, 0, 0]],
-    [[0, -1, 0], [1, 0, 0], [0, 0, 1]], [[0, 0, 1], [1, 0, 0], [0, 1, 0]], [[0, 0, -1], [0, 1, 0], [1, 0, 0]]];
-  const v = [], idx = [];
-  f.forEach(([n, u, w], i) => {
-    for (const [a, b] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
-      v.push(n[0] * 0.5 + u[0] * a * 0.5 + w[0] * b * 0.5, n[1] * 0.5 + u[1] * a * 0.5 + w[1] * b * 0.5, n[2] * 0.5 + u[2] * a * 0.5 + w[2] * b * 0.5, ...n);
-    }
-    idx.push(i * 4, i * 4 + 1, i * 4 + 2, i * 4, i * 4 + 2, i * 4 + 3);
-  });
-  return { v: new Float32Array(v), i: new Uint16Array(idx) };
-}
-// The 12 edges of a unit box, for the selection outline.
-const WIRE = (() => {
-  const c = [];
-  for (const x of [-0.5, 0.5]) for (const y of [-0.5, 0.5]) c.push([x, y, -0.5], [x, y, 0.5]);
-  for (const x of [-0.5, 0.5]) for (const z of [-0.5, 0.5]) c.push([x, -0.5, z], [x, 0.5, z]);
-  for (const y of [-0.5, 0.5]) for (const z of [-0.5, 0.5]) c.push([-0.5, y, z], [0.5, y, z]);
-  return new Float32Array(c.flat());
-})();
 
+const minutes = (s, now) => (s.startedAt ? ((s.endedAt ?? now) - s.startedAt) / 60000 : 0);
 const fmtTime = (ms) => {
   const s = Math.max(0, Math.floor(ms / 1000));
   return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${Math.floor(s / 3600)}h ${Math.floor(s / 60) % 60}m`;
 };
-const parseColor = (css, fallback) => {
-  const m = /^#([0-9a-f]{6})$/i.exec(String(css).trim());
-  if (!m) return fallback;
+const shorten = (t, n) => (t.length > n ? t.slice(0, n - 1) + "…" : t);
+const parseHex = (css) => {
+  const m = /^#([0-9a-f]{6})$/i.exec(String(css ?? "").trim());
+  if (!m) return null;
   const n = parseInt(m[1], 16);
   return [(n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255];
 };
 
-// ---------- the scene ----------
-class Scene {
+class Graph {
   constructor(ctx) {
     this.ctx = ctx;
     const gl = ctx.canvas.getContext("webgl", { antialias: true, alpha: true, premultipliedAlpha: true });
     if (!gl) throw new Error("WebGL isn't available");
     this.gl = gl;
-    this.mesh = program(gl, `
-      attribute vec3 aPos; attribute vec3 aNor; uniform mat4 uMVP; varying vec3 vNor;
-      void main() { vNor = aNor; gl_Position = uMVP * vec4(aPos, 1.0); }`, `
-      precision mediump float; varying vec3 vNor; uniform vec3 uColor; uniform float uAlpha;
+    this.theme = ctx.theme || {};
+    this.dark = this.theme.dark !== false;
+    // The glow: a solid core and a soft halo, drawn as one point per dot.
+    this.dots = program(gl, `
+      attribute vec3 aPos; attribute vec3 aColor; attribute float aSize; attribute float aAlpha;
+      uniform mat4 uMVP; uniform float uScale; varying vec3 vColor; varying float vAlpha;
       void main() {
-        float d = max(dot(normalize(vNor), normalize(vec3(0.4, 0.8, 0.6))), 0.0);
-        gl_FragColor = vec4(uColor * (0.5 + 0.55 * d) * uAlpha, uAlpha);
+        gl_Position = uMVP * vec4(aPos, 1.0);
+        gl_PointSize = aSize * uScale / gl_Position.w;
+        vColor = aColor; vAlpha = aAlpha;
+      }`, `
+      precision mediump float; varying vec3 vColor; varying float vAlpha; uniform float uGlow;
+      void main() {
+        vec2 p = gl_PointCoord * 2.0 - 1.0; float r = length(p);
+        if (r > 1.0) discard;
+        float core = smoothstep(0.5, 0.45, r);
+        float halo = exp(-r * r * 3.0) * uGlow;
+        float a = max(core, halo) * vAlpha;
+        vec3 c = mix(vColor * 0.85, vColor * 1.12, core);
+        gl_FragColor = vec4(c * a, a);
       }`);
-    this.line = program(gl, `
-      attribute vec3 aPos; uniform mat4 uMVP; void main() { gl_Position = uMVP * vec4(aPos, 1.0); }`, `
-      precision mediump float; uniform vec3 uColor; uniform float uAlpha; void main() { gl_FragColor = vec4(uColor * uAlpha, uAlpha); }`);
-    this.label = program(gl, `
-      attribute vec3 aPos; attribute vec2 aUV; uniform mat4 uMVP; varying vec2 vUV;
-      void main() { vUV = aUV; gl_Position = uMVP * vec4(aPos, 1.0); }`, `
-      precision mediump float; varying vec2 vUV; uniform sampler2D uTex; void main() { gl_FragColor = texture2D(uTex, vUV); }`);
-    const box = boxGeometry();
-    this.boxV = buffer(gl, box.v);
-    this.boxI = buffer(gl, box.i, gl.ELEMENT_ARRAY_BUFFER);
-    this.wireV = buffer(gl, WIRE);
-    this.dyn = gl.createBuffer(); // edges and label quads, refilled per frame
+    this.lines = program(gl, `
+      attribute vec3 aPos; attribute float aAlpha; uniform mat4 uMVP; varying float vAlpha;
+      void main() { gl_Position = uMVP * vec4(aPos, 1.0); vAlpha = aAlpha; }`, `
+      precision mediump float; varying float vAlpha; uniform vec3 uColor;
+      void main() { gl_FragColor = vec4(uColor * vAlpha, vAlpha); }`);
+    this.text = program(gl, `
+      attribute vec2 aPos; attribute vec2 aUV; varying vec2 vUV;
+      void main() { vUV = aUV; gl_Position = vec4(aPos, 0.0, 1.0); }`, `
+      precision mediump float; varying vec2 vUV; uniform sampler2D uTex; uniform float uAlpha;
+      void main() { gl_FragColor = texture2D(uTex, vUV) * uAlpha; }`);
+    this.buf = gl.createBuffer();
+    this.maxPoint = gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE)?.[1] ?? 256;
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-    this.theme = ctx.theme || {};
-    this.edgeColor = parseColor(this.theme.dim, [0.55, 0.56, 0.6]);
-    this.accent = parseColor(this.theme.accent, [0.49, 0.81, 1]);
-    this.labels = new Map(); // step id → { key, tex }
-    this.cam = { yaw: 0.45, pitch: 0.28, zoom: 1 };
+    gl.disable(gl.DEPTH_TEST);
+    this.lineColor = this.dark ? [0.56, 0.58, 0.9] : [0.38, 0.4, 0.62];
+    this.textColor = parseHex(this.theme.fg) ?? (this.dark ? [0.9, 0.9, 0.92] : [0.15, 0.15, 0.18]);
+    this.labels = new Map(); // text → { tex, w, h }
+    this.cam = { yaw: 0.4, pitch: 0.22, zoom: 1 };
     this.touched = 0;
-    this.drag = null;
+    this.hover = null;
+    this.nodes = new Map(); // id → { id, kind, pos, vel, color, size, label, step? }
+    this.edges = [];        // [a, b, kind]
+    this.heat = 1;
     this.setTask(ctx.task);
     this.resize(ctx);
     ctx.on("resize", (s) => this.resize(s));
     ctx.on("task", (t) => this.setTask(t));
     ctx.on("pointer", (e) => this.pointer(e));
-    ctx.on("wheel", (e) => { this.cam.zoom = Math.min(3, Math.max(0.35, this.cam.zoom * Math.exp(e.dy * 0.0015))); this.touched = performance.now(); });
+    ctx.on("wheel", (e) => { this.cam.zoom = Math.min(3, Math.max(0.3, this.cam.zoom * Math.exp(e.dy * 0.0015))); this.touched = performance.now(); });
     ctx.on("close", () => { this.closed = true; });
-    // Out of sight, it only checks back now and then.
     this.visible = true;
     ctx.on("visible", (v) => { this.visible = !!v; });
     const raf = self.requestAnimationFrame ? (f) => self.requestAnimationFrame(f) : (f) => setTimeout(() => f(performance.now()), 16);
     const loop = (t) => {
       if (this.closed) return;
       if (!this.visible) return setTimeout(() => loop(performance.now()), 500);
+      this.step();
       this.draw(t);
       raf(loop);
     };
@@ -166,47 +162,112 @@ class Scene {
     this.ctx.canvas.height = Math.round(height * this.dpr);
   }
 
+  /** Dots and lines for the task; dots that were there keep their place. */
   setTask(task) {
     this.task = task;
     const steps = task?.steps ?? [];
+    const now = Date.now();
     const byId = new Map(steps.map((s) => [s.id, s]));
+    // How deep a step is (what it needs): the layout leans that way, left to right.
     const level = new Map();
     const lv = (s, seen) => {
       if (level.has(s.id)) return level.get(s.id);
       if (seen.has(s.id)) return 0;
       seen.add(s.id);
-      const l = s.needs.filter((n) => byId.has(n)).reduce((m, n) => Math.max(m, lv(byId.get(n), seen) + 1), 0);
+      const l = (s.needs ?? []).filter((n) => byId.has(n)).reduce((m, n) => Math.max(m, lv(byId.get(n), seen) + 1), 0);
       level.set(s.id, l);
       return l;
     };
     steps.forEach((s) => lv(s, new Set()));
-    const cols = [];
-    steps.forEach((s) => (cols[level.get(s.id)] ??= []).push(s));
-    this.pos = new Map();
-    const L = cols.length;
-    cols.forEach((col, i) => {
-      const n = col.length;
-      const r = n > 1 ? 1.0 + 0.42 * n : 0;
-      col.forEach((s, j) => {
-        const a = (j / n) * Math.PI * 2 + i * 0.7;
-        this.pos.set(s.id, [(i - (L - 1) / 2) * LAYER_GAP, Math.cos(a) * r, Math.sin(a) * r]);
+    this.levels = Math.max(0, ...level.values()) + 1;
+    const old = this.nodes;
+    const nodes = new Map();
+    const jitter = () => (Math.random() - 0.5) * 1.5;
+    const place = (id, near) => old.get(id)?.pos ?? (near ? near.map((v) => v + jitter()) : [jitter() * 2, jitter() * 2, jitter() * 2]);
+    const add = (id, kind, props) => {
+      const n = { id, kind, pos: place(id, props.near), vel: old.get(id)?.vel ?? [0, 0, 0], ...props };
+      nodes.set(id, n);
+      return n;
+    };
+    const hub = add("task", "task", { color: COLORS.task, size: 1.0, label: shorten(task?.title || "Task", 40), sub: STATE_TEXT[task?.state] ?? "" });
+    const agents = new Map();
+    for (const s of steps) {
+      const m = minutes(s, now);
+      const state = s.state === "blocked" ? "running" : s.state;
+      add(`s:${s.id}`, "step", {
+        step: s.id, state, color: COLORS[state] ?? COLORS.waiting,
+        size: 0.5 + Math.min(0.6, Math.sqrt(m) * 0.08), label: shorten(s.title, 34),
+        sub: [STATE_TEXT[s.state] ?? s.state, s.startedAt && s.state !== "waiting" ? fmtTime((s.endedAt ?? now) - s.startedAt) : ""].filter(Boolean).join(" · "),
+        level: level.get(s.id) ?? 0, near: hub.pos,
       });
+      agents.set(s.agent, (agents.get(s.agent) ?? 0) + 1);
+    }
+    for (const [name, count] of agents) {
+      add(`a:${name}`, "agent", { color: COLORS.agent, size: 0.55 + Math.min(0.4, count * 0.06), label: name || "agent", sub: `${count} step${count === 1 ? "" : "s"}` });
+    }
+    const edges = [];
+    for (const s of steps) {
+      for (const n of s.needs ?? []) if (byId.has(n)) edges.push([`s:${n}`, `s:${s.id}`, "needs"]);
+      edges.push([`a:${s.agent}`, `s:${s.id}`, "agent"]);
+      edges.push(["task", `s:${s.id}`, "task"]);
+    }
+    const changed = nodes.size !== old.size || [...nodes.keys()].some((k) => !old.has(k));
+    this.nodes = nodes;
+    this.edges = edges;
+    this.neighbors = new Map([...nodes.keys()].map((k) => [k, new Set([k])]));
+    for (const [a, b] of edges) { this.neighbors.get(a)?.add(b); this.neighbors.get(b)?.add(a); }
+    if (changed) {
+      this.heat = 1;
+      for (let i = 0; i < 260; i++) this.step(true); // settle before the first frame
+    }
+  }
+
+  /** One step of the layout: springs on lines, everything apart, a pull to the middle. */
+  step(fast = false) {
+    const nodes = [...this.nodes.values()];
+    if (!nodes.length) return;
+    const k = fast ? 1 : Math.max(0.04, this.heat);
+    const force = nodes.map(() => [0, 0, 0]);
+    const index = new Map(nodes.map((n, i) => [n.id, i]));
+    for (let i = 0; i < nodes.length; i++) for (let j = i + 1; j < nodes.length; j++) {
+      const a = nodes[i].pos, b = nodes[j].pos;
+      const d0 = a[0] - b[0], d1 = a[1] - b[1], d2 = a[2] - b[2];
+      const l2 = Math.max(0.05, d0 * d0 + d1 * d1 + d2 * d2);
+      const l = Math.sqrt(l2);
+      const f = 2.2 / l2 / l;
+      force[i][0] += d0 * f; force[i][1] += d1 * f; force[i][2] += d2 * f;
+      force[j][0] -= d0 * f; force[j][1] -= d1 * f; force[j][2] -= d2 * f;
+    }
+    for (const [ia, ib, kind] of this.edges) {
+      const i = index.get(ia), j = index.get(ib);
+      if (i == null || j == null) continue;
+      const a = nodes[i].pos, b = nodes[j].pos;
+      const rest = kind === "needs" ? 1.9 : kind === "agent" ? 2.6 : 3.2;
+      const strength = kind === "needs" ? 0.09 : kind === "agent" ? 0.035 : 0.02;
+      const d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+      const l = Math.hypot(d[0], d[1], d[2]) || 0.01;
+      const f = (l - rest) * strength / l;
+      for (let c = 0; c < 3; c++) { force[i][c] += d[c] * f; force[j][c] -= d[c] * f; }
+    }
+    nodes.forEach((n, i) => {
+      const f = force[i];
+      for (let c = 0; c < 3; c++) f[c] -= n.pos[c] * 0.012; // toward the middle
+      // Steps lean left to right by what they need.
+      if (n.kind === "step") f[0] += ((n.level - (this.levels - 1) / 2) * 1.6 - n.pos[0]) * 0.02;
+      for (let c = 0; c < 3; c++) {
+        n.vel[c] = (n.vel[c] + f[c] * k) * 0.82;
+        n.pos[c] += Math.max(-0.5, Math.min(0.5, n.vel[c]));
+      }
     });
-    // The radius of a sphere around everything: the camera fits it, whichever way it turns.
-    let r = 0;
-    for (const p of this.pos.values()) r = Math.max(r, Math.hypot(...p) + Math.hypot(BOX[0] / 2, BOX[1] / 2));
-    this.radius = Math.max(2, r);
+    if (!fast) this.heat = Math.max(0.04, this.heat * 0.995); // settles, but keeps drifting a little
   }
 
   pointer(e) {
-    // While the pointer is over the view it holds still, so steps stay where you aim.
-    if (e.type === "pointermove" && !e.buttons) { this.hover = true; this.touched = performance.now(); }
-    if (e.type === "pointerleave") this.hover = false;
-    if (e.type === "pointerdown") {
-      this.hover = true;
-      this.drag = { x: e.x, y: e.y, moved: 0 };
-      this.touched = performance.now();
-    } else if (e.type === "pointermove" && this.drag && e.buttons) {
+    // The dot under the pointer is picked each frame (dots move); this is where the pointer is.
+    if (e.type === "pointermove" && !e.buttons) { this.mouse = { x: e.x, y: e.y }; this.touched = performance.now(); }
+    if (e.type === "pointerleave") { this.mouse = null; this.hover = null; this.drag = null; }
+    if (e.type === "pointerdown") { this.drag = { x: e.x, y: e.y, moved: 0 }; this.touched = performance.now(); }
+    else if (e.type === "pointermove" && this.drag && e.buttons) {
       const dx = e.x - this.drag.x, dy = e.y - this.drag.y;
       this.drag.moved += Math.abs(dx) + Math.abs(dy);
       this.drag.x = e.x; this.drag.y = e.y;
@@ -214,206 +275,238 @@ class Scene {
       this.cam.pitch = Math.max(-1.3, Math.min(1.3, this.cam.pitch + dy * 0.008));
       this.touched = performance.now();
     } else if (e.type === "pointerup") {
-      if (this.drag && this.drag.moved < 5) this.pick(e.x, e.y);
+      if (this.drag && this.drag.moved < 5) {
+        const n = this.pick(e.x, e.y);
+        this.ctx.select(n?.step ?? null);
+      }
       this.drag = null;
     } else if (e.type === "dblclick") {
-      this.cam = { yaw: 0.45, pitch: 0.28, zoom: 1 };
-      this.touched = 0;
+      this.cam = { yaw: 0.4, pitch: 0.22, zoom: 1 };
+      this.heat = 0.6;
     }
   }
 
-  /** The step under the pointer (its label's rectangle on screen), nearest first. */
+  /** The dot under the pointer (front-most). */
   pick(x, y) {
     let best = null;
-    for (const [id, q] of this.quads ?? []) {
-      const pts = q.map((p) => project(this.vp, p));
-      if (pts.some((p) => p[3] <= 0)) continue;
-      const sx = pts.map((p) => (p[0] * 0.5 + 0.5) * this.w), sy = pts.map((p) => (0.5 - p[1] * 0.5) * this.h);
-      if (x >= Math.min(...sx) && x <= Math.max(...sx) && y >= Math.min(...sy) && y <= Math.max(...sy)) {
-        const z = pts[0][2];
-        if (!best || z < best.z) best = { id, z };
-      }
+    for (const s of this.screen ?? []) {
+      const d = Math.hypot(s.x - x, s.y - y);
+      if (d <= s.r + 4 && (!best || s.z < best.z)) best = s;
     }
-    this.ctx.select(best ? best.id : null);
+    return best?.node ?? null;
   }
 
-  /** A step's label as a texture, redrawn when its text changes. */
-  labelTex(s, now) {
-    const state = s.state;
-    const time = s.startedAt ? fmtTime((s.endedAt ?? now) - s.startedAt) : "";
-    const sub = [s.agent, STATE_TEXT[state] ?? state, state !== "waiting" ? time : "", s.edits ? "" : "reads"].filter(Boolean).join(" · ");
-    const key = `${s.title}|${sub}`;
-    const have = this.labels.get(s.id);
-    if (have?.key === key) return have.tex;
-    const W = 640, H = 256;
-    const c = new OffscreenCanvas(W, H);
-    const g = c.getContext("2d");
-    g.fillStyle = "#ffffff";
+  /** A label as a texture (cached by its text). */
+  label(text, sub, strong) {
+    const key = `${text}|${sub}|${strong}`;
+    if (this.labels.has(key)) return this.labels.get(key);
+    const S = 2; // drawn at 2× for sharp text
+    const c = new OffscreenCanvas(8, 8);
+    let g = c.getContext("2d");
+    const f1 = `${strong ? 600 : 500} ${11 * S}px -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif`;
+    const f2 = `${10 * S}px -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif`;
+    g.font = f1;
+    const w1 = g.measureText(text).width;
+    g.font = f2;
+    const w2 = sub ? g.measureText(sub).width : 0;
+    const W = Math.ceil(Math.max(w1, w2) + 8 * S), H = Math.ceil((sub ? 30 : 16) * S);
+    c.width = W; c.height = H;
+    g = c.getContext("2d");
+    const [r, gg, b] = this.textColor.map((v) => Math.round(v * 255));
+    g.textAlign = "center";
     g.textBaseline = "top";
-    g.font = "600 46px -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif";
-    // Two lines of title at most.
-    const words = String(s.title).split(/\s+/);
-    const lines = [""];
-    for (const w of words) {
-      const next = lines[lines.length - 1] ? `${lines[lines.length - 1]} ${w}` : w;
-      if (g.measureText(next).width > W - 64 && lines[lines.length - 1]) {
-        if (lines.length === 2) { lines[1] += "…"; break; }
-        lines.push(w);
-      } else lines[lines.length - 1] = next;
+    // A soft shadow keeps text readable over lines.
+    g.shadowColor = this.dark ? "rgba(0,0,0,.85)" : "rgba(255,255,255,.9)";
+    g.shadowBlur = 3 * S;
+    g.font = f1;
+    g.fillStyle = `rgba(${r},${gg},${b},0.95)`;
+    g.fillText(text, W / 2, 1 * S);
+    if (sub) {
+      g.font = f2;
+      g.fillStyle = `rgba(${r},${gg},${b},0.6)`;
+      g.fillText(sub, W / 2, 15 * S);
     }
-    lines.forEach((l, i) => {
-      let t = l;
-      while (g.measureText(t).width > W - 64 && t.length > 2) t = t.slice(0, -2) + "…";
-      g.fillText(t, 32, 30 + i * 58);
-    });
-    g.globalAlpha = 0.85;
-    g.font = "34px -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif";
-    let t = sub;
-    while (g.measureText(t).width > W - 64 && t.length > 2) t = t.slice(0, -2) + "…";
-    g.fillText(t, 32, 30 + 2 * 58 + 18);
     const gl = this.gl;
-    const tex = have?.tex ?? gl.createTexture();
+    const tex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, c);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    this.labels.set(s.id, { key, tex });
-    return tex;
+    const out = { tex, w: W / S, h: H / S };
+    // Times change every second: don't keep every old one.
+    if (this.labels.size > 400) {
+      for (const [k, v] of this.labels) { gl.deleteTexture(v.tex); this.labels.delete(k); if (this.labels.size < 200) break; }
+    }
+    this.labels.set(key, out);
+    return out;
   }
 
   draw(t) {
     const gl = this.gl;
-    const now = Date.now();
-    if (!this.drag && !this.hover && performance.now() - this.touched > 4000) this.cam.yaw += 0.0018; // turns slowly when left alone
+    if (!this.drag && !this.mouse && performance.now() - this.touched > 4000) this.cam.yaw += 0.0016;
     gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
     gl.clearColor(0, 0, 0, 0);
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-    const steps = this.task?.steps ?? [];
-    if (!steps.length) return;
-    // Far enough for the whole plan to fit the narrower of the two angles of view.
-    const fov = 0.75, aspect = this.w / Math.max(1, this.h);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    const nodes = [...this.nodes.values()];
+    if (!nodes.length) return;
+
+    // Fit the camera to the graph (a sphere around it), then the user's zoom.
+    const center = [0, 0, 0];
+    for (const n of nodes) for (let c = 0; c < 3; c++) center[c] += n.pos[c] / nodes.length;
+    let radius = 1;
+    for (const n of nodes) radius = Math.max(radius, Math.hypot(n.pos[0] - center[0], n.pos[1] - center[1], n.pos[2] - center[2]) + n.size * 0.5);
+    this.center = this.center ? this.center.map((v, i) => v + (center[i] - v) * 0.05) : center;
+    this.radius = this.radius ? this.radius + (radius - this.radius) * 0.05 : radius;
+    const fov = 0.8, aspect = this.w / Math.max(1, this.h);
     const half = Math.min(fov, 2 * Math.atan(Math.tan(fov / 2) * aspect)) / 2;
-    // Start where a sphere around the plan fits; then (below) move until the
-    // steps fill the view, whatever the board's shape.
-    this.fitD ??= this.radius / Math.sin(half);
-    const d = this.fitD * this.cam.zoom;
+    const d = (this.radius / Math.sin(half)) * 1.05 * this.cam.zoom;
     const { yaw, pitch } = this.cam;
-    const eye = [Math.cos(pitch) * Math.sin(yaw) * d, Math.sin(pitch) * d, Math.cos(pitch) * Math.cos(yaw) * d];
-    const view = lookAt(eye, [0, 0, 0], [0, 1, 0]);
-    const proj = perspective(fov, aspect, 0.1, 400);
-    this.vp = mul(proj, view);
-    const right = [view[0], view[4], view[8]], up = [view[1], view[5], view[9]];
-    const pulse = 0.82 + 0.18 * Math.sin(t / 220);
+    const c0 = this.center;
+    const eye = [c0[0] + Math.cos(pitch) * Math.sin(yaw) * d, c0[1] + Math.sin(pitch) * d, c0[2] + Math.cos(pitch) * Math.cos(yaw) * d];
+    // this.fit narrows or widens the view so the graph fills the board (learned
+    // from the last frame); the camera keeps its distance, so near dots don't balloon.
+    this.fit = this.fit ?? 1;
+    const view = 2 * Math.atan(Math.tan(fov / 2) * this.fit);
+    const vp = mul(perspective(view, aspect, 0.1, 500), lookAt(eye, c0, [0, 1, 0]));
+    const focal = this.h / 2 / Math.tan(view / 2); // CSS px per world unit at distance 1
+    const pulse = 0.75 + 0.25 * Math.sin(t / 260);
 
-    // Curves between steps.
-    gl.enable(gl.DEPTH_TEST);
-    gl.depthMask(true);
-    gl.useProgram(this.line.p);
-    gl.uniformMatrix4fv(this.line.loc.uMVP, false, this.vp);
-    const live = [], quiet = [];
-    for (const s of steps) {
-      const b = this.pos.get(s.id);
-      for (const n of s.needs) {
-        const a = this.pos.get(n);
-        if (!a || !b) continue;
-        const pa = [a[0] + BOX[0] / 2, a[1], a[2]], pb = [b[0] - BOX[0] / 2, b[1], b[2]];
-        const c = [(pa[0] + pb[0]) / 2, (pa[1] + pb[1]) / 2 + 0.6, (pa[2] + pb[2]) / 2];
-        const seg = [];
-        for (let i = 0; i <= 20; i++) {
-          const u = i / 20, k = 1 - u;
-          seg.push(k * k * pa[0] + 2 * k * u * c[0] + u * u * pb[0], k * k * pa[1] + 2 * k * u * c[1] + u * u * pb[1], k * k * pa[2] + 2 * k * u * c[2] + u * u * pb[2]);
-          if (i > 0 && i < 20) seg.push(seg[seg.length - 3], seg[seg.length - 2], seg[seg.length - 1]);
-        }
-        ((s.state === "running" || s.state === "needs" || s.state === "blocked") ? live : quiet).push(...seg);
-      }
-    }
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.dyn);
-    gl.enableVertexAttribArray(this.line.loc.aPos);
-    for (const [pts, color, alpha] of [[quiet, this.edgeColor, 0.75], [live, this.accent, pulse]]) {
-      if (!pts.length) continue;
-      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(pts), gl.DYNAMIC_DRAW);
-      gl.vertexAttribPointer(this.line.loc.aPos, 3, gl.FLOAT, false, 0, 0);
-      gl.uniform3fv(this.line.loc.uColor, color);
-      gl.uniform1f(this.line.loc.uAlpha, alpha);
-      gl.drawArrays(gl.LINES, 0, pts.length / 3);
-    }
+    // What's lit: the hovered dot and its neighbors (else the selected step's), else everything.
+    const sel = this.task?.selected ? `s:${this.task.selected}` : null;
+    const focus = this.hover?.id ?? (sel && this.nodes.has(sel) ? sel : null);
+    const lit = focus ? this.neighbors.get(focus) : null;
+    const dim = (id) => (lit && !lit.has(id) ? 0.22 : 1);
 
-    // Slabs.
-    gl.useProgram(this.mesh.p);
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.boxV);
-    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.boxI);
-    gl.enableVertexAttribArray(this.mesh.loc.aPos);
-    gl.enableVertexAttribArray(this.mesh.loc.aNor);
-    gl.vertexAttribPointer(this.mesh.loc.aPos, 3, gl.FLOAT, false, 24, 0);
-    gl.vertexAttribPointer(this.mesh.loc.aNor, 3, gl.FLOAT, false, 24, 12);
-    for (const s of steps) {
-      const p = this.pos.get(s.id);
-      const base = STATE_COLOR[s.state] ?? STATE_COLOR.waiting;
-      const k = s.state === "running" || s.state === "needs" || s.state === "blocked" ? pulse : 1;
-      gl.uniformMatrix4fv(this.mesh.loc.uMVP, false, mul(this.vp, model(p, BOX)));
-      gl.uniform3fv(this.mesh.loc.uColor, base.map((c) => c * k));
-      gl.uniform1f(this.mesh.loc.uAlpha, s.state === "skipped" ? 0.55 : 1);
-      gl.drawElements(gl.TRIANGLES, 36, gl.UNSIGNED_SHORT, 0);
+    // Lines.
+    const lineData = [];
+    for (const [a, b, kind] of this.edges) {
+      const A = this.nodes.get(a), B = this.nodes.get(b);
+      if (!A || !B) continue;
+      const on = lit ? a === focus || b === focus : false;
+      const base = kind === "needs" ? 0.55 : kind === "agent" ? 0.28 : 0.16;
+      const alpha = on ? 0.95 : base * (lit ? 0.35 : 1);
+      lineData.push(...A.pos, alpha, ...B.pos, alpha);
     }
+    gl.useProgram(this.lines.p);
+    gl.uniformMatrix4fv(this.lines.loc.uMVP, false, vp);
+    gl.uniform3fv(this.lines.loc.uColor, this.lineColor);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(lineData), gl.DYNAMIC_DRAW);
+    gl.enableVertexAttribArray(this.lines.loc.aPos);
+    gl.enableVertexAttribArray(this.lines.loc.aAlpha);
+    gl.vertexAttribPointer(this.lines.loc.aPos, 3, gl.FLOAT, false, 16, 0);
+    gl.vertexAttribPointer(this.lines.loc.aAlpha, 1, gl.FLOAT, false, 16, 12);
+    if (lineData.length) gl.drawArrays(gl.LINES, 0, lineData.length / 4);
+    gl.disableVertexAttribArray(this.lines.loc.aPos);
+    gl.disableVertexAttribArray(this.lines.loc.aAlpha);
 
-    // The selected step: an outline.
-    const sel = this.task.selected;
-    if (sel && this.pos.has(sel)) {
-      gl.useProgram(this.line.p);
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.wireV);
-      gl.vertexAttribPointer(this.line.loc.aPos, 3, gl.FLOAT, false, 0, 0);
-      gl.uniformMatrix4fv(this.line.loc.uMVP, false, mul(this.vp, model(this.pos.get(sel), BOX.map((v) => v * 1.12 + 0.06))));
-      gl.uniform3fv(this.line.loc.uColor, this.accent);
-      gl.uniform1f(this.line.loc.uAlpha, 1);
-      gl.drawArrays(gl.LINES, 0, WIRE.length / 3);
+    // Dots, far ones first.
+    const sizeScale = focal * this.dpr * 2.7;
+    const screen = nodes.map((n) => {
+      const p = project(vp, n.pos);
+      // The core's radius on screen, in CSS px (the core is half the sprite's radius).
+      const sprite = Math.min(this.maxPoint, n.size * sizeScale / p[3]) / this.dpr;
+      return { node: n, x: (p[0] * 0.5 + 0.5) * this.w, y: (0.5 - p[1] * 0.5) * this.h, z: p[2], w: p[3], r: sprite * 0.25, ndc: p };
+    }).filter((s) => s.w > 0);
+    // Fill the board: how far the dots reach on screen, against a margin for labels.
+    let reach = 0.01;
+    for (const s of screen) reach = Math.max(reach, Math.abs(s.ndc[0]) / (1 - 120 / this.w), Math.abs(s.ndc[1]) / (1 - 70 / this.h));
+    if (!this.drag) this.fit = Math.min(2, Math.max(0.3, this.fit * (1 + (reach / 0.92 - 1) * 0.08)));
+    this.hover = this.mouse && !this.drag ? this.pick(this.mouse.x, this.mouse.y) : null;
+    screen.sort((a, b) => b.z - a.z);
+    this.screen = screen;
+    const dotData = [];
+    for (const s of screen) {
+      const n = s.node;
+      const k = n.state === "running" || n.state === "needs" ? pulse : 1;
+      const color = n.color.map((c) => c * k);
+      const big = n.id === focus ? 1.25 : 1;
+      dotData.push(...n.pos, ...color, n.size * big, dim(n.id) * (n.state === "skipped" ? 0.6 : 1));
     }
+    gl.useProgram(this.dots.p);
+    gl.uniformMatrix4fv(this.dots.loc.uMVP, false, vp);
+    gl.uniform1f(this.dots.loc.uScale, sizeScale);
+    gl.uniform1f(this.dots.loc.uGlow, this.dark ? 0.85 : 0.45);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(dotData), gl.DYNAMIC_DRAW);
+    const stride = 32;
+    const L0 = this.dots.loc;
+    for (const a of [L0.aPos, L0.aColor, L0.aSize, L0.aAlpha]) gl.enableVertexAttribArray(a);
+    gl.vertexAttribPointer(L0.aPos, 3, gl.FLOAT, false, stride, 0);
+    gl.vertexAttribPointer(L0.aColor, 3, gl.FLOAT, false, stride, 12);
+    gl.vertexAttribPointer(L0.aSize, 1, gl.FLOAT, false, stride, 24);
+    gl.vertexAttribPointer(L0.aAlpha, 1, gl.FLOAT, false, stride, 28);
+    gl.drawArrays(gl.POINTS, 0, dotData.length / 8);
+    for (const a of [L0.aPos, L0.aColor, L0.aSize, L0.aAlpha]) gl.disableVertexAttribArray(a);
 
-    // Labels: facing the camera, in front of their slabs.
-    gl.useProgram(this.label.p);
-    gl.uniformMatrix4fv(this.label.loc.uMVP, false, this.vp);
-    gl.depthMask(false);
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.dyn);
-    gl.enableVertexAttribArray(this.label.loc.aPos);
-    gl.enableVertexAttribArray(this.label.loc.aUV);
-    this.quads = new Map();
-    const hw = BOX[0] / 2, hh = (BOX[0] * 256 / 640) / 2;
-    for (const s of steps) {
-      const p = this.pos.get(s.id);
-      const toEye = [eye[0] - p[0], eye[1] - p[1], eye[2] - p[2]];
-      const l = Math.hypot(...toEye) || 1;
-      // In front of the slab however it's turned, so the slab never cuts into it.
-      const lift = Math.hypot(BOX[0] / 2, BOX[2] / 2) * 0.9;
-      const c = [p[0] + toEye[0] / l * lift, p[1] + toEye[1] / l * lift, p[2] + toEye[2] / l * lift];
-      const corner = (a, b) => [c[0] + right[0] * a * hw + up[0] * b * hh, c[1] + right[1] * a * hw + up[1] * b * hh, c[2] + right[2] * a * hw + up[2] * b * hh];
-      const q = [corner(-1, 1), corner(1, 1), corner(1, -1), corner(-1, -1)];
-      this.quads.set(s.id, q);
-      const data = new Float32Array([...q[0], 0, 0, ...q[1], 1, 0, ...q[2], 1, 1, ...q[0], 0, 0, ...q[2], 1, 1, ...q[3], 0, 1]);
-      gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
-      gl.vertexAttribPointer(this.label.loc.aPos, 3, gl.FLOAT, false, 20, 0);
-      gl.vertexAttribPointer(this.label.loc.aUV, 2, gl.FLOAT, false, 20, 12);
-      gl.bindTexture(gl.TEXTURE_2D, this.labelTex(s, now));
+    // Labels under the dots, in screen space; far and unlit ones fainter.
+    gl.useProgram(this.text.p);
+    gl.enableVertexAttribArray(this.text.loc.aPos);
+    gl.enableVertexAttribArray(this.text.loc.aUV);
+    const zs = screen.map((s) => s.w);
+    const near = Math.min(...zs), far = Math.max(...zs);
+    // Which labels fit: the focused one, the task, its neighbors and agents first, then nearer ones.
+    const rank = (s) => (s.node.id === focus ? 0 : s.node.kind === "task" ? 1 : lit?.has(s.node.id) ? 2 : s.node.kind === "agent" ? 3 : 4) * 1e4 + s.w;
+    const placed = [];
+    const shown = new Set();
+    for (const s of [...screen].sort((a, b) => rank(a) - rank(b))) {
+      const n = s.node;
+      const showSub = n.kind === "task" || n.id === focus || (lit && lit.has(n.id));
+      const L = this.label(n.label, showSub ? n.sub : "", n.kind !== "step" || n.id === focus);
+      const box = [s.x - L.w / 2 + 6, s.y + s.r + 5, s.x + L.w / 2 - 6, s.y + s.r + 5 + L.h - 4];
+      if (n.id !== focus && placed.some((b) => box[0] < b[2] && box[2] > b[0] && box[1] < b[3] && box[3] > b[1])) continue;
+      placed.push(box);
+      shown.add(s);
+    }
+    for (const s of screen) {
+      if (!shown.has(s)) continue;
+      const n = s.node;
+      const strong = n.kind !== "step" || n.id === focus;
+      const showSub = n.kind === "task" || n.id === focus || (lit && lit.has(n.id));
+      const L = this.label(n.label, showSub ? n.sub : "", strong);
+      const depth = far > near ? (s.w - near) / (far - near) : 0;
+      const alpha = dim(n.id) * (n.id === focus ? 1 : 0.95 - depth * 0.45);
+      const cx = s.x, top = s.y + s.r + 5;
+      const x0 = (cx - L.w / 2) / this.w * 2 - 1, x1 = (cx + L.w / 2) / this.w * 2 - 1;
+      const y0 = 1 - top / this.h * 2, y1 = 1 - (top + L.h) / this.h * 2;
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([x0, y0, 0, 0, x1, y0, 1, 0, x1, y1, 1, 1, x0, y0, 0, 0, x1, y1, 1, 1, x0, y1, 0, 1]), gl.DYNAMIC_DRAW);
+      gl.vertexAttribPointer(this.text.loc.aPos, 2, gl.FLOAT, false, 16, 0);
+      gl.vertexAttribPointer(this.text.loc.aUV, 2, gl.FLOAT, false, 16, 8);
+      gl.uniform1f(this.text.loc.uAlpha, alpha);
+      gl.bindTexture(gl.TEXTURE_2D, L.tex);
       gl.drawArrays(gl.TRIANGLES, 0, 6);
     }
-    gl.depthMask(true);
+    gl.disableVertexAttribArray(this.text.loc.aPos);
+    gl.disableVertexAttribArray(this.text.loc.aUV);
 
-    // How much of the view the steps take: move the camera to fill about 85%.
-    let m = 0;
-    for (const q of this.quads.values()) for (const p of q) {
-      const c = project(this.vp, p);
-      if (c[3] > 0) m = Math.max(m, Math.abs(c[0]), Math.abs(c[1]));
-    }
-    if (m > 0 && Number.isFinite(m)) {
-      this.fitD *= 1 + (m / 0.85 - 1) * 0.08;
-      this.fitD = Math.min(this.radius * 8, Math.max(this.radius * 0.5, this.fitD));
+    // The selected step: a ring around its dot.
+    const s = sel && screen.find((x) => x.node.id === sel);
+    if (s) {
+      const ring = [];
+      const R = s.r * (focus === sel ? 1.25 : 1) + 5;
+      for (let i = 0; i <= 48; i++) {
+        const a = i / 48 * Math.PI * 2;
+        ring.push((s.x + Math.cos(a) * R) / this.w * 2 - 1, 1 - (s.y + Math.sin(a) * R) / this.h * 2, 0, 0.9);
+      }
+      gl.useProgram(this.lines.p);
+      gl.uniformMatrix4fv(this.lines.loc.uMVP, false, new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]));
+      gl.uniform3fv(this.lines.loc.uColor, parseHex(this.theme.accent) ?? [0.49, 0.81, 1]);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(ring), gl.DYNAMIC_DRAW);
+      gl.enableVertexAttribArray(this.lines.loc.aPos);
+      gl.enableVertexAttribArray(this.lines.loc.aAlpha);
+      gl.vertexAttribPointer(this.lines.loc.aPos, 3, gl.FLOAT, false, 16, 0);
+      gl.vertexAttribPointer(this.lines.loc.aAlpha, 1, gl.FLOAT, false, 16, 12);
+      gl.drawArrays(gl.LINE_STRIP, 0, ring.length / 4);
+      gl.disableVertexAttribArray(this.lines.loc.aPos);
+      gl.disableVertexAttribArray(this.lines.loc.aAlpha);
     }
   }
 }
 
 paw.view("graph3d", { label: "3D" }, (ctx) => {
   try {
-    new Scene(ctx);
+    new Graph(ctx);
   } catch (e) {
     console.error("Task Graph 3D:", e);
   }

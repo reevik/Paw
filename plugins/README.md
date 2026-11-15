@@ -10,7 +10,7 @@ reactions to what happens in a tab. This folder is the **official catalog**.
 | [Pomodoro](pomodoro) | A focus timer in the status bar (`/pomodoro 25`) | commands, statusbar |
 | [Usage Meter](usage-meter) | Today's prompts and tokens in the status bar | commands, statusbar, events |
 | [Snippets](snippets) | Saved prompts, back in the prompt with `/snip <name>` | commands, prompt |
-| [Task Graph 3D](task-graph-3d) | A task's plan in 3D on its board (“3D” next to “Graph”) | views |
+| [Task Graph 3D](task-graph-3d) | A task's plan as a glowing 3D graph on its board (“3D” next to “Graph”) | views |
 
 ## The catalog
 

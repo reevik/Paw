@@ -514,8 +514,8 @@ function helpHtml(S) {
   ];
   if (settings.general.share_shell !== false) {
     out.push(row("shell output", isPaw(S.agent)
-      ? `short output goes to ${name} right away; long output only if you click “Share with ${name}” under it`
-      : `short output goes to ${name} with your next message; long output only if you click “Share with ${name}” under it`));
+      ? `short output goes to ${name} right away; long output only if you click “Follow up” under it`
+      : `short output goes to ${name} with your next message; long output only if you click “Follow up” under it`));
     out.push(row("$ badge", "shared long output waiting for your next message (× leaves it out)"));
   }
   out.push("", head("Agent"),
@@ -1511,7 +1511,7 @@ document.addEventListener("click", (e) => {
 // Commands run in a tab (and their output) reach the agent, so "why did that
 // fail?" works. Small output is shared on its own: straight into a Paw Agent
 // conversation, or along with the next message to other agents (a note under
-// the output says which). Large output isn't: a link under it shares it, and
+// the output says which). Large output isn't: a Follow up button under it shares it, and
 // then a $ badge in the prompt shows it will go along (× leaves it out).
 const SHELL_CTX_LINES = 150;     // per command, newest lines kept
 const SHELL_CTX_BUDGET = 12000;  // characters for the whole block
@@ -3136,8 +3136,8 @@ function renderLine(S, l) {
     if (l.taken) el.innerHTML = `↳ output (${esc(l.text)}) goes to ${esc(S.agent.name)} with your next message`;
     else if (!live) el.innerHTML = `↳ output (${esc(l.text)}) not shared`;
     else {
-      el.innerHTML = `↳ large output (${esc(l.text)}) · <a href="#" class="share-link">Share with ${esc(S.agent.name)}</a>`;
-      el.querySelector(".share-link").onclick = (ev) => {
+      el.innerHTML = `↳ large output (${esc(l.text)}) <button class="follow-up" title="Send this output to ${esc(S.agent.name)} with your next message">↪ Follow up</button>`;
+      el.querySelector(".follow-up").onclick = (ev) => {
         ev.preventDefault();
         ev.stopPropagation();
         if (shareOffer(S, l.offer)) { l.taken = true; inPane(S, renderOutput); saveWorkspaceSoon(); $("input").focus(); }

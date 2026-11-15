@@ -971,6 +971,10 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
   font: 600 15px var(--font); color: var(--text); font-variant-numeric: tabular-nums;
   animation: fade .12s ease-out;
 }
-/* The link under a large command output that shares it with the agent. */
-.share-offer a.share-link { color: var(--t-accent); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; font-style: normal; }
-.share-offer a.share-link:hover { text-decoration-thickness: 2px; }
+/* Under a large command output: send it to the agent with the next message. */
+.share-offer .follow-up {
+  display: inline-flex; align-items: center; height: 18px; margin-left: 6px; padding: 0 8px; vertical-align: 1px;
+  border: 0; border-radius: 9px; font: 500 11px/1 var(--font); font-style: normal; cursor: default;
+  color: var(--t-accent); background: color-mix(in srgb, var(--t-accent) 14%, transparent);
+}
+.share-offer .follow-up:hover { background: color-mix(in srgb, var(--t-accent) 24%, transparent); }

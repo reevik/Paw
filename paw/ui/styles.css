@@ -952,3 +952,5 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
 .mi-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; margin-right: 2px; }
 .tl a.task-link { color: var(--t-fg); text-decoration: underline; text-decoration-color: var(--t-dim); text-underline-offset: 3px; cursor: pointer; }
 .tl a.task-link:hover { color: var(--t-accent); text-decoration-color: currentColor; }
+.sl-sessions { font-variant-numeric: tabular-nums; }
+.sl-sessions.full { color: var(--t-yellow); }

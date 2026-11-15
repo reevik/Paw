@@ -15,7 +15,7 @@ const { listen } = window.__TAURI__.event;
 // pane being rendered (activePane). Everything else is a normal page id.
 const PANE_IDS = new Set(["session", "terminal", "output", "xterm-wrap", "xterm-title", "xterm-int", "xterm-back",
   "xterm-hosts", "busy", "busy-spin", "busy-text", "busy-time", "ac", "prompt-line", "att-tray", "input",
-  "attach-btn", "mode-pill", "sl-left", "eof", "prompt-glyph", "task-view"]);
+  "attach-btn", "mode-pill", "sl-left", "sl-sessions", "eof", "prompt-glyph", "task-view"]);
 let activePane = null;
 const $ = (id) => (PANE_IDS.has(id) ? activePane?.root.querySelector(`[data-id="${id}"]`) : document.getElementById(id));
 /** The session shown in the pane being rendered (the focused one, normally). */
@@ -160,6 +160,7 @@ async function newSession(agentId, opts = {}) {
   const S = {
     sid: nextSid++,
     pawId: newPawId(),
+    createdAt: Date.now(),
     agent: structuredClone(agent),
     mode: sessionMode(agent),
     cwd,
@@ -334,6 +335,7 @@ async function closeSession(sid) {
   if (isBusy(S) && !confirm(`${S.agent.name} is still working. Close the tab and stop it?`)) return;
   if (S.task?.state === "running" && !confirm("This task is running. Close it and stop its steps? Their tabs stay open.")) return;
   taskTabClosing(S);
+  keepClosedSession(S);
   if (S.proc != null) invoke(isPaw(S.agent) ? "paw_agent_close" : "remove_agent", { id: S.proc }).catch(() => {});
   disposeTerm(S);
   if (S.shell != null) { invoke("shell_close", { id: S.shell }); shellToSid.delete(S.shell); }
@@ -506,6 +508,7 @@ function helpHtml(S) {
     row("/new [agent]", "open a new tab with a new conversation"),
     row("/task [what]", `plan a task with ${name} and run its steps on several agents (pasted text counts too)`),
     row("/tasks", "list the open tasks and how far each one is (click one to open it)"),
+    row("/sessions", "list stored sessions, open and closed; click one to reopen it in a new tab"),
     row("/clear", "clear the screen (⌘K)"),
     row("/session", "open this tab's folder: its conversation, files, scripts and command log"),
     "", head("Shell"),
@@ -623,6 +626,10 @@ async function slashCommand(S, line) {
     case "/tasks":
       echo();
       info(S, tasksListHtml());
+      return true;
+    case "/sessions":
+      echo();
+      info(S, await sessionsListHtml().catch((e) => `<span class="err">✗ ${esc(e)}</span>`));
       return true;
     case "/task": {
       // Plan it with this tab's agent, in this tab's folder. Pasted text
@@ -1585,6 +1592,7 @@ function persistableLine(l) {
   }
   if (l.html != null) out.html = l.html;
   if (l.code != null) out.code = l.code;
+  if (l.local) out.local = true;
   if (l.attachments) out.attachments = l.attachments.map((a) => (isPasted(a) ? { kind: "text", name: a.name, path: a.file ?? a.path, size: a.size, lines: a.lines, text: String(a.text).slice(0, 600) } : { name: a.name, path: a.path, size: a.size }));
   if (l.shared) out.shared = l.shared;
   if (l.skills) out.skills = l.skills;
@@ -1598,8 +1606,31 @@ function workspaceSnapshot() {
     version: 1,
     active: Math.max(0, openTabs.indexOf(activeId)),
     groups: [...groups.values()],
-    tabs: openTabs.map((sid) => sessions.get(sid)).filter(Boolean).map((S) => ({
+    tabs: openTabs.map((sid) => sessions.get(sid)).filter(Boolean).map(tabSnapshot),
+  };
+}
+
+/** What the tab was about, for /sessions: the task, or the first prompt. */
+function sessionSummary(S) {
+  if (S.task) return S.task.title || S.task.goal?.split("\n")[0] || "";
+  const first = S.lines.find((l) => l.stream === "stdin" && !l.local && String(l.text ?? "").trim());
+  return first ? String(first.text).trim().split("\n")[0].slice(0, 160) : "";
+}
+/** When something last happened in the tab (Paw's own notes don't count). */
+function lastActive(S) {
+  for (let i = S.lines.length - 1; i >= 0; i--) {
+    const l = S.lines[i];
+    if (l.ts && l.stream !== "system" && l.stream !== "info") return l.ts;
+  }
+  return S.createdAt ?? Date.now();
+}
+
+/** One tab's state, as session.json keeps it. */
+function tabSnapshot(S) {
+  return {
       id: S.pawId,
+      summary: sessionSummary(S),
+      lastActive: lastActive(S),
       group: S.group ?? undefined,
       agent: S.agent.id,
       cwd: S.cwd,
@@ -1613,7 +1644,6 @@ function workspaceSnapshot() {
       lines: S.lines.slice(-WS_LINES).map(persistableLine),
       task: taskSnapshot(S) ?? undefined,
       stepOf: S.stepOf ?? undefined,
-    })),
   };
 }
 
@@ -1655,48 +1685,146 @@ async function reloadThumbs(S) {
   inPane(S, renderOutput);
 }
 
+// ---------- stored sessions ----------
+// A closed tab's folder stays in ~/.paw/session (its last state goes into
+// session.json), so /sessions can list and reopen it. Settings › General ›
+// Closed sessions sets how many are kept; the oldest go first. A tab closed
+// before anything happened in it leaves nothing behind.
+
+const archive = { closed: 0, size: 0 };
+const maxSessions = () => Math.max(0, Number(settings.general.max_sessions ?? 50) || 0);
+const openIds = () => [...sessions.values()].map((S) => S.pawId);
+
+function keepClosedSession(S) {
+  const used = S.task || S.lines.some((l) => (l.stream === "stdin" && !l.local) || l.stream === "cmd");
+  const done = used ? invoke("save_session", { id: S.pawId, tab: tabSnapshot(S) }) : invoke("delete_session", { id: S.pawId });
+  done.catch(() => {}).finally(() => setTimeout(refreshArchive, 300));
+}
+
+/** Apply the limit, then count what's kept for the status bar. */
+async function refreshArchive() {
+  try {
+    const open = openIds();
+    await invoke("prune_sessions", { max: maxSessions(), open });
+    const list = await invoke("list_sessions");
+    const closed = list.filter((x) => !open.includes(x.id));
+    archive.closed = closed.length;
+    archive.size = closed.reduce((n, x) => n + x.size, 0);
+  } catch { /* no folder yet */ }
+  for (const P of panes.values()) renderArchive(P.root);
+}
+
+function renderArchive(root) {
+  const el = root?.querySelector('[data-id="sl-sessions"]');
+  if (!el) return;
+  const max = maxSessions();
+  el.textContent = max ? `${archive.closed}/${max} sessions` : `${archive.closed} sessions`;
+  el.classList.toggle("full", !!max && archive.closed >= max);
+  el.title = `${archive.closed} closed session${archive.closed === 1 ? "" : "s"} kept (${fmtSize(archive.size)})` +
+    (max ? `, up to ${max}; the oldest go first` : "") + ". Click for /sessions.";
+}
+
+const ago = (ms) => {
+  const s = Math.max(0, Math.floor((Date.now() - ms) / 1000));
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  const d = Math.floor(s / 86400);
+  return d === 1 ? "yesterday" : d < 30 ? `${d} days ago` : new Date(ms).toLocaleDateString();
+};
+
+/** /sessions: every stored session, open ones first; click one to open it. */
+async function sessionsListHtml() {
+  const list = await invoke("list_sessions");
+  if (!list.length) return `<span class="dim">No sessions stored yet.</span>`;
+  const open = new Map([...sessions.values()].map((S) => [S.pawId, S]));
+  const rows = [...list].sort((a, b) => (open.has(b.id) - open.has(a.id)) || b.last_active - a.last_active);
+  const closed = rows.filter((x) => !open.has(x.id));
+  const max = maxSessions();
+  const total = list.reduce((n, x) => n + x.size, 0);
+  const head = `<span class="help-h">Sessions</span> <span class="dim">· ${open.size} active · ${closed.length}${max ? ` of ${max}` : ""} completed kept · ${fmtSize(total)}</span>`;
+  const agentName = (id) => settings.agents.find((a) => a.id === id)?.name ?? id;
+  const lines = rows.map((x) => {
+    const S = open.get(x.id);
+    const desc = (S ? sessionSummary(S) : x.description) || (S ? tabLabel(S) : "(no prompt)");
+    const d = desc.length > 44 ? desc.slice(0, 43) + "…" : desc;
+    const when = S ? lastActive(S) : x.last_active;
+    const status = S ? `<span class="ok">● active   </span>` : `<span class="dim">○ completed</span>`;
+    return `${status} <span class="dim">${esc(x.id.slice(0, 8))}</span>  ` +
+      `<a href="#" class="task-link" data-open-session="${esc(x.id)}" title="${S ? "Go to its tab" : "Reopen it in a new tab"}">${esc(d)}</a>${" ".repeat(44 - d.length)}` +
+      `  ${esc(ago(when).padEnd(10))}  ${esc(fmtSize(x.size).padStart(7))}  <span class="dim">${esc(agentName(x.agent))}${x.cwd ? " · " + esc(tildify(x.cwd)) : ""}${x.task ? " · task" : ""}</span>`;
+  });
+  return `${head}\n${lines.join("\n")}\n<span class="dim">Click a session to go to it; a completed one reopens in a new tab, its conversation continuing.</span>`;
+}
+
+/** Reopen a closed session in a new tab. */
+async function reopenSession(id) {
+  const open = [...sessions.values()].find((S) => S.pawId === id);
+  if (open) return select(open.sid);
+  let t;
+  try { t = await invoke("load_session", { id }); } catch (e) { const S = curS(); if (S) sys(S, `✗ ${e}`); return; }
+  t.id = id;
+  const S = await restoreTab(t, "reopened");
+  if (!S) { const C = curS(); if (C) sys(C, `✗ the agent of that session (${t.agent}) isn't set up any more`); return; }
+  if (S.group && !groups.has(S.group)) delete S.group;
+  select(S.sid);
+  saveWorkspaceSoon();
+  refreshArchive();
+}
+
+document.addEventListener("click", (e) => {
+  const a = e.target.closest?.("[data-open-session]");
+  if (!a) return;
+  e.preventDefault();
+  reopenSession(a.dataset.openSession);
+});
+
+/** Open a tab from its saved state (a restart, or a closed session reopened). */
+async function restoreTab(t, note = null) {
+  // The Ollama agent is gone; Paw Agent runs Ollama models now.
+  const agentId = t.agent === "ollama" ? settings.agents.find(isPaw)?.id : t.agent;
+  const agent = settings.agents.find((a) => a.id === agentId);
+  if (!agent) return null;
+  let cwd = t.cwd;
+  try { cwd = await invoke("resolve_dir", { path: cwd, base: homeDir }); } catch { cwd = homeDir; }
+  // Tabs from before session folders take their conversation's id (Paw
+  // Agent's conversation moved into session/<that id>), or a new one.
+  const pawId = t.id ?? (isPaw(agent) && /^[0-9a-f-]{8,64}$/i.test(t.session ?? "") ? t.session : newPawId());
+  const S = {
+    sid: nextSid++, pawId, agent: structuredClone(agent), mode: sessionMode(agent), cwd,
+    model: t.model ?? defaultModel(agent), approval: t.approval ?? approvalFromLegacy(t.perm) ?? defaultApproval(agent),
+    proc: null, info: null, lines: (t.lines ?? []).slice(-WS_LINES), busy: false,
+    history: t.history ?? [], histIdx: (t.history ?? []).length, draft: "", unread: 0,
+    shell: null, shellBusy: false, inputMode: t.inputMode || settings.general.input_mode || "auto",
+    session: t.session ?? t.claudeSession ?? null,
+    turns: t.turns ?? [],
+  };
+  if (t.task) S.task = restoreTask(t.task);
+  if (t.stepOf) S.stepOf = t.stepOf;
+  if (t.group) S.group = t.group;
+  sessions.set(S.sid, S);
+  openTabs.push(S.sid);
+  const resumable = S.agent.continuity === "session" && S.session;
+  const replay = S.agent.continuity === "replay" && S.turns.length;
+  const how = note ?? "restored after restart";
+  S.lines.push({ stream: "system", ts: Date.now(),
+    text: resumable ? `— ${how} · attached to ${S.agent.name} session ${String(S.session).slice(0, 8)} (conversation continues) —`
+      : replay ? `— ${how} · ${S.agent.name} gets the ${S.turns.length} earlier turn${S.turns.length > 1 ? "s" : ""} with your next prompt (conversation continues) —`
+      : `— ${how} · no earlier conversation to continue —` });
+  reloadThumbs(S);
+  openShell(S);
+  if (S.mode !== "oneshot") {
+    startProc(S, undefined, { resume: !!resumable });
+  }
+  return S;
+}
+
 /** Recreate the tabs from the last run. Returns true if anything was restored. */
 async function restoreWorkspace() {
   const ws = await invoke("load_workspace").catch(() => null);
   const tabs = ws?.tabs ?? [];
   let restored = 0;
-  for (const t of tabs) {
-    // The Ollama agent is gone; Paw Agent runs Ollama models now.
-    const agentId = t.agent === "ollama" ? settings.agents.find(isPaw)?.id : t.agent;
-    const agent = settings.agents.find((a) => a.id === agentId);
-    if (!agent) continue;
-    let cwd = t.cwd;
-    try { cwd = await invoke("resolve_dir", { path: cwd, base: homeDir }); } catch { cwd = homeDir; }
-    // Tabs from before session folders take their conversation's id (Paw
-    // Agent's conversation moved into session/<that id>), or a new one.
-    const pawId = t.id ?? (isPaw(agent) && /^[0-9a-f-]{8,64}$/i.test(t.session ?? "") ? t.session : newPawId());
-    const S = {
-      sid: nextSid++, pawId, agent: structuredClone(agent), mode: sessionMode(agent), cwd,
-      model: t.model ?? defaultModel(agent), approval: t.approval ?? approvalFromLegacy(t.perm) ?? defaultApproval(agent),
-      proc: null, info: null, lines: (t.lines ?? []).slice(-WS_LINES), busy: false,
-      history: t.history ?? [], histIdx: (t.history ?? []).length, draft: "", unread: 0,
-      shell: null, shellBusy: false, inputMode: t.inputMode || settings.general.input_mode || "auto",
-      session: t.session ?? t.claudeSession ?? null,
-      turns: t.turns ?? [],
-    };
-    if (t.task) S.task = restoreTask(t.task);
-    if (t.stepOf) S.stepOf = t.stepOf;
-    if (t.group) S.group = t.group;
-    sessions.set(S.sid, S);
-    openTabs.push(S.sid);
-    restored++;
-    const resumable = S.agent.continuity === "session" && S.session;
-    const replay = S.agent.continuity === "replay" && S.turns.length;
-    S.lines.push({ stream: "system", ts: Date.now(),
-      text: resumable ? `— restored after restart · attached to ${S.agent.name} session ${String(S.session).slice(0, 8)} (conversation continues) —`
-        : replay ? `— restored after restart · ${S.agent.name} gets the ${S.turns.length} earlier turn${S.turns.length > 1 ? "s" : ""} with your next prompt (conversation continues) —`
-        : `— restored after restart · no earlier conversation to continue —` });
-    reloadThumbs(S);
-    openShell(S);
-    if (S.mode !== "oneshot") {
-      startProc(S, undefined, { resume: !!resumable });
-    }
-  }
+  for (const t of tabs) if (await restoreTab(t)) restored++;
   for (const g of ws?.groups ?? []) if (g?.id && GROUP_COLORS[g.color]) groups.set(g.id, { id: g.id, name: g.name ?? "", color: g.color, collapsed: !!g.collapsed, task: g.task });
   relinkTasks();
   // Tasks from before groups get theirs; tabs of groups that are gone leave them.
@@ -3174,8 +3302,10 @@ listen("agent:status", ({ payload: pinfo }) => {
 });
 
 listen("settings:changed", ({ payload }) => {
+  const limit = settings?.general?.max_sessions;
   settings = payload;
   applyCurrentTheme();
+  if (payload.general?.max_sessions !== limit) refreshArchive();
   if (activeId == null) renderWelcome();
 });
 listen("agents:detected", ({ payload }) => {
@@ -3405,7 +3535,14 @@ $("split-h").onclick = () => splitPane("column");
 // handlers run later with the focused pane active (focusin/mousedown above).
 function bindPane(P) {
   bindTaskView(P);
+  renderArchive(P.root);
   withPane(P, () => {
+    $("sl-sessions").onclick = async () => {
+      const S = sessions.get(P.sid);
+      if (!S) return;
+      pushLine(S, { stream: "stdin", text: "/sessions", ts: Date.now(), local: true });
+      info(S, await sessionsListHtml().catch((e) => `<span class="err">✗ ${esc(e)}</span>`));
+    };
     $("xterm-back").onclick = () => {
       const S = curS();
       if (!S) return;
@@ -3741,6 +3878,7 @@ function waitForDetections(timeoutMs) {
   // Bring back last run's tabs (Claude conversations resume).
   const restored = await restoreWorkspace();
   wsReady = true;
+  refreshArchive();
   if (restored) { saveWorkspaceSoon(); return; }
 
   // Like a terminal: open a tab with the default agent on launch.

@@ -44,6 +44,8 @@ function renderGeneral() {
   $("g-cwd").value = settings.general.default_cwd;
   $("g-only-installed").checked = settings.general.only_installed;
   $("g-history").value = settings.general.history_size ?? 1000;
+  $("g-max-sessions").value = settings.general.max_sessions ?? 50;
+  showSessionCount();
   $("g-mode").value = settings.general.input_mode || "auto";
   $("g-approval").value = settings.general.approval || "edits";
   $("g-share-shell").checked = settings.general.share_shell !== false;
@@ -82,6 +84,26 @@ $("g-history-clear").onclick = async () => {
   await invoke("history_clear");
   showHistoryCount();
 };
+// Closed sessions kept in ~/.paw/session
+async function showSessionCount() {
+  try {
+    const list = await invoke("list_sessions");
+    const ws = await invoke("load_workspace").catch(() => null);
+    const open = new Set((ws?.tabs ?? []).map((t) => t.id).filter(Boolean));
+    const closed = list.filter((x) => !open.has(x.id));
+    const mb = closed.reduce((n, x) => n + x.size, 0) / 1048576;
+    $("g-sessions-hint").textContent = `${closed.length} closed session${closed.length === 1 ? "" : "s"} kept (${mb < 0.1 ? "<0.1" : mb.toFixed(1)} MB). ` +
+      "A tab's folder (~/.paw/session) stays after you close it, so /sessions can reopen it. Beyond this number the oldest go first. 0 keeps all.";
+  } catch { /* keep the plain hint */ }
+}
+let sessionsTimer = null;
+$("g-max-sessions").addEventListener("input", (e) => {
+  settings.general.max_sessions = Math.max(0, Math.min(10000, Math.floor(Number(e.target.value) || 0)));
+  save();
+  // The main window applies the limit once the setting is stored.
+  clearTimeout(sessionsTimer);
+  sessionsTimer = setTimeout(showSessionCount, 900);
+});
 $("g-cwd").addEventListener("input", (e) => { settings.general.default_cwd = e.target.value; save(); });
 $("g-only-installed").addEventListener("change", (e) => { settings.general.only_installed = e.target.checked; save(); });
 

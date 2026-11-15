@@ -9,6 +9,7 @@ mod paths;
 mod registry;
 mod shell;
 mod skills;
+mod sessions;
 
 use agents::AgentManager;
 use history::History;
@@ -326,6 +327,11 @@ fn main() {
             session_dir,
             session_log,
             session_launch,
+            sessions::list_sessions,
+            sessions::prune_sessions,
+            sessions::save_session,
+            sessions::load_session,
+            sessions::delete_session,
             attachments::describe_attachment,
             skills::skills_scan,
             skills::skills_pick_folder,

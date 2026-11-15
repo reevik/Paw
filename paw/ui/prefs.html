@@ -84,6 +84,15 @@
         <p class="hint" id="g-history-hint">Shared by all tabs and kept between launches. 0 turns it off.</p>
       </div>
 
+      <label for="g-max-sessions">Closed sessions</label>
+      <div>
+        <div class="inline-row">
+          <input id="g-max-sessions" type="number" min="0" max="10000" step="10" class="num" />
+          <span class="unit">kept</span>
+        </div>
+        <p class="hint" id="g-sessions-hint">A tab's folder (~/.paw/session) stays after you close it, so /sessions can reopen it. Beyond this number the oldest go first. 0 keeps all.</p>
+      </div>
+
       <span>New session menu</span>
       <div>
         <label class="check"><input type="checkbox" id="g-only-installed" /> Only offer agents that are installed</label>

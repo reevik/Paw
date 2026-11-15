@@ -15,9 +15,11 @@ body.about-win {
 
 /* ---------- Home ---------- */
 .hero { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 54px 32px 0; }
+/* No CSS shadow or filter: over the window's see-through background WebKit
+   would draw the filtered image on a layer of its own, which shows as a
+   lighter square around the icon. The icon brings its own shadow. */
 .app-icon {
   width: 128px; height: 128px;
-  filter: drop-shadow(0 10px 22px rgba(0, 0, 0, .22));
   animation: lift .5s cubic-bezier(.2, .9, .3, 1.2);
 }
 @keyframes lift { from { transform: translateY(6px) scale(.94); opacity: 0; } }

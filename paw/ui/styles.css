@@ -978,3 +978,5 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
   color: var(--t-accent); background: color-mix(in srgb, var(--t-accent) 14%, transparent);
 }
 .share-offer .follow-up:hover { background: color-mix(in srgb, var(--t-accent) 24%, transparent); }
+.share-offer .follow-up.done { color: var(--t-green); background: color-mix(in srgb, var(--t-green) 14%, transparent); }
+.share-offer .follow-up:disabled { color: var(--t-dim); background: transparent; }

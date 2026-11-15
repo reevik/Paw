@@ -588,3 +588,33 @@ async fn anthropic_credentials_on_the_wire() {
     assert!(token.contains("authorization: bearer tok-test"), "{token}");
     assert!(!token.contains("x-api-key"), "{token}");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shared_terminal_output_goes_with_the_next_prompt() {
+    let dir = Tmp::new("notes");
+    let conv = new_conversation_id();
+    let note = "I ran this in my terminal:\n<terminal>\n$ git status\nnothing to commit\n</terminal>";
+    // Shared, then Hive restarts before the next prompt: the note is kept.
+    {
+        let h = Harness::start(config(&dir.0, "edits", &conv), script(vec![]));
+        h.hive.note(h.id, note.into()).unwrap();
+        h.hive.note(h.id, "   ".into()).unwrap(); // blank: ignored
+    }
+    let model = script(vec![say("Clean tree."), say("Still clean.")]);
+    let mut h = Harness::start(config(&dir.0, "edits", &conv), model.clone());
+    h.send("is my tree clean?");
+    h.until_result(|_| None).await;
+    let sent = format!("{:?}", model.requests()[0].chat_history.last().unwrap());
+    assert!(sent.contains("nothing to commit") && sent.contains("is my tree clean?"), "{sent}");
+    assert!(sent.find("nothing to commit") < sent.find("is my tree clean?"), "note first: {sent}");
+    // Used once: kept in the conversation, not sent again on its own.
+    h.send("and now?");
+    h.until_result(|_| None).await;
+    let second = &model.requests()[1].chat_history;
+    let all = format!("{second:?}");
+    assert_eq!(all.matches("nothing to commit").count(), 1, "{all}");
+    assert!(!format!("{:?}", second.last().unwrap()).contains("nothing to commit"));
+    let saved = std::fs::read_to_string(dir.0.join(".hive-history").join(format!("{conv}.json"))).unwrap();
+    let saved: Value = serde_json::from_str(&saved).unwrap();
+    assert_eq!(saved["notes"], json!([]));
+}

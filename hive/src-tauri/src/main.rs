@@ -197,6 +197,7 @@ fn main() {
             hive_agent::hive_agent_start,
             hive_agent::hive_agent_send,
             hive_agent::hive_agent_cancel,
+            hive_agent::hive_agent_note,
             hive_agent::hive_agent_close,
             hive_agent::hive_agent_approve,
             hive_agent::hive_key_status,

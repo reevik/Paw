@@ -409,7 +409,10 @@ function helpHtml(S) {
     row("Tab · ↑↓", "complete commands and paths · previous prompts"),
     row("+ · ⌘V", "attach files · paste an image"),
   ];
-  if (settings.general.share_shell !== false) out.push(row("$ badge", `shell output that goes along with your next message (× leaves it out)`));
+  if (settings.general.share_shell !== false) {
+    if (isHive(S.agent)) out.push(row("$ badge", `long shell output that goes along with your next message (× leaves it out); short output goes to ${name} right away`));
+    else out.push(row("$ badge", `shell output that goes along with your next message (× leaves it out)`));
+  }
   out.push("", head("Agent"),
     row("/model [name]", "show or switch the model (conversation continues)"),
     row("/agent [id]", "switch the agent in this tab (new conversation)"));
@@ -769,6 +772,7 @@ listen("shell:done", ({ payload: d }) => {
   if (d.code !== 0) pushLine(S, { stream: "shellexit", code: d.code, ts: Date.now() });
   if (d.cwd) S.cwd = d.cwd;
   inPane(S, renderAttachments);
+  shareShortOutput(S);
   refreshShellCommands(); // pick up anything just installed (brew install …)
   forgetLookups();
   refresh(S);
@@ -1336,6 +1340,47 @@ function trackShellContext(S, line) {
   }
 }
 
+/** One command and its output, as the agent sees it. */
+function shellBlock(e, showCwd, budget = SHELL_CTX_BUDGET) {
+  let lines = e.out;
+  let head = "";
+  if (lines.length > SHELL_CTX_LINES) {
+    head = `… (${lines.length - SHELL_CTX_LINES} earlier lines omitted)\n`;
+    lines = lines.slice(-SHELL_CTX_LINES);
+  }
+  const body = head + lines.join("\n");
+  const where = showCwd ? `  # in ${tildify(e.cwd)}` : "";
+  const exit = e.code ? `\n[exit ${e.code === 130 ? "130 (interrupted)" : e.code}]` : "";
+  let block = `$ ${e.cmd}${where}\n${body}${exit}`.trimEnd();
+  if (block.length > budget) block = `$ ${e.cmd}${where}\n…${body.slice(-(budget - e.cmd.length - 40))}${exit}`;
+  return block;
+}
+
+// Short output goes straight into a Hive Agent session when the command
+// ends: the agent has it with its next turn, and it stays in the
+// conversation. Longer output waits in the $ badge, where it can be left out.
+const SHELL_DIRECT_CHARS = 4000;
+const SHELL_DIRECT_LINES = 80;
+
+async function shareShortOutput(S) {
+  if (!isHive(S.agent) || !shareShell() || !isRunning(S) || S.proc == null) return;
+  // A new folder means a new conversation with the next prompt: the badge carries it there.
+  if (S.agentCwd && S.agentCwd !== S.cwd) return;
+  const e = S.shellContext?.at(-1);
+  if (!e || needsTty(e.cmd) || e.out.length > SHELL_DIRECT_LINES) return;
+  const block = shellBlock(e, true, Infinity);
+  if (block.length > SHELL_DIRECT_CHARS) return;
+  S.shellContext.pop();
+  inPane(S, renderAttachments);
+  try {
+    await invoke("hive_agent_note", { id: S.proc, text: `I ran this in my terminal:\n<terminal>\n${block}\n</terminal>` });
+    pushLine(S, { stream: "shared", ts: Date.now() });
+  } catch {
+    (S.shellContext ??= []).push(e); // the session ended: back to the badge
+    inPane(S, renderAttachments);
+  }
+}
+
 /** The shell context block for the next message (and forget it). */
 function takeShellContext(S) {
   const entries = S.shellContext ?? [];
@@ -1346,17 +1391,7 @@ function takeShellContext(S) {
   // Newest first, so the latest command always fits.
   for (let i = entries.length - 1; i >= 0 && budget > 200; i--) {
     const e = entries[i];
-    let lines = e.out;
-    let head = "";
-    if (lines.length > SHELL_CTX_LINES) {
-      head = `… (${lines.length - SHELL_CTX_LINES} earlier lines omitted)\n`;
-      lines = lines.slice(-SHELL_CTX_LINES);
-    }
-    let body = head + lines.join("\n");
-    const where = i === 0 || entries[i - 1].cwd !== e.cwd ? `  # in ${tildify(e.cwd)}` : "";
-    const exit = e.code ? `\n[exit ${e.code === 130 ? "130 (interrupted)" : e.code}]` : "";
-    let block = `$ ${e.cmd}${where}\n${body}${exit}`.trimEnd();
-    if (block.length > budget) block = `$ ${e.cmd}${where}\n…${body.slice(-(budget - e.cmd.length - 40))}${exit}`;
+    const block = shellBlock(e, i === 0 || entries[i - 1].cwd !== e.cwd, budget);
     budget -= block.length;
     blocks.unshift(block);
   }
@@ -2203,6 +2238,7 @@ function renderLine(S, l) {
   if (l.stream === "cmd") return div("tl input shcmd", `<span class="sh">$</span> ${esc(l.text)}`);
   if (l.stream === "shell") return div("tl out", ansi(l.text) || "&nbsp;");
   if (l.stream === "shellexit") return div("tl shexit", l.code === 130 ? "^C" : `exit ${l.code}`);
+  if (l.stream === "shared") return div("tl sys shared-note", `↳ output shared with ${esc(S.agent.name)}`);
   if (l.stream === "stdin") {
     let text = l.text;
     if (text.startsWith("{")) {

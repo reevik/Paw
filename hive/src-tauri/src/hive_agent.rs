@@ -318,6 +318,8 @@ pub struct Session {
     level: Mutex<String>,
     rules: Mutex<Vec<String>>,
     history: Mutex<Vec<Message>>,
+    /// Terminal output shared since the last prompt; it goes in front of the next one.
+    notes: Mutex<Vec<String>>,
     pending: Mutex<HashMap<u64, oneshot::Sender<bool>>>,
     /// Present while a prompt runs; sending (or dropping) it stops the turn.
     cancel: Mutex<Option<oneshot::Sender<()>>>,
@@ -336,14 +338,26 @@ struct SavedConversation {
     model: String,
     cwd: String,
     messages: Vec<Message>,
+    /// Shared terminal output the agent hasn't seen yet.
+    #[serde(default)]
+    notes: Vec<String>,
 }
 
-fn load_history(path: &Path) -> Vec<Message> {
+fn load_history(path: &Path) -> (Vec<Message>, Vec<String>) {
     std::fs::read_to_string(path)
         .ok()
         .and_then(|t| serde_json::from_str::<SavedConversation>(&t).ok())
-        .map(|c| c.messages)
+        .map(|c| (c.messages, c.notes))
         .unwrap_or_default()
+}
+
+/// The prompt as a user message, with shared terminal output in front of it.
+fn prompt_message(notes: &[String], prompt: &str) -> Message {
+    if notes.is_empty() {
+        return Message::user(prompt);
+    }
+    use rig_core::message::UserContent;
+    Message::User { content: vec![UserContent::text(notes.join("\n\n")), UserContent::text(prompt)] }
 }
 
 impl Session {
@@ -369,6 +383,7 @@ impl Session {
             model: self.cfg.model.clone(),
             cwd: self.cfg.cwd.display().to_string(),
             messages: self.history.lock().unwrap().clone(),
+            notes: self.notes.lock().unwrap().clone(),
         };
         let Ok(bytes) = serde_json::to_vec(&saved) else { return };
         if let Some(dir) = path.parent() {
@@ -551,8 +566,11 @@ async fn run_turn(sess: Arc<Session>, prompt: String, mut cancel: oneshot::Recei
     use futures::StreamExt;
     let started = Instant::now();
     let history = sess.history.lock().unwrap().clone();
+    // Terminal output shared since the last prompt goes along with this one.
+    let notes = std::mem::take(&mut *sess.notes.lock().unwrap());
+    let message = prompt_message(&notes, &prompt);
     let agent = sess.tools_agent();
-    let mut stream = agent.prompt(prompt.as_str()).history(history).max_turns(MAX_TURNS).stream();
+    let mut stream = agent.prompt(message.clone()).history(history).max_turns(MAX_TURNS).stream();
     let mut st = TurnState::default();
     let outcome = loop {
         tokio::select! {
@@ -581,7 +599,7 @@ async fn run_turn(sess: Arc<Session>, prompt: String, mut cancel: oneshot::Recei
     };
     if let Some(note) = note {
         let mut h = sess.history.lock().unwrap();
-        h.push(Message::user(prompt.clone()));
+        h.push(message.clone());
         h.push(Message::assistant(note));
     }
     sess.save();
@@ -667,7 +685,7 @@ impl HiveAgents {
         for o in old {
             self.close(o);
         }
-        let history = cfg.history_path.as_deref().map(load_history).unwrap_or_default();
+        let (history, notes) = cfg.history_path.as_deref().map(load_history).unwrap_or_default();
         let info = AgentInfo {
             id,
             name: cfg.name.clone(),
@@ -684,6 +702,7 @@ impl HiveAgents {
             level: Mutex::new(cfg.approval.clone()),
             rules: Mutex::new(cfg.allow_rules.clone()),
             history: Mutex::new(history),
+            notes: Mutex::new(notes),
             pending: Mutex::default(),
             cancel: Mutex::default(),
             seen: Seen::default(),
@@ -725,6 +744,18 @@ impl HiveAgents {
             *c = Some(tx);
         }
         Ok(run_turn(sess, text, rx))
+    }
+
+    /// Add terminal output to the conversation: the agent sees it with the
+    /// next prompt (a running one has already been sent). Saved right away.
+    pub fn note(&self, id: u32, text: String) -> Result<(), String> {
+        let sess = self.get(id).ok_or("This Hive Agent session has ended")?;
+        if text.trim().is_empty() {
+            return Ok(());
+        }
+        sess.notes.lock().unwrap().push(text);
+        sess.save();
+        Ok(())
     }
 
     /// Stop the running prompt, if any.
@@ -883,7 +914,8 @@ write (a whole file), shell (a command line, `sh -c`).\n\
 - Look before you change: read a file before editing it, and search or list to find things.\n\
 - Prefer edit for changes to existing files; old_text must match the file exactly.\n\
 - Run commands non-interactively; they get no input and no terminal.\n\
-- When a tool call is refused, don't repeat it; adapt or ask the user.\n",
+- When a tool call is refused, don't repeat it; adapt or ask the user.\n\
+- The user also runs commands in the tab's terminal; their output reaches you in <terminal> blocks.\n",
         );
         p.push_str(&format!("\nApproval level: {}\n", level_text(level)));
     } else {
@@ -1048,6 +1080,12 @@ pub async fn hive_agent_send(hive: tauri::State<'_, HiveAgents>, id: u32, text: 
     let fut = hive.send(id, text)?;
     tauri::async_runtime::spawn(fut);
     Ok(())
+}
+
+#[tauri::command]
+pub async fn hive_agent_note(hive: tauri::State<'_, HiveAgents>, id: u32, text: String) -> Result<(), String> {
+    let hive = hive.inner();
+    hive.note(id, text)
 }
 
 #[tauri::command]

@@ -2114,6 +2114,7 @@ const TRANSPORT_TAG = { stdio: "local", http: "HTTP", sse: "SSE" };
 function setMcpOpen(open) {
   mcp.open = open;
   $("mcp-panel").classList.toggle("hidden", !open);
+  $("mcp-resizer").classList.toggle("hidden", !open);
   $("mcp-toggle").classList.toggle("on", open);
   try { localStorage.setItem("paw.mcp", open ? "1" : "0"); } catch {}
   if (open) { mcp.key = null; syncMcp(); }
@@ -3054,30 +3055,56 @@ function setSidebarWidth(w, save = true) {
   return px;
 }
 try { const w = Number(localStorage.getItem("paw.sidebarWidth")); if (w) setSidebarWidth(w, false); } catch {}
-{
-  const handle = $("sidebar-resizer");
+// Drag `handle` to resize: `widthAt(x)` turns the pointer's x into a width,
+// `set(w, save)` applies it (saved when the drag ends); double-click resets.
+function makeResizer(handle, widthAt, set, reset) {
   handle.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
     e.preventDefault();
     const app = document.querySelector(".app");
-    const left = document.querySelector(".sidebar").getBoundingClientRect().left;
     handle.setPointerCapture(e.pointerId);
     app.classList.add("resizing");
-    const move = (ev) => setSidebarWidth(ev.clientX - left, false);
+    handle.classList.add("dragging");
+    const move = (ev) => set(widthAt(ev.clientX), false);
     const up = (ev) => {
       handle.releasePointerCapture(ev.pointerId);
       handle.removeEventListener("pointermove", move);
       handle.removeEventListener("pointerup", up);
       handle.removeEventListener("pointercancel", up);
       app.classList.remove("resizing");
-      setSidebarWidth(ev.clientX - left);
+      handle.classList.remove("dragging");
+      set(widthAt(ev.clientX), true);
     };
     handle.addEventListener("pointermove", move);
     handle.addEventListener("pointerup", up);
     handle.addEventListener("pointercancel", up);
   });
-  handle.addEventListener("dblclick", () => setSidebarWidth(SIDEBAR_W.normal));
+  handle.addEventListener("dblclick", reset);
 }
+makeResizer(
+  $("sidebar-resizer"),
+  (x) => x - document.querySelector(".sidebar").getBoundingClientRect().left,
+  setSidebarWidth,
+  () => setSidebarWidth(SIDEBAR_W.normal),
+);
+
+// ---------- MCP panel width ----------
+// Its left edge drags like the sidebar's; never wider than half the window.
+const MCP_W = { min: 240, max: 640, normal: 300 };
+function setMcpWidth(w, save = true) {
+  const max = Math.min(MCP_W.max, Math.floor(window.innerWidth / 2));
+  const px = Math.round(Math.min(max, Math.max(MCP_W.min, w)));
+  document.querySelector(".app").style.setProperty("--mcp-w", px + "px");
+  if (save) try { localStorage.setItem("paw.mcpWidth", String(px)); } catch {}
+  return px;
+}
+try { const w = Number(localStorage.getItem("paw.mcpWidth")); if (w) setMcpWidth(w, false); } catch {}
+makeResizer(
+  $("mcp-resizer"),
+  (x) => $("mcp-panel").getBoundingClientRect().right - x,
+  setMcpWidth,
+  () => setMcpWidth(MCP_W.normal),
+);
 
 $("tab-add").onclick = () => newSession();
 $("settings-btn").onclick = () => invoke("open_preferences", {});

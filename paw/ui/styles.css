@@ -883,21 +883,24 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
    off above where scrolling can't reach. */
 .tk-graph { position: relative; display: flex; gap: 34px; align-items: flex-start; overflow: auto; padding: 4px 4px 8px; min-height: 0; }
 .tk-graph > .tk-col { margin-block: auto; }
-.tk-edges { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
+.tk-edges { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; z-index: 0; }
 .tk-edges path { fill: none; stroke: var(--tk-line); stroke-width: 1.5; }
 .tk-edges path.live { stroke: color-mix(in srgb, var(--t-accent) 60%, transparent); }
 .tk-col { position: relative; display: flex; flex-direction: column; gap: 10px; flex-shrink: 0; }
 .tk-node {
   width: 164px; text-align: left; padding: 8px 10px; border: 0; border-radius: 9px; cursor: default;
-  background: color-mix(in srgb, var(--t-bg-solid, #101014) 70%, var(--t-fg) 6%); color: var(--t-fg);
+  /* Opaque, and above the lines (.tk-edges), so they never cross the text. */
+  background: color-mix(in srgb, var(--t-fg) 6%, var(--t-bg-solid, #101014)); color: var(--t-fg);
   box-shadow: inset 0 0 0 0.5px var(--tk-line); display: flex; flex-direction: column; gap: 3px; font: inherit;
+  position: relative; z-index: 1; overflow: hidden; min-width: 0;
 }
 .tk-node:hover { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--t-fg) 30%, transparent); }
 .tk-node.sel { box-shadow: inset 0 0 0 1.5px var(--accent); }
 .tk-node.v-done .tk-node-title, .tk-node.v-skipped .tk-node-title { color: color-mix(in srgb, var(--t-fg) 75%, transparent); }
 .tk-node.v-skipped { opacity: .6; }
 .tk-node-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-.tk-node-sub { font-size: 11px; color: var(--t-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Agent · state · time · reads: wraps inside the card rather than spilling out. */
+.tk-node-sub { font-size: 11px; line-height: 1.4; color: var(--t-dim); display: block; min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
 .tk-ro { color: color-mix(in srgb, var(--t-accent) 80%, var(--t-dim)); }
 .tk-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; vertical-align: 0; background: var(--t-dim); opacity: .7; }
 .tk-dot.v-running { background: var(--t-accent); opacity: 1; animation: pulse 1.6s ease-in-out infinite; }
@@ -994,3 +997,4 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
   color: var(--t-accent); background: color-mix(in srgb, var(--t-accent) 12%, transparent);
 }
 .tl.info .plugin-out .md { white-space: normal; }
+.tk-node-sub [data-time], .tk-node-sub .tk-ro { white-space: nowrap; }

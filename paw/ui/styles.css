@@ -247,6 +247,9 @@ button:disabled { opacity: .4; pointer-events: none; }
 .terminal .output summary, .terminal .output button, .terminal .output .ap-actions,
 .terminal .output .g { user-select: none; -webkit-user-select: none; }
 .terminal .output > * { flex-shrink: 0; }
+/* A prompt and the agent's answer (app.js › turns): no box of its own. */
+.terminal .output > .turn-block { display: contents; }
+.terminal .output > .turn-block > * { flex-shrink: 0; }
 
 .tl { white-space: pre-wrap; word-break: break-word; padding-left: 2ch; text-indent: -2ch; }
 .tl.out { color: var(--t-fg); }

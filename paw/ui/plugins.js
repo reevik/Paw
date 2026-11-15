@@ -144,16 +144,23 @@ function startPlugin(m, code) {
   } catch (e) {
     entry.error = String(e);
     entry.markReady();
+    pluginLog(m.id, `couldn't start: ${entry.error}`);
     pluginHost.plugins.set(m.id, entry);
     return;
   } finally {
     setTimeout(() => URL.revokeObjectURL(url), 5000);
   }
   entry.worker.onmessage = (e) => pluginMessage(entry, e.data).catch((err) => console.error(`plugin ${m.id}:`, err));
-  entry.worker.onerror = (e) => { entry.error = e.message || "error"; entry.markReady(); console.error(`plugin ${m.id}: ${entry.error}`); };
+  entry.worker.onerror = (e) => {
+    entry.error = `${e.message || "error"}${e.lineno ? ` (line ${e.lineno})` : ""}`;
+    entry.markReady();
+    console.error(`plugin ${m.id}: ${entry.error}`);
+    pluginLog(m.id, `error: ${entry.error}`);
+  };
   pluginHost.plugins.set(m.id, entry);
 }
 
+const pluginLog = (id, message) => invoke("plugin_log", { id, message }).catch(() => {});
 const reply = (entry, req, value, error) => entry.worker?.postMessage({ type: "reply", req, value, error });
 
 async function pluginStorage(id) {
@@ -166,12 +173,14 @@ async function pluginMessage(entry, m) {
   const need = (perm) => {
     if (entry.perms.has(perm)) return true;
     console.warn(`plugin ${id}: needs the “${perm}” permission for ${m.type}`);
+    pluginLog(id, `refused ${m.type}: needs the “${perm}” permission`);
     if (m.req) reply(entry, m.req, null, `This plugin doesn't have the “${perm}” permission.`);
     return false;
   };
   switch (m.type) {
     case "ready":
       entry.markReady();
+      pluginLog(id, `started (${[...pluginHost.commands.entries()].filter(([, c]) => c.id === id).map(([n]) => "/" + n).join(" ") || "no commands"})`);
       return;
     case "command": {
       if (!need("commands")) return;

@@ -321,6 +321,14 @@ pub fn plugin_storage_set(id: String, data: Value) -> Result<(), String> {
     std::fs::write(dir.join("data.json"), bytes).map_err(|e| e.to_string())
 }
 
+/// A line in Paw's log about a plugin (started, failed): the window's console
+/// isn't visible in the app.
+#[tauri::command]
+pub fn plugin_log(id: String, message: String) {
+    let id: String = id.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').take(48).collect();
+    eprintln!("Paw plugin {id}: {}", message.chars().take(500).collect::<String>());
+}
+
 /// Reveal a plugin's folder (or the plugins folder) in Finder.
 #[tauri::command]
 pub fn plugins_folder(id: Option<String>) -> Result<String, String> {

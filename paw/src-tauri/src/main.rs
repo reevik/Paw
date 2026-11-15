@@ -348,6 +348,7 @@ fn main() {
             plugins::plugin_storage_get,
             plugins::plugin_storage_set,
             plugins::plugins_folder,
+            plugins::plugin_log,
             stats::stats_record,
             stats::stats_summary,
             sessions::list_sessions,

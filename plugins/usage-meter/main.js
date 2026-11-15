@@ -8,8 +8,9 @@ let day = { date: today(), prompts: 0, input: 0, output: 0, ms: 0 };
 const fmt = (n) => (n < 1000 ? String(n) : n < 1e6 ? `${(n / 1000).toFixed(n < 1e4 ? 1 : 0)}k` : `${(n / 1e6).toFixed(1)}M`);
 
 function show() {
-  if (!day.prompts) return paw.status("");
-  paw.status(`Σ ${day.prompts} · ↑${fmt(day.input)} ↓${fmt(day.output)}`, { title: "Today's prompts and tokens (Usage Meter)" });
+  const title = "Today's prompts and tokens (Usage Meter) — /usage-meter for details";
+  if (!day.prompts) return paw.status("Σ 0 today", { title });
+  paw.status(`Σ ${day.prompts} · ↑${fmt(day.input)} ↓${fmt(day.output)}`, { title });
 }
 
 async function load() {

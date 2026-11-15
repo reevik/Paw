@@ -2283,6 +2283,7 @@ function applyCurrentTheme() {
   const { theme, extended } = PawThemes.activeTheme(settings);
   const opacity = settings.appearance?.opacity ?? 0.94;
   for (const P of panes.values()) PawThemes.applyTheme(P.root, theme, extended, opacity);
+  PawThemes.applyChrome(document.documentElement, theme); // the tab bar and sidebar too
   document.documentElement.style.setProperty("--win-opacity", String(opacity));
   for (const s of sessions.values()) if (s.term) s.term.term.options.theme = xtermTheme();
   if (extended !== ansiColors) {

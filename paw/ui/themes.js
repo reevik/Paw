@@ -126,6 +126,33 @@
     return v;
   }
 
+  /** The window around the tabs (tab bar, sidebar, status bar) in the theme's colors. */
+  function chromeVars(t) {
+    const dark = t.appearance === "dark";
+    const bg = t.background, fg = t.foreground;
+    return {
+      "--main-solid": dark ? mix(bg, fg, 0.045) : bg,
+      "--card": dark ? rgba(mix(bg, fg, 0.14), 0.85) : rgba(mix(bg, "#ffffff", 0.6), 0.9),
+      "--card-2": rgba(fg, dark ? 0.045 : 0.035),
+      "--hover": rgba(fg, dark ? 0.06 : 0.05),
+      "--selected": rgba(fg, dark ? 0.1 : 0.08),
+      "--hair": rgba(fg, 0.09),
+      "--text": fg,
+      "--text-2": mix(fg, bg, 0.35),
+      "--text-3": mix(fg, bg, 0.55),
+      // The sidebar's tint over the native blur (it steadies the background
+      // whatever the wallpaper), in the theme's hue, and its stronger text.
+      "--sidebar-bg": dark ? rgba(mix(bg, "#000000", 0.1), 0.5) : rgba(mix(bg, "#ffffff", 0.4), 0.4),
+      "--side-text-2": mix(fg, bg, 0.18),
+      "--side-text-3": mix(fg, bg, 0.38),
+    };
+  }
+
+  function applyChrome(el, theme) {
+    if (!el || !theme) return;
+    for (const [k, val] of Object.entries(chromeVars(theme))) el.style.setProperty(k, val);
+  }
+
   function applyTheme(el, theme, extended, opacity) {
     if (!el || !theme) return;
     for (const [k, val] of Object.entries(themeVars(theme, opacity))) {
@@ -284,7 +311,7 @@
   }
 
   window.PawThemes = {
-    BUILTIN_THEMES, allThemes, activeTheme, applyTheme, themeVars, normalize, systemAppearance,
+    BUILTIN_THEMES, allThemes, activeTheme, applyTheme, applyChrome, themeVars, normalize, systemAppearance,
     ansiToHtml, stripAnsi, importThemeFile, parseHex, mix, luminance,
   };
 })();

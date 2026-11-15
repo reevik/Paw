@@ -94,6 +94,8 @@ pub struct General {
     pub approval: String,
     /// Send shell commands run in a tab (and their output) along with the next prompt.
     pub share_shell: bool,
+    /// Closed sessions kept in ~/.paw/session (the oldest go first); 0 keeps all.
+    pub max_sessions: usize,
 }
 
 impl Default for General {
@@ -106,6 +108,7 @@ impl Default for General {
             input_mode: "auto".into(),
             approval: "edits".into(),
             share_shell: true,
+            max_sessions: 50,
         }
     }
 }

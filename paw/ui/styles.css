@@ -971,3 +971,6 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
   font: 600 15px var(--font); color: var(--text); font-variant-numeric: tabular-nums;
   animation: fade .12s ease-out;
 }
+/* The link under a large command output that shares it with the agent. */
+.share-offer a.share-link { color: var(--t-accent); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; font-style: normal; }
+.share-offer a.share-link:hover { text-decoration-thickness: 2px; }

@@ -391,6 +391,7 @@ async function closeSession(sid) {
   if (isBusy(S) && !confirm(`${S.agent.name} is still working. Close the tab and stop it?`)) return;
   if (S.task?.state === "running" && !confirm("This task is running. Close it and stop its steps? Their tabs stay open.")) return;
   taskTabClosing(S);
+  closeBoardView(S);
   keepClosedSession(S);
   dropWaiting(S);
   if (S.working) { S.working = false; setTimeout(pumpAgents, 0); }

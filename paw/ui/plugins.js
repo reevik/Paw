@@ -11,6 +11,9 @@
 //   prompt    — put text in the prompt, or send it to the tab's agent
 //   shell     — run a command in the tab's shell (shown there like typed)
 //   network   — fetch and friends (without it they're taken away)
+//   tasks     — read the tasks' plans, and hear when they change
+//   views     — draw on a task's board (a view next to its graph), on a
+//               canvas handed to the worker; the view sees that task
 // The worker API is described in plugins/README.md.
 
 const pluginHost = {
@@ -20,6 +23,8 @@ const pluginHost = {
   subs: new Map(),      // event → Set of ids
   calls: new Map(),     // req → { resolve, reject, timer }
   storage: new Map(),   // id → object
+  views: new Map(),     // "plugin/name" → { id, name, label }
+  open: new Map(),      // view instance → { S, key, el, ro }
   seq: 1,
 };
 
@@ -34,6 +39,8 @@ const PERMISSION_TEXT = {
   prompt: "put text in your prompt or send it to an agent",
   shell: "run commands in your tab's shell",
   network: "connect to the internet",
+  tasks: "read your tasks' plans and follow their progress",
+  views: "draw on a task's board, next to its graph",
 };
 
 // Runs first in every plugin's worker. `cfg` is filled in per plugin.
@@ -68,8 +75,26 @@ const PLUGIN_BOOTSTRAP = String.raw`
       } catch (err) { post({ type: "done", req: m.req, error: String(err && err.message || err) }); }
     } else if (m.type === "event") {
       for (const fn of listeners.get(m.event) || []) { try { await fn(m.data); } catch (err) { console.error(err); } }
+    } else if (m.type === "view-open") {
+      const handler = views.get(m.name);
+      const on = new Map();
+      const ctx = {
+        canvas: m.canvas, width: m.width, height: m.height, dpr: m.dpr, task: m.task, theme: m.theme,
+        on(event, fn) { if (!on.has(event)) on.set(event, []); on.get(event).push(fn); },
+        select(step) { post({ type: "view-select", vid: m.vid, step: step == null ? null : String(step) }); },
+      };
+      openViews.set(m.vid, { ctx, on });
+      try { if (handler) await handler(ctx); } catch (err) { console.error(err); }
+    } else if (m.type === "view-event") {
+      const v = openViews.get(m.vid);
+      if (!v) return;
+      if (m.event === "resize") Object.assign(v.ctx, m.data);
+      if (m.event === "task") v.ctx.task = m.data;
+      for (const fn of v.on.get(m.event) || []) { try { fn(m.data); } catch (err) { console.error(err); } }
+      if (m.event === "close") openViews.delete(m.vid);
     }
   };
+  const views = new Map(), openViews = new Map();
   self.paw = Object.freeze({
     id: cfg.id,
     version: cfg.version,
@@ -94,6 +119,17 @@ const PLUGIN_BOOTSTRAP = String.raw`
     run(tab, command) { return call({ type: "run", tab: tabId(tab), command: String(command) }); },
     /** The open tabs: { id, title, agent, model, cwd, active }. */
     tabs() { return call({ type: "tabs" }); },
+    /** The tasks' plans (needs "tasks"); paw.on("task", fn) hears changes. */
+    tasks() { return call({ type: "tasks" }); },
+    /** A view on the task board, next to its graph (needs "views"). handler(ctx)
+     *  gets ctx.canvas (an OffscreenCanvas), width, height, dpr, task, theme,
+     *  ctx.on("resize" | "task" | "pointer" | "wheel" | "close", fn) and
+     *  ctx.select(stepId) to show a step's details. */
+    view(name, opts, handler) {
+      if (typeof opts === "function") { handler = opts; opts = {}; }
+      views.set(name, handler);
+      post({ type: "view", name, label: (opts && opts.label) || name });
+    },
     /** The plugin's own storage, kept between launches. */
     storage: Object.freeze({
       get: (key) => call({ type: "storage-get", key }),
@@ -110,6 +146,8 @@ function pluginTab(S) {
 const tabByPluginId = (id) => (id ? [...sessions.values()].find((S) => S.pawId === id) : curS()) ?? curS();
 
 function stopPlugins() {
+  for (const v of [...pluginHost.open.values()]) closeBoardView(v.S);
+  pluginHost.views.clear();
   for (const p of pluginHost.plugins.values()) p.worker?.terminate();
   for (const c of pluginHost.calls.values()) { clearTimeout(c.timer); c.reject(new Error("The plugin was stopped")); }
   pluginHost.plugins.clear();
@@ -192,8 +230,9 @@ async function pluginMessage(entry, m) {
       return;
     }
     case "subscribe":
-      if (!need("events")) return;
-      if (!["prompt", "turn", "command"].includes(m.event)) return;
+      if (m.event === "task") { if (!need("tasks")) return; }
+      else if (!need("events")) return;
+      if (!["prompt", "turn", "command", "task"].includes(m.event)) return;
       if (!pluginHost.subs.has(m.event)) pluginHost.subs.set(m.event, new Set());
       pluginHost.subs.get(m.event).add(id);
       return;
@@ -234,6 +273,24 @@ async function pluginMessage(entry, m) {
     }
     case "tabs":
       return reply(entry, m.req, openTabs.map((sid) => pluginTab(sessions.get(sid))).filter(Boolean));
+    case "tasks":
+      if (!need("tasks")) return;
+      return reply(entry, m.req, [...sessions.values()].filter((S) => S.task).map(pluginTask));
+    case "view": {
+      if (!need("views")) return;
+      const name = String(m.name ?? "").slice(0, 40);
+      if (!name) return;
+      pluginHost.views.set(`${id}/${name}`, { id, name, label: String(m.label ?? name).slice(0, 24) });
+      for (const P of panes.values()) withPane(P, renderTaskView);
+      return;
+    }
+    case "view-select": {
+      const v = pluginHost.open.get(m.vid);
+      if (!v?.S.task) return;
+      v.S.task.selected = m.step && v.S.task.steps.some((s) => s.id === m.step) ? m.step : null;
+      inPane(v.S, renderTaskView);
+      return;
+    }
     case "storage-get": {
       const data = await pluginStorage(id);
       return reply(entry, m.req, m.key == null ? data : data[m.key] ?? null);
@@ -328,4 +385,111 @@ async function pluginsListHtml() {
 /** Help rows for plugin commands. */
 function pluginHelpRows(row) {
   return [...pluginHost.commands.entries()].map(([n, c]) => row(`/${n}${c.usage ? " " + c.usage : ""}`, c.description || `from ${pluginHost.plugins.get(c.id)?.manifest.name ?? c.id}`));
+}
+
+// ---------- views on the task board ----------
+// A plugin's view replaces the graph on a task's board (the switch in the
+// board's head). Its canvas is handed to the plugin's worker once and kept
+// across the board's redraws; pointer and wheel events, size changes and the
+// task's updates go to the worker as they happen.
+
+/** A task as plugins see it. */
+function pluginTask(T) {
+  const t = T.task;
+  return {
+    id: t.id, tab: T.pawId, title: t.title || t.goal?.split("\n")[0] || "New task", state: t.state, cwd: T.cwd, planner: T.agent.name,
+    selected: t.selected ?? null, startedAt: t.startedAt ?? null, endedAt: t.endedAt ?? null,
+    steps: t.steps.map((s) => ({
+      id: s.id, title: s.title, agent: agentName(s.agent), needs: [...s.needs], edits: !!s.edits,
+      state: stepView(s), startedAt: s.startedAt ?? null, endedAt: s.endedAt ?? null,
+    })),
+  };
+}
+
+/** The views plugins offer for the board. */
+const boardViews = () => [...pluginHost.views.entries()].filter(([, v]) => pluginHost.plugins.get(v.id)?.worker);
+
+function boardTheme() {
+  const cs = getComputedStyle($("task-view") ?? document.body);
+  const v = (n, d) => cs.getPropertyValue(n).trim() || d;
+  return { fg: v("--t-fg", "#e4e4e7"), bg: v("--t-bg-solid", "#101014"), accent: v("--t-accent", "#7dcfff"), dim: v("--t-dim", "#8b8f98"),
+    dark: matchMedia("(prefers-color-scheme: dark)").matches };
+}
+
+/** The element showing the tab's plugin view (made, and handed to the plugin, once). */
+function boardViewElement(S, key) {
+  if (S.view?.key === key) return S.view.el;
+  closeBoardView(S);
+  const v = pluginHost.views.get(key);
+  const entry = v && pluginHost.plugins.get(v.id);
+  if (!entry?.worker) return null;
+  const el = div("tk-viewhost");
+  const canvas = document.createElement("canvas");
+  el.appendChild(canvas);
+  const vid = pluginHost.seq++;
+  S.view = { key, el, vid };
+  pluginHost.open.set(vid, { S, key, el });
+  const send = (event, data) => entry.worker.postMessage({ type: "view-event", vid, event, data });
+  let off;
+  try { off = canvas.transferControlToOffscreen(); } catch (e) { el.textContent = `This view can't draw here: ${e.message}`; return el; }
+  const size = () => {
+    const r = el.getBoundingClientRect();
+    return { width: Math.max(1, Math.round(r.width)), height: Math.max(1, Math.round(r.height)), dpr: devicePixelRatio || 1 };
+  };
+  // Open it once it's on the page (a timer, not an animation frame: those
+  // pause while the window is hidden, and the view would never open).
+  setTimeout(() => {
+    if (S.view?.vid !== vid) return;
+    entry.worker.postMessage({ type: "view-open", vid, name: v.name, canvas: off, ...size(), task: pluginTask(S), theme: boardTheme() }, [off]);
+    const ro = new ResizeObserver(() => send("resize", size()));
+    ro.observe(el);
+    // Out of sight (another tab, scrolled away): the view can rest.
+    const io = new IntersectionObserver((es) => send("visible", es.some((e) => e.isIntersecting)));
+    io.observe(el);
+    Object.assign(pluginHost.open.get(vid), { ro, io });
+  }, 0);
+  const pt = (e) => {
+    const r = canvas.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top, buttons: e.buttons, button: e.button, shift: e.shiftKey, alt: e.altKey };
+  };
+  for (const type of ["pointerdown", "pointermove", "pointerup", "pointerleave", "dblclick"]) {
+    canvas.addEventListener(type, (e) => {
+      if (type === "pointerdown") canvas.setPointerCapture?.(e.pointerId);
+      if (type === "pointermove" && !e.buttons && Math.random() < 0.5) return; // hover: half is plenty
+      send("pointer", { type, ...pt(e) });
+    });
+  }
+  canvas.addEventListener("wheel", (e) => { e.preventDefault(); send("wheel", { dx: e.deltaX, dy: e.deltaY, ...pt(e) }); }, { passive: false });
+  return el;
+}
+
+function closeBoardView(S) {
+  const v = S?.view;
+  if (!v) return;
+  S.view = null;
+  const o = pluginHost.open.get(v.vid);
+  o?.ro?.disconnect();
+  o?.io?.disconnect();
+  pluginHost.open.delete(v.vid);
+  const entry = pluginHost.plugins.get(pluginHost.views.get(v.key)?.id);
+  entry?.worker?.postMessage({ type: "view-event", vid: v.vid, event: "close", data: null });
+  v.el.remove();
+}
+
+/** A task changed: its open view and the plugins following tasks hear it. */
+function pluginTaskChanged(T) {
+  if (!T?.task) return;
+  const now = Date.now();
+  if (T.pluginTaskAt && now - T.pluginTaskAt < 250) {
+    clearTimeout(T.pluginTaskTimer);
+    T.pluginTaskTimer = setTimeout(() => pluginTaskChanged(T), 260);
+    return;
+  }
+  T.pluginTaskAt = now;
+  const info = pluginTask(T);
+  if (T.view) {
+    const entry = pluginHost.plugins.get(pluginHost.views.get(T.view.key)?.id);
+    entry?.worker?.postMessage({ type: "view-event", vid: T.view.vid, event: "task", data: info });
+  }
+  pluginEvent("task", info);
 }

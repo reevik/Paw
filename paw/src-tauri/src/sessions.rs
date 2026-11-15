@@ -69,7 +69,8 @@ pub fn list_in(home: &Path) -> Vec<StoredSession> {
         if !paths::valid_session_id(&id) || !dir.is_dir() {
             continue;
         }
-        let tab = read_json(&dir.join("session.json")).unwrap_or(Value::Null);
+        // Only sessions with a saved state: anything else can't be reopened.
+        let Some(tab) = read_json(&dir.join("session.json")) else { continue };
         let (size, newest) = walk(&dir);
         out.push(StoredSession {
             description: describe(&tab),
@@ -88,12 +89,19 @@ pub fn list_in(home: &Path) -> Vec<StoredSession> {
 /// Delete the oldest closed sessions (not in `open`) beyond `max`; 0 keeps all.
 /// Returns the ids deleted.
 pub fn prune_in(home: &Path, max: usize, open: &HashSet<String>) -> Vec<String> {
-    if max == 0 {
-        return vec![];
-    }
     let closed: Vec<StoredSession> = list_in(home).into_iter().filter(|s| !open.contains(&s.id)).collect();
     let mut gone = Vec::new();
-    for s in closed.into_iter().skip(max) {
+    // Leftovers without a saved state (a log line written after its empty
+    // tab's folder was removed): nothing to reopen, so they go too.
+    if let Ok(entries) = std::fs::read_dir(home.join("session")) {
+        for e in entries.flatten() {
+            let Some(id) = e.file_name().to_str().map(str::to_string) else { continue };
+            if paths::valid_session_id(&id) && !open.contains(&id) && e.path().is_dir() && !e.path().join("session.json").exists() && std::fs::remove_dir_all(e.path()).is_ok() {
+                gone.push(id);
+            }
+        }
+    }
+    for s in closed.into_iter().skip(if max == 0 { usize::MAX } else { max }) {
         if let Some(dir) = paths::session_dir_in(home, &s.id) {
             if std::fs::remove_dir_all(&dir).is_ok() {
                 gone.push(s.id);
@@ -126,11 +134,28 @@ pub fn save_session(id: String, tab: Value) -> Result<(), String> {
     std::fs::rename(&tmp, dir.join("session.json")).map_err(|e| e.to_string())
 }
 
-/// A closed session's state, to reopen it in a new tab.
+/// A closed session's state, to reopen it in a new tab, with its id (a long
+/// id from before folders were renamed finds the folder's short name).
+pub fn load_in(home: &Path, id: &str) -> Result<(String, Value), String> {
+    let short: String = id.chars().filter(|c| c.is_ascii_alphanumeric()).take(8).collect::<String>().to_ascii_lowercase();
+    for id in [id, short.as_str()] {
+        let Some(dir) = paths::session_dir_in(home, id) else { continue };
+        if !dir.is_dir() {
+            continue;
+        }
+        return match read_json(&dir.join("session.json")) {
+            Some(tab) => Ok((id.to_string(), tab)),
+            None => Err("That session was closed before Paw kept the state of closed tabs, so there's nothing to reopen. Its files are still in its folder.".into()),
+        };
+    }
+    Err("That session isn't stored any more: the oldest closed sessions are removed to stay within Settings › General › Closed sessions.".into())
+}
+
 #[tauri::command]
 pub fn load_session(id: String) -> Result<Value, String> {
-    let dir = paths::session_dir(&id).ok_or("Not a valid session id")?;
-    read_json(&dir.join("session.json")).ok_or_else(|| "That session has nothing to reopen".to_string())
+    let (id, mut tab) = load_in(&home()?, &id)?;
+    tab["id"] = id.into();
+    Ok(tab)
 }
 
 /// Remove a session folder (a tab closed before anything happened in it).
@@ -168,6 +193,7 @@ mod tests {
         make(&h, "cccccccc-3", json!({ "agent": "paw", "lastActive": 2000, "summary": "Explain the parser" }));
         std::fs::write(h.join("session/aaaaaaaa-1/files/notes.txt"), "x".repeat(100)).unwrap();
         std::fs::create_dir_all(h.join("session/not a session")).unwrap();
+        std::fs::create_dir_all(h.join("session/dddddddd/files")).unwrap(); // no saved state: not listed
         let l = list_in(&h);
         assert_eq!(l.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["bbbbbbbb-2", "cccccccc-3", "aaaaaaaa-1"]);
         assert_eq!(l[0].description, "OAuth login");
@@ -175,6 +201,18 @@ mod tests {
         assert_eq!(l[1].description, "Explain the parser");
         assert_eq!(l[2].description, "fix the tests");
         assert!(l[2].size > 100, "the copied file counts");
+        let _ = std::fs::remove_dir_all(&h);
+    }
+
+    #[test]
+    fn reopens_by_old_long_ids_too() {
+        let h = home("load");
+        make(&h, "78339db3", json!({ "agent": "claude", "id": "78339db3" }));
+        assert_eq!(load_in(&h, "78339db3").unwrap().0, "78339db3");
+        assert_eq!(load_in(&h, "78339db3-9bda-43be-96e2-24b7f4f8e3cb").unwrap().0, "78339db3", "a link from before the rename");
+        assert!(load_in(&h, "deadbeef").unwrap_err().contains("isn't stored any more"));
+        std::fs::create_dir_all(h.join("session/cafebabe")).unwrap();
+        assert!(load_in(&h, "cafebabe").unwrap_err().contains("before Paw kept"));
         let _ = std::fs::remove_dir_all(&h);
     }
 
@@ -190,6 +228,10 @@ mod tests {
         let left: Vec<String> = list_in(&h).into_iter().map(|s| s.id).collect();
         assert_eq!(left, ["44444444", "33333333", "22222222"]);
         assert!(prune_in(&h, 0, &HashSet::new()).is_empty(), "0 keeps everything");
+        std::fs::create_dir_all(h.join("session/eeeeeeee/files")).unwrap();
+        std::fs::create_dir_all(h.join("session/ffffffff")).unwrap();
+        let open: HashSet<String> = ["ffffffff".to_string()].into();
+        assert_eq!(prune_in(&h, 0, &open), vec!["eeeeeeee".to_string()], "a leftover goes; an open tab's new folder stays");
         let _ = std::fs::remove_dir_all(&h);
     }
 }

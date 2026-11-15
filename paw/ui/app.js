@@ -1777,11 +1777,14 @@ async function sessionsListHtml() {
 
 /** Reopen a closed session in a new tab. */
 async function reopenSession(id) {
-  const open = [...sessions.values()].find((S) => S.pawId === id);
+  // Links from before session folders got short names carry the long id.
+  const isIt = (S) => S.pawId === id || (id.length > 8 && S.pawId === id.replace(/[^0-9a-z]/gi, "").slice(0, 8).toLowerCase());
+  const open = [...sessions.values()].find(isIt);
   if (open) return select(open.sid);
   let t;
   try { t = await invoke("load_session", { id }); } catch (e) { const S = curS(); if (S) sys(S, `✗ ${e}`); return; }
-  t.id = id;
+  // load_session gives the folder's current id.
+  if (sessions.size && [...sessions.values()].some((S) => S.pawId === t.id)) return select([...sessions.values()].find((S) => S.pawId === t.id).sid);
   const S = await restoreTab(t, "reopened");
   if (!S) { const C = curS(); if (C) sys(C, `✗ the agent of that session (${t.agent}) isn't set up any more`); return; }
   if (S.group && !groups.has(S.group)) delete S.group;

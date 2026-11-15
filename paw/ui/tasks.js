@@ -747,3 +747,48 @@ setInterval(() => {
     });
   }
 }, 1000);
+
+// ---------- /tasks ----------
+/** Every open task, one line each: state, steps, time, planner; the title opens its tab. */
+function tasksListHtml() {
+  const tasks = openTabs.map((sid) => sessions.get(sid)).filter((S) => S?.task);
+  if (!tasks.length) return `<span class="dim">No tasks yet. Start one with</span> <span class="cmd">/task &lt;what&gt;</span> <span class="dim">or select text, right-click, Create a task.</span>`;
+  const glyph = { running: "●", planning: "●", done: "✓", failed: "✗", stopped: "■", draft: "◇", new: "◇" };
+  const cls = { running: "ok", planning: "ok", done: "ok", failed: "err", stopped: "warn", draft: "dim", new: "dim" };
+  const rows = tasks.map((T) => {
+    const t = T.task;
+    const steps = t.steps;
+    const count = (v) => steps.filter((st) => stepView(st) === v).length;
+    const done = steps.filter((st) => st.state === "done" || st.state === "skipped").length;
+    const bits = [];
+    if (t.state === "planning") bits.push("planning…");
+    else if (!steps.length) bits.push("no plan yet");
+    else if (t.state === "draft") bits.push(`${steps.length} step${steps.length === 1 ? "" : "s"} planned`);
+    else bits.push(`${done}/${steps.length} steps`);
+    if (t.state !== "draft") {
+      if (count("running")) bits.push(`${count("running")} running`);
+      if (count("needs")) bits.push(`<span class="warn">${count("needs")} waiting for you</span>`);
+      if (count("failed")) bits.push(`<span class="err">${count("failed")} failed</span>`);
+    }
+    const time = t.startedAt ? fmtElapsed((t.endedAt ?? Date.now()) - t.startedAt) : "";
+    const title = t.title || t.goal?.split("\n")[0] || "New task";
+    return `<span class="${cls[t.state] ?? "dim"}">${glyph[t.state] ?? "·"}</span> ` +
+      `<a href="#" class="task-link" data-open-task="${esc(t.id)}" title="Open this task">${esc(title.length > 48 ? title.slice(0, 47) + "…" : title)}</a>` +
+      `  <span class="${cls[t.state] ?? "dim"}">${esc(t.state)}</span>  ${bits.join(" · ")}` +
+      (time ? `  <span class="dim">${esc(time)}</span>` : "") +
+      `  <span class="dim">${esc(T.agent.name)} · ${esc(tildify(T.cwd))}</span>`;
+  });
+  return `<span class="help-h">Tasks (${tasks.length})</span>\n${rows.join("\n")}`;
+}
+
+// A task's title in /tasks opens its tab (its group unfolds if it's folded).
+document.addEventListener("click", (e) => {
+  const a = e.target.closest?.("[data-open-task]");
+  if (!a) return;
+  e.preventDefault();
+  const T = [...sessions.values()].find((S) => S.task?.id === a.dataset.openTask);
+  if (!T) { const S = curS(); if (S) sys(S, "That task's tab is closed."); return; }
+  const g = T.group ? groups.get(T.group) : null;
+  if (g?.collapsed) g.collapsed = false;
+  select(T.sid);
+});

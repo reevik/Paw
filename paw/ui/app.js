@@ -505,6 +505,7 @@ function helpHtml(S) {
     row("/stop", "stop the agent or running command (⌘. · Ctrl-C)"),
     row("/new [agent]", "open a new tab with a new conversation"),
     row("/task [what]", `plan a task with ${name} and run its steps on several agents (pasted text counts too)`),
+    row("/tasks", "list the open tasks and how far each one is (click one to open it)"),
     row("/clear", "clear the screen (⌘K)"),
     row("/session", "open this tab's folder: its conversation, files, scripts and command log"),
     "", head("Shell"),
@@ -619,6 +620,10 @@ async function slashCommand(S, line) {
       if (arg !== "path") invoke("session_dir", { id: S.pawId, reveal: true }).catch(() => {});
       return true;
     }
+    case "/tasks":
+      echo();
+      info(S, tasksListHtml());
+      return true;
     case "/task": {
       // Plan it with this tab's agent, in this tab's folder. Pasted text
       // badges are part of the goal ("/task" alone: the pasted text is it).

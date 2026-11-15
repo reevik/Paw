@@ -920,3 +920,27 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
 .tab.step-tab .label::before { content: "↳ "; opacity: .55; }
 .tab-badge { flex-shrink: 0; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--orange); color: white; font-size: 10px; font-weight: 600; display: grid; place-items: center; }
 .tk-graph::-webkit-scrollbar-corner, .tk-side::-webkit-scrollbar-corner { background: transparent; }
+
+/* ---------- Tab groups ---------- */
+.tab-group {
+  flex-shrink: 0; display: flex; align-items: center; gap: 5px; height: 22px; margin: 0 1px 0 4px; padding: 0 8px;
+  border-radius: 7px; background: var(--g); color: white; font-size: 11.5px; font-weight: 600; cursor: default;
+  max-width: 180px; align-self: center;
+}
+.tab-group:first-child { margin-left: 0; }
+.tab-group.unnamed { min-width: 14px; padding: 0 5px; }
+.tab-group.collapsed { opacity: .92; }
+.tab-group:hover { filter: brightness(1.08); }
+.tg-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.tg-count { font-weight: 500; opacity: .85; font-variant-numeric: tabular-nums; }
+.tg-busy { width: 6px; height: 6px; border-radius: 50%; background: white; flex-shrink: 0; animation: pulse 1.6s ease-in-out infinite; }
+.tg-ico { width: 7px; height: 7px; flex-shrink: 0; transform: rotate(45deg); border: 1.5px solid currentColor; border-radius: 2px; }
+.tab-group .tab-badge { background: white; color: var(--g); }
+.tg-input { all: unset; width: auto; min-width: 60px; font: inherit; color: white; caret-color: white; }
+.tg-input::placeholder { color: rgba(255, 255, 255, .7); }
+.tab.in-group { box-shadow: inset 0 -2px 0 var(--g); }
+.tab.in-group.active { box-shadow: 0 1px 3px rgba(0,0,0,.08), 0 0 0 0.5px var(--hair), inset 0 -2px 0 var(--g); }
+.menu-swatches { display: flex; gap: 6px; padding: 6px 10px; }
+.swatch { width: 16px; height: 16px; border-radius: 50%; border: 0; padding: 0; cursor: default; }
+.swatch.on { box-shadow: 0 0 0 2px var(--card, white), 0 0 0 3.5px currentColor; }
+.mi-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; margin-right: 2px; }

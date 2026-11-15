@@ -182,6 +182,9 @@ async function newSession(agentId, opts = {}) {
   if (opts.stepOf) S.stepOf = opts.stepOf;
   sessions.set(S.sid, S);
   openTabs.splice(opts.after ? tabInsertIndex(opts.after) : openTabs.length, 0, S.sid);
+  // A task and its steps are a group; a step joins its task's.
+  if (opts.task) ensureTaskGroup(S);
+  if (opts.stepOf && opts.after) addToGroup(S, ensureTaskGroup(opts.after), false);
   banner(S);
   if (opts.background) { renderTabs(); saveWorkspaceSoon(); } else select(S.sid);
   openShell(S);
@@ -339,13 +342,17 @@ async function closeSession(sid) {
   saveWorkspaceSoon();
   const idx = openTabs.indexOf(sid);
   openTabs.splice(idx, 1);
+  dropEmptyGroups();
   if (P && panes.size > 1) {
     // Closing a session in a split closes its pane.
     P.sid = null;
     removePane(P);
   } else if (P) {
     focusPane(P, false);
-    const next = openTabs.slice(Math.min(idx, openTabs.length - 1)).concat(openTabs).find((t) => !paneOf(sessions.get(t)));
+    // The next tab, preferring ones not folded away in a group.
+    const order = openTabs.slice(Math.min(idx, openTabs.length - 1)).concat(openTabs).filter((t) => !paneOf(sessions.get(t)));
+    const folded = (t) => groups.get(sessions.get(t)?.group)?.collapsed;
+    const next = order.find((t) => !folded(t)) ?? order[0];
     select(next ?? null);
   } else { renderTabs(); renderSidebar(); }
 }
@@ -1584,8 +1591,10 @@ function workspaceSnapshot() {
   return {
     version: 1,
     active: Math.max(0, openTabs.indexOf(activeId)),
+    groups: [...groups.values()],
     tabs: openTabs.map((sid) => sessions.get(sid)).filter(Boolean).map((S) => ({
       id: S.pawId,
+      group: S.group ?? undefined,
       agent: S.agent.id,
       cwd: S.cwd,
       model: S.model,
@@ -1666,6 +1675,7 @@ async function restoreWorkspace() {
     };
     if (t.task) S.task = restoreTask(t.task);
     if (t.stepOf) S.stepOf = t.stepOf;
+    if (t.group) S.group = t.group;
     sessions.set(S.sid, S);
     openTabs.push(S.sid);
     restored++;
@@ -1681,7 +1691,16 @@ async function restoreWorkspace() {
       startProc(S, undefined, { resume: !!resumable });
     }
   }
+  for (const g of ws?.groups ?? []) if (g?.id && GROUP_COLORS[g.color]) groups.set(g.id, { id: g.id, name: g.name ?? "", color: g.color, collapsed: !!g.collapsed, task: g.task });
   relinkTasks();
+  // Tasks from before groups get theirs; tabs of groups that are gone leave them.
+  for (const S of sessions.values()) if (S.group && !groups.has(S.group)) delete S.group;
+  for (const S of sessions.values()) if (S.task) ensureTaskGroup(S);
+  for (const S of sessions.values()) {
+    const T = S.stepOf ? [...sessions.values()].find((x) => x.task?.id === S.stepOf.task) : null;
+    if (T && !S.group) addToGroup(S, T.group, false);
+  }
+  dropEmptyGroups();
   if (restored) select(openTabs[Math.min(ws.active ?? 0, openTabs.length - 1)]);
   return restored > 0;
 }
@@ -1893,12 +1912,18 @@ function tabLabel(S) {
 function renderTabs() {
   const tabs = $("tabs");
   tabs.innerHTML = "";
+  const shown = new Set();
   for (const sid of openTabs) {
     const S = sessions.get(sid);
     if (!S) continue;
+    const g = S.group ? groups.get(S.group) : null;
+    if (g && !shown.has(g.id)) { shown.add(g.id); tabs.appendChild(groupChip(g)); }
+    // A folded group shows only the tab you're on (and ones open in a split).
+    if (g?.collapsed && sid !== activeId && !paneOf(S)) continue;
     const t = document.createElement("div");
     const step = stepOfTab(S);
-    t.className = "tab" + (sid === activeId ? " active" : paneOf(S) ? " visible" : "") + (S.task ? " task-tab" : step ? " step-tab" : "");
+    t.className = "tab" + (sid === activeId ? " active" : paneOf(S) ? " visible" : "") + (S.task ? " task-tab" : step ? " step-tab" : "") + (g ? " in-group" : "");
+    if (g) t.style.setProperty("--g", GROUP_COLORS[g.color] ?? GROUP_COLORS.grey);
     t.title = S.task ? `Task: ${S.task.goal || "new"} — planned by ${S.agent.name}` : step ? `Step of ${step.T.task.title}: ${S.agent.name} — ${tildify(S.cwd)}` : `${S.agent.name} — ${tildify(S.cwd)}`;
     const needs = S.task ? taskNeedsYou(S) : 0;
     t.innerHTML = (S.task ? `<span class="task-ico" aria-hidden="true"></span>` : "") +
@@ -1907,9 +1932,191 @@ function renderTabs() {
       `${S.unread ? `<span class="tab-unread"></span>` : ""}<button class="close" title="Close tab (⌘W)">×</button>`;
     t.onmousedown = (e) => { if (e.button === 1) { e.preventDefault(); closeSession(sid); } };
     t.onclick = () => select(sid);
+    t.oncontextmenu = (e) => { e.preventDefault(); tabMenu(S, e.clientX, e.clientY); };
     t.querySelector(".close").onclick = (e) => { e.stopPropagation(); closeSession(sid); };
     tabs.appendChild(t);
   }
+}
+
+// ---------- tab groups ----------
+// Like Chrome's: a colored chip in the tab bar, then its tabs, underlined in
+// its color. Clicking the chip folds the group (only the tab you're on stays
+// visible). A task and its step tabs are a group of their own, folded by
+// default. Right-click a tab to group it; right-click a chip to rename,
+// recolor, ungroup or close the group. A group's tabs stay next to each other.
+
+const groups = new Map(); // id → { id, name, color, collapsed, task? }
+const GROUP_COLORS = {
+  blue: "#4a8cf7", purple: "#9a6bea", green: "#3fa55b", orange: "#e8823a", pink: "#e0609e",
+  cyan: "#2fa8b8", red: "#e5534b", yellow: "#d4a72c", grey: "#8b8f98",
+};
+let groupSeq = 1;
+const groupMembers = (gid) => openTabs.map((sid) => sessions.get(sid)).filter((S) => S?.group === gid);
+function groupName(g) {
+  if (g.name) return g.name;
+  if (g.task) return [...sessions.values()].find((S) => S.task?.id === g.task)?.task.title || "Task";
+  return "";
+}
+function freeColor() {
+  const used = new Set([...groups.values()].map((g) => g.color));
+  return Object.keys(GROUP_COLORS).find((c) => !used.has(c)) ?? Object.keys(GROUP_COLORS)[groups.size % 9];
+}
+function createGroup(members, opts = {}) {
+  const g = { id: `g${Date.now().toString(36)}${(groupSeq++).toString(36)}`, name: "", color: freeColor(), collapsed: false, ...opts };
+  groups.set(g.id, g);
+  for (const S of members) addToGroup(S, g.id, false);
+  renderTabs();
+  saveWorkspaceSoon();
+  return g;
+}
+/** Join a group, next to its other tabs. */
+function addToGroup(S, gid, render = true) {
+  const others = groupMembers(gid).filter((x) => x !== S);
+  S.group = gid;
+  if (others.length) {
+    openTabs.splice(openTabs.indexOf(S.sid), 1);
+    openTabs.splice(openTabs.indexOf(others[others.length - 1].sid) + 1, 0, S.sid);
+  }
+  dropEmptyGroups();
+  if (render) { renderTabs(); saveWorkspaceSoon(); }
+}
+/** Leave the group: the tab goes right after it. */
+function removeFromGroup(S) {
+  const gid = S.group;
+  if (!gid) return;
+  delete S.group;
+  const rest = groupMembers(gid);
+  if (rest.length) {
+    openTabs.splice(openTabs.indexOf(S.sid), 1);
+    openTabs.splice(openTabs.indexOf(rest[rest.length - 1].sid) + 1, 0, S.sid);
+  }
+  dropEmptyGroups();
+  renderTabs();
+  saveWorkspaceSoon();
+}
+function dropEmptyGroups() {
+  for (const gid of groups.keys()) if (!groupMembers(gid).length) groups.delete(gid);
+}
+/** A task tab's group (its steps join it); made on first need. */
+function ensureTaskGroup(T) {
+  if (T.group && groups.has(T.group)) return T.group;
+  return createGroup([T], { task: T.task.id, collapsed: true }).id;
+}
+function toggleGroup(g) {
+  g.collapsed = !g.collapsed;
+  renderTabs();
+  saveWorkspaceSoon();
+}
+
+function groupChip(g) {
+  const members = groupMembers(g.id);
+  const color = GROUP_COLORS[g.color] ?? GROUP_COLORS.grey;
+  const name = groupName(g);
+  const busy = members.some((S) => (S.task ? taskDotState(S) : sessionState(S)) === "running");
+  const needs = members.reduce((n, S) => n + (S.task ? taskNeedsYou(S) : 0), 0);
+  const el = document.createElement("div");
+  el.className = "tab-group" + (g.collapsed ? " collapsed" : "") + (name ? "" : " unnamed");
+  el.style.setProperty("--g", color);
+  el.title = `${name || "Group"} · ${members.length} tab${members.length === 1 ? "" : "s"} — click to ${g.collapsed ? "show" : "fold"}, right-click for more`;
+  el.innerHTML = (g.task ? `<span class="tg-ico" aria-hidden="true"></span>` : "") +
+    `<span class="tg-name">${esc(name)}</span>` +
+    (g.collapsed ? `<span class="tg-count">${members.length}</span>` : "") +
+    (busy ? `<span class="tg-busy" title="Working"></span>` : "") +
+    (needs ? `<span class="tab-badge" title="${needs} waiting for your approval">${needs}</span>` : "");
+  el.onclick = () => toggleGroup(g);
+  el.ondblclick = (e) => { e.preventDefault(); renameGroup(g); };
+  el.oncontextmenu = (e) => { e.preventDefault(); groupMenu(g, e.clientX, e.clientY); };
+  el.dataset.group = g.id;
+  return el;
+}
+
+/** Name the group in place, on its chip. */
+function renameGroup(g) {
+  renderTabs();
+  const chip = $("tabs").querySelector(`.tab-group[data-group="${g.id}"]`);
+  if (!chip) return;
+  chip.onclick = null;
+  const input = document.createElement("input");
+  input.className = "tg-input";
+  input.value = groupName(g);
+  input.placeholder = "Name this group";
+  input.size = Math.max(8, input.value.length + 1);
+  chip.querySelector(".tg-name").replaceWith(input);
+  input.focus();
+  input.select();
+  let done = false;
+  const finish = (save) => {
+    if (done) return;
+    done = true;
+    if (save) g.name = input.value.trim();
+    renderTabs();
+    saveWorkspaceSoon();
+    $("input").focus();
+  };
+  input.onkeydown = (e) => {
+    e.stopPropagation();
+    if (e.key === "Enter") finish(true);
+    if (e.key === "Escape") finish(false);
+  };
+  input.oninput = () => { input.size = Math.max(8, input.value.length + 1); };
+  input.onblur = () => finish(true);
+  input.onclick = (e) => e.stopPropagation();
+}
+
+// A context menu in the shared #menu element: items are
+// { label, sub?, run } or "-" for a separator, or { swatches: [...] }.
+function contextMenu(x, y, items) {
+  const menu = $("menu");
+  menu.innerHTML = "";
+  for (const it of items) {
+    if (it === "-") { menu.appendChild(div("menu-sep")); continue; }
+    if (it.swatches) {
+      const row = div("menu-swatches");
+      for (const c of Object.keys(GROUP_COLORS)) {
+        const b = document.createElement("button");
+        b.className = "swatch" + (c === it.current ? " on" : "");
+        b.style.background = GROUP_COLORS[c];
+        b.title = c;
+        b.onclick = () => { closeMenu(); it.pick(c); };
+        row.appendChild(b);
+      }
+      menu.appendChild(row);
+      continue;
+    }
+    const b = document.createElement("button");
+    b.className = "menu-item" + (it.dot ? " with-dot" : "");
+    b.innerHTML = (it.dot ? `<span class="mi-dot" style="background:${it.dot}"></span>` : "") +
+      `<span class="mi-name">${esc(it.label)}</span>` + (it.sub ? `<span class="mi-sub">${esc(it.sub)}</span>` : "");
+    b.onclick = () => { closeMenu(); it.run(); };
+    menu.appendChild(b);
+  }
+  menu.classList.remove("hidden");
+  const w = menu.offsetWidth, h = menu.offsetHeight;
+  menu.style.left = `${Math.max(8, Math.min(window.innerWidth - w - 8, x))}px`;
+  menu.style.top = `${Math.max(8, Math.min(window.innerHeight - h - 8, y))}px`;
+}
+
+function tabMenu(S, x, y) {
+  const items = [{ label: "Add to new group", run: () => { const g = createGroup([S]); renameGroup(g); } }];
+  for (const g of groups.values()) {
+    if (g.id === S.group) continue;
+    items.push({ label: `Add to “${groupName(g) || "unnamed group"}”`, dot: GROUP_COLORS[g.color], run: () => addToGroup(S, g.id) });
+  }
+  if (S.group) items.push({ label: "Remove from group", run: () => removeFromGroup(S) });
+  items.push("-", { label: "Close tab", sub: "⌘W", run: () => closeSession(S.sid) });
+  contextMenu(x, y, items);
+}
+
+function groupMenu(g, x, y) {
+  const members = groupMembers(g.id);
+  contextMenu(x, y, [
+    { label: g.collapsed ? "Show tabs" : "Fold tabs", run: () => toggleGroup(g) },
+    { label: "Rename…", run: () => renameGroup(g) },
+    { swatches: true, current: g.color, pick: (c) => { g.color = c; renderTabs(); saveWorkspaceSoon(); } },
+    "-",
+    { label: "Ungroup", run: () => { for (const S of members) delete S.group; groups.delete(g.id); renderTabs(); saveWorkspaceSoon(); } },
+    { label: `Close ${members.length} tab${members.length === 1 ? "" : "s"}`, run: async () => { for (const S of members) await closeSession(S.sid); } },
+  ]);
 }
 
 // The sidebar shows skills; project skills depend on the active session's folder.

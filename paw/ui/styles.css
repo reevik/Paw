@@ -756,11 +756,12 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
    The sidebar is drawn on the window's vibrancy, whose tone follows whatever is
    behind the window — a light wallpaper turns it mid-grey, where tertiary text
    all but vanishes. A tint steadies the background and the sidebar gets its own,
-   stronger text colours. */
+   stronger text colours. The theme sets them (themes.js › chromeVars); these
+   are the defaults. */
 .sidebar, .mcp-panel {
-  background: rgba(255, 255, 255, 0.34);
-  --text-2: #4a4a4f;
-  --text-3: #6e6e73;
+  background: var(--sidebar-bg, rgba(255, 255, 255, 0.34));
+  --text-2: var(--side-text-2, #4a4a4f);
+  --text-3: var(--side-text-3, #6e6e73);
   --hover: rgba(0, 0, 0, 0.06);
   --selected: rgba(0, 0, 0, 0.09);
   --sk-card: rgba(255, 255, 255, 0.42);
@@ -768,9 +769,9 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
 }
 @media (prefers-color-scheme: dark) {
   .sidebar, .mcp-panel {
-    background: rgba(18, 18, 22, 0.46);
-    --text-2: #cfcfd4;
-    --text-3: #a1a1a6;
+    background: var(--sidebar-bg, rgba(18, 18, 22, 0.46));
+    --text-2: var(--side-text-2, #cfcfd4);
+    --text-3: var(--side-text-3, #a1a1a6);
     --hover: rgba(255, 255, 255, 0.07);
     --selected: rgba(255, 255, 255, 0.11);
     --sk-card: rgba(255, 255, 255, 0.045);

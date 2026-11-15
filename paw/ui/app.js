@@ -2290,6 +2290,7 @@ $("mcp-refresh").onclick = () => loadMcp();
 $("mcp-add").onclick = () => { mcp.adding = !mcp.adding; renderMcp(); };
 // At load only the visibility: the first renderSidebar() fills it in.
 $("mcp-panel").classList.toggle("hidden", !mcp.open);
+$("mcp-resizer").classList.toggle("hidden", !mcp.open);
 $("mcp-toggle").classList.toggle("on", mcp.open);
 
 // ---------- rendering: terminal output ----------

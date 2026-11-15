@@ -129,6 +129,12 @@ pub struct Appearance {
     pub mode: String,
     /// Terminal background opacity, 0.3 … 1.0 (lower shows the frosted desktop).
     pub opacity: f64,
+    /// Font for the transcript, prompt and terminal view; empty: the system's monospace.
+    pub font_family: String,
+    /// Its size in px (⌘+ / ⌘− / ⌘0 change it).
+    pub font_size: f64,
+    /// Line spacing of the transcript, as a multiple of the size.
+    pub line_height: f64,
 }
 
 impl Default for Appearance {
@@ -141,6 +147,9 @@ impl Default for Appearance {
             custom: vec![],
             mode: "system".into(),
             opacity: 0.94,
+            font_family: String::new(),
+            font_size: 12.5,
+            line_height: 1.6,
         }
     }
 }

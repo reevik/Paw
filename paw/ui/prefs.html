@@ -131,6 +131,46 @@
         </div>
       </div>
 
+      <div class="ap-section">
+        <div class="ap-head"><h3>Font</h3></div>
+        <div class="ap-box ap-window">
+          <div class="ap-line">
+            <div>
+              <div>Font</div>
+              <div class="hint" id="ap-font-hint">For the transcript, the prompt and the terminal view. Empty: the system's monospace (SF Mono).</div>
+            </div>
+            <div class="ap-font-pick">
+              <input id="ap-font" list="ap-font-list" spellcheck="false" autocomplete="off" placeholder="SF Mono (system)" />
+              <datalist id="ap-font-list"></datalist>
+            </div>
+          </div>
+          <div class="ap-line">
+            <div>
+              <div>Size</div>
+              <div class="hint">⌘+ and ⌘− change it in the window too; ⌘0 goes back to 12.5.</div>
+            </div>
+            <div class="ap-slider">
+              <input type="range" id="ap-font-size" min="9" max="28" step="0.5" />
+              <span id="ap-font-size-val">12.5</span>
+            </div>
+          </div>
+          <div class="ap-line">
+            <div>
+              <div>Line spacing</div>
+              <div class="hint">Space between the transcript's lines.</div>
+            </div>
+            <div class="ap-slider">
+              <input type="range" id="ap-line-height" min="1.2" max="2.2" step="0.05" />
+              <span id="ap-line-height-val">1.6</span>
+            </div>
+          </div>
+          <div class="ap-font-preview" id="ap-font-preview"><span class="pv-g">❯</span> fix the failing test in parser.rs
+<span class="pv-b">⏺</span> The test expects <code>parse("1_000")</code> to return 1000; the parser stops at "_".
+  0O Il1 {} [] () =&gt; != -&gt; === // ligatures, if the font has them</div>
+          <div class="ap-font-actions"><button type="button" class="btn-ghost small" id="ap-font-reset">Use Defaults</button></div>
+        </div>
+      </div>
+
       <div class="ap-section" data-mode="light">
         <div class="ap-head">
           <h3>Light Mode <span class="ap-active">— Active</span></h3>

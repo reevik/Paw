@@ -484,8 +484,64 @@ $("ap-opacity").addEventListener("input", (e) => {
   save();
 });
 
+// ---------- font ----------
+const FONT_DEFAULT = 12.5;
+const KNOWN_FONTS = ["SF Mono", "Menlo", "Monaco", "JetBrains Mono", "Fira Code", "Cascadia Code", "Source Code Pro",
+  "IBM Plex Mono", "Hack", "Iosevka", "Roboto Mono", "Ubuntu Mono", "Victor Mono", "Geist Mono", "Commit Mono",
+  "Monaspace Neon", "Berkeley Mono", "Input Mono", "Courier New"];
+/** Installed? A font that isn't renders like the fallback in both a mono and a serif setting. */
+function fontInstalled(name) {
+  const c = (fontInstalled.ctx ??= document.createElement("canvas").getContext("2d"));
+  const w = (f) => { c.font = `40px ${f}`; return c.measureText("mmmmmmmmmlli10OO@@%").width; };
+  return ["monospace", "serif"].some((base) => w(`"${name}", ${base}`) !== w(base));
+}
+const MONO = 'ui-monospace, "SF Mono", Menlo, monospace';
+function renderFont() {
+  const a = ap();
+  const name = String(a.font_family ?? "");
+  if (document.activeElement !== $("ap-font")) $("ap-font").value = name;
+  const size = Number(a.font_size) || FONT_DEFAULT, lh = Number(a.line_height) || 1.6;
+  $("ap-font-size").value = size;
+  $("ap-font-size-val").textContent = String(size);
+  $("ap-font-size").style.setProperty("--fill", `${((size - 9) / 19) * 100}%`);
+  $("ap-line-height").value = lh;
+  $("ap-line-height-val").textContent = lh.toFixed(2).replace(/0$/, "");
+  $("ap-line-height").style.setProperty("--fill", `${((lh - 1.2) / 1.0) * 100}%`);
+  const ok = !name.trim() || fontInstalled(name.trim());
+  $("ap-font-hint").textContent = ok
+    ? "For the transcript, the prompt and the terminal view. Empty: the system's monospace (SF Mono)."
+    : `“${name.trim()}” isn't installed, so SF Mono is used. Install it, or pick one from the list.`;
+  $("ap-font-hint").classList.toggle("warn", !ok);
+  const pv = $("ap-font-preview").style;
+  pv.setProperty("--pv-family", name.trim() ? `"${name.trim().replace(/["\\]/g, "")}", ${MONO}` : MONO);
+  pv.setProperty("--pv-size", `${size}px`);
+  pv.setProperty("--pv-lh", String(lh));
+  // The active theme's colors, so the preview looks like a tab.
+  try {
+    const { theme } = T.activeTheme(settings);
+    pv.setProperty("--pv-bg", theme.background);
+    pv.setProperty("--pv-fg", theme.foreground);
+  } catch { /* defaults */ }
+}
+function fillFontList() {
+  $("ap-font-list").innerHTML = KNOWN_FONTS.filter(fontInstalled).map((f) => `<option value="${esc(f)}"></option>`).join("");
+}
+$("ap-font").addEventListener("input", (e) => { ap().font_family = e.target.value; renderFont(); save(); });
+$("ap-font").addEventListener("change", (e) => { ap().font_family = e.target.value.trim(); renderFont(); save(); });
+$("ap-font-size").addEventListener("input", (e) => { ap().font_size = Number(e.target.value); renderFont(); save(); });
+$("ap-line-height").addEventListener("input", (e) => { ap().line_height = Number(e.target.value); renderFont(); save(); });
+$("ap-font-reset").onclick = () => { Object.assign(ap(), { font_family: "", font_size: FONT_DEFAULT, line_height: 1.6 }); renderFont(); save(); };
+// ⌘+ / ⌘− in the main window change the size: follow it here (and don't save an old one over it).
+listen("settings:changed", ({ payload }) => {
+  if (!settings || !payload?.appearance) return;
+  const now = ap();
+  if (now.font_size !== payload.appearance.font_size) { now.font_size = payload.appearance.font_size; renderFont(); }
+});
+
 function renderAppearance() {
   renderWindowControls();
+  if (!fillFontList.done) { fillFontList(); fillFontList.done = true; }
+  renderFont();
   const sys = T.systemAppearance();
   for (const mode of ["light", "dark"]) {
     document.querySelector(`.ap-section[data-mode="${mode}"]`).classList.toggle("active", sys === mode);

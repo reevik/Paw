@@ -654,17 +654,30 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
 .skills-msg { font-size: 11.5px; color: var(--text-2); padding: 2px 6px 6px; line-height: 1.35; }
 .skills-msg.error { color: var(--red, #ff453a); }
 .skills-body { flex: 1; overflow-y: auto; overflow-x: hidden; min-height: 0; padding-bottom: 8px; }
-.sk-sec { margin-bottom: 6px; }
+/* Sections are cards: a header bar, then the skills inset inside the card.
+   Header text and item text line up at 10px from the card's edge. */
+.sk-sec {
+  margin-bottom: 8px; border-radius: 10px; overflow: hidden;
+  background: var(--sk-card); border: 1px solid var(--sk-card-line);
+}
 .sk-sec-head {
-  display: flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 600; color: var(--text-2);
-  padding: 5px 6px; border-radius: 6px; cursor: default; user-select: none; letter-spacing: .02em;
+  display: flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 600; color: var(--text);
+  padding: 6px 8px 6px 10px; min-height: 18px; cursor: default; user-select: none;
 }
 .sk-sec-head:hover { background: var(--hover); }
-.sk-chev { display: inline-block; transition: transform .15s; transform: rotate(90deg); width: 8px; }
-.sk-sec.closed .sk-chev { transform: none; }
+.sk-sec:not(.closed) .sk-sec-head { border-bottom: 1px solid var(--sk-card-line); }
+.sk-chev {
+  width: 12px; height: 12px; flex-shrink: 0; fill: none; stroke: var(--text-3); stroke-width: 1.6;
+  stroke-linecap: round; stroke-linejoin: round; transition: transform .15s;
+}
+.sk-sec.closed .sk-chev { transform: rotate(-90deg); }
 .sk-sec.closed .sk-sec-body { display: none; }
-.sk-count { margin-left: auto; font-weight: 500; color: var(--text-3); }
-.sk-item { padding: 5px 7px; border-radius: 7px; cursor: default; }
+.sk-sec-body { padding: 4px; }
+.sk-count {
+  margin-left: auto; font-size: 10.5px; font-weight: 600; color: var(--text-2);
+  padding: 0 6px; line-height: 16px; border-radius: 8px; background: rgba(128, 128, 128, 0.16);
+}
+.sk-item { padding: 6px; border-radius: 7px; cursor: default; }
 .sk-item:hover { background: var(--hover); }
 .sk-item.open { background: var(--selected); }
 .sk-row { display: flex; align-items: center; gap: 5px; min-width: 0; }
@@ -685,9 +698,9 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
 .sk-note { color: var(--text-2); font-style: italic; }
 .sk-path { color: var(--accent); cursor: pointer; word-break: break-all; }
 .sk-path:hover { text-decoration: underline; }
-.sk-empty { font-size: 11.5px; color: var(--text-2); padding: 2px 8px 6px; overflow-wrap: anywhere; }
+.sk-empty { font-size: 11.5px; color: var(--text-2); padding: 4px 6px 6px; overflow-wrap: anywhere; }
 .sk-sources { margin: 0 0 4px; }
-.sk-source { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-2); padding: 2px 7px; }
+.sk-source { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-2); padding: 2px 6px; }
 .sk-src-kind { font-size: 9.5px; font-weight: 600; text-transform: uppercase; color: var(--text-3); width: 34px; flex-shrink: 0; }
 .sk-src-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sk-x { border: 0; background: transparent; color: var(--text-3); font-size: 14px; line-height: 1; padding: 0 3px; border-radius: 4px; }
@@ -708,16 +721,11 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
 .app.resizing, .app.resizing * { cursor: col-resize !important; user-select: none !important; }
 .app.sidebar-hidden .sidebar-resizer { display: none; }
 
-/* Folder icons on the skills section headers */
-.sk-folder { width: 14px; height: 14px; flex-shrink: 0; fill: none; stroke: currentColor; stroke-width: 1.25; stroke-linejoin: round; stroke-linecap: round; color: var(--text-2); }
-.sk-sec .sk-folder .shut { display: none; }
-.sk-sec.closed .sk-folder .shut { display: inline; }
-.sk-sec.closed .sk-folder .open { display: none; }
 .sk-sec-title { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* External skills: "+" in the section header, missing folders */
 .sk-sec-add {
-  margin-left: 4px; width: 18px; height: 18px; border: 0; border-radius: 5px; background: transparent;
+  margin-left: 0; width: 18px; height: 18px; border: 0; border-radius: 5px; background: transparent;
   color: var(--text-2); font-size: 14px; line-height: 1; display: grid; place-items: center;
 }
 .sk-sec-add:hover { background: var(--selected); color: var(--text); }
@@ -736,6 +744,8 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
   --text-3: #6e6e73;
   --hover: rgba(0, 0, 0, 0.06);
   --selected: rgba(0, 0, 0, 0.09);
+  --sk-card: rgba(255, 255, 255, 0.42);
+  --sk-card-line: rgba(0, 0, 0, 0.08);
 }
 @media (prefers-color-scheme: dark) {
   .sidebar {
@@ -744,6 +754,8 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
     --text-3: #a1a1a6;
     --hover: rgba(255, 255, 255, 0.07);
     --selected: rgba(255, 255, 255, 0.11);
+    --sk-card: rgba(255, 255, 255, 0.045);
+    --sk-card-line: rgba(255, 255, 255, 0.09);
   }
 }
 .sidebar .section-title { color: var(--text-2); }

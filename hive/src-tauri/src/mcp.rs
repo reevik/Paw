@@ -43,6 +43,9 @@ pub struct McpServer {
     pub headers: BTreeMap<String, String>,
     #[serde(default = "yes")]
     pub enabled: bool,
+    /// Claude Code: a project (.mcp.json) server nobody approved or rejected yet.
+    #[serde(skip)]
+    pub pending: bool,
 }
 
 /// What the panel gets: no env or header values.
@@ -56,6 +59,7 @@ pub struct ServerView {
     pub url: String,
     pub header_keys: Vec<String>,
     pub enabled: bool,
+    pub pending: bool,
 }
 
 impl From<&McpServer> for ServerView {
@@ -69,6 +73,7 @@ impl From<&McpServer> for ServerView {
             url: s.url.clone(),
             header_keys: s.headers.keys().cloned().collect(),
             enabled: s.enabled,
+            pending: s.pending,
         }
     }
 }
@@ -128,7 +133,7 @@ fn locations(agent: &str, cwd: &Path, home: &Path, config_dir: Option<&Path>) ->
         "claude" => vec![
             loc("user", "User — every project", home.join(".claude.json"), Format::ClaudeUser),
             loc("local", "This folder — only you", home.join(".claude.json"), Format::ClaudeLocal),
-            loc("project", "Project — shared in .mcp.json", cwd.join(".mcp.json"), Format::ClaudeProject),
+            loc("project", "Project — shared in .mcp.json", claude_project_root(cwd).join(".mcp.json"), Format::ClaudeProject),
         ],
         "codex" => vec![loc("user", "User", home.join(".codex/config.toml"), Format::Codex)],
         "gemini" => vec![
@@ -229,10 +234,29 @@ fn from_json(format: Format, name: &str, e: &Value) -> McpServer {
     out
 }
 
+/// The folder Claude Code files a session's project settings under (its
+/// `projects` key in ~/.claude.json): the git root above the folder, or the
+/// folder itself.
+pub fn claude_project_root(cwd: &Path) -> PathBuf {
+    let start = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+    let mut dir = Some(start.as_path());
+    while let Some(d) = dir {
+        if d.join(".git").exists() {
+            return d.to_path_buf();
+        }
+        dir = d.parent();
+    }
+    start
+}
+
+fn claude_project_key(cwd: &Path) -> String {
+    claude_project_root(cwd).display().to_string()
+}
+
 /// The `mcpServers`-like object of a JSON config, for a format.
 fn json_servers<'a>(format: Format, root: &'a Value, cwd: &Path) -> Option<&'a Map<String, Value>> {
     match format {
-        Format::ClaudeLocal => root.get("projects")?.get(cwd.to_str()?)?.get("mcpServers")?.as_object(),
+        Format::ClaudeLocal => root.get("projects")?.get(claude_project_key(cwd))?.get("mcpServers")?.as_object(),
         Format::Opencode => root.get("mcp")?.as_object(),
         _ => root.get("mcpServers")?.as_object(),
     }
@@ -281,6 +305,7 @@ fn read_codex(path: &Path) -> Result<Vec<McpServer>, String> {
             url,
             headers: map("http_headers"),
             enabled: t.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true),
+            pending: false,
         });
     }
     Ok(out)
@@ -299,23 +324,135 @@ fn read_location(l: &Location, cwd: &Path) -> Result<Vec<McpServer>, String> {
         .unwrap_or_default())
 }
 
+// ---------- Claude Code: which servers are on ----------
+// As Claude Code itself decides (2.1.x):
+// - a user or local server is off when the project entry of ~/.claude.json
+//   lists it in `disabledMcpServers` (what `/mcp disable` writes);
+// - a project (.mcp.json) server is off when any settings file lists it in
+//   `disabledMcpjsonServers`, on when one lists it in `enabledMcpjsonServers`
+//   (or sets `enableAllProjectMcpServers`), and waiting for approval
+//   otherwise. Old copies of these lists in the project entry of
+//   ~/.claude.json count too (Claude Code moves them on its next start).
+
+struct ClaudeState {
+    /// The project entry of ~/.claude.json.
+    project: Value,
+    /// User, shared project and local settings, in that order.
+    settings: [Value; 3],
+}
+
+fn claude_settings_files(home: &Path, cwd: &Path) -> [PathBuf; 3] {
+    let root = claude_project_root(cwd);
+    [home.join(".claude/settings.json"), root.join(".claude/settings.json"), root.join(".claude/settings.local.json")]
+}
+
+fn claude_state(home: &Path, cwd: &Path) -> ClaudeState {
+    let global = read_json_file(&home.join(".claude.json")).ok().flatten().unwrap_or(Value::Null);
+    let project = global.get("projects").and_then(|p| p.get(claude_project_key(cwd))).cloned().unwrap_or(Value::Null);
+    let settings = claude_settings_files(home, cwd).map(|f| read_json_file(&f).ok().flatten().unwrap_or(Value::Null));
+    ClaudeState { project, settings }
+}
+
+fn lists(v: &Value, key: &str, name: &str) -> bool {
+    v.get(key).and_then(Value::as_array).is_some_and(|a| a.iter().any(|x| x.as_str() == Some(name)))
+}
+
+impl ClaudeState {
+    fn server_off(&self, name: &str) -> bool {
+        lists(&self.project, "disabledMcpServers", name)
+    }
+    /// (on, pending) for a project server.
+    fn project_server(&self, name: &str) -> (bool, bool) {
+        let all = || self.settings.iter().chain(std::iter::once(&self.project));
+        if all().any(|v| lists(v, "disabledMcpjsonServers", name)) || self.server_off(name) {
+            return (false, false);
+        }
+        if all().any(|v| lists(v, "enabledMcpjsonServers", name) || v.get("enableAllProjectMcpServers") == Some(&json!(true))) {
+            return (true, false);
+        }
+        (false, true)
+    }
+}
+
+fn apply_claude_state(format: Format, servers: &mut [McpServer], state: &ClaudeState) {
+    for s in servers {
+        match format {
+            Format::ClaudeProject => (s.enabled, s.pending) = state.project_server(&s.name),
+            Format::ClaudeUser | Format::ClaudeLocal => s.enabled = !state.server_off(&s.name),
+            _ => {}
+        }
+    }
+}
+
+/// Copilot CLI's servers, as `copilot mcp list --json` reports them: every
+/// source (built-in, plugins, user, workspace) and whether each is on.
+fn copilot_scopes(list: &Value, home: &Path) -> Vec<ScopeView> {
+    let mut by_source: Vec<(String, Vec<McpServer>)> = vec![];
+    for (name, e) in list.get("mcpServers").and_then(Value::as_object).into_iter().flatten() {
+        let mut srv = from_json(Format::Copilot, name, e);
+        srv.enabled = e.get("enabled").and_then(Value::as_bool).unwrap_or(true);
+        let source = s(e, "source");
+        let source = if source.is_empty() { "user".to_string() } else { source };
+        match by_source.iter_mut().find(|(k, _)| *k == source) {
+            Some((_, v)) => v.push(srv),
+            None => by_source.push((source, vec![srv])),
+        }
+    }
+    if !by_source.iter().any(|(k, _)| k == "user") {
+        by_source.push(("user".into(), vec![]));
+    }
+    by_source
+        .into_iter()
+        .map(|(source, servers)| {
+            let user = source == "user";
+            ScopeView {
+                label: match source.as_str() {
+                    "user" => "User".into(),
+                    "builtin" => "Built-in".into(),
+                    "workspace" => "Workspace (.mcp.json)".into(),
+                    "plugin" => "Plugins".into(),
+                    other => other.to_string(),
+                },
+                file: if user { home.join(".copilot/mcp-config.json").display().to_string() } else { String::new() },
+                writable: user,
+                can_toggle: true,
+                note: String::new(),
+                servers: servers.iter().map(ServerView::from).collect(),
+                id: source,
+            }
+        })
+        .collect()
+}
+
 /// Every scope of an agent, with its servers.
-pub fn report(agent: &str, cwd: &Path, home: &Path, config_dir: Option<&Path>, claude_cli: bool) -> Report {
+pub fn report(agent: &str, cwd: &Path, home: &Path, config_dir: Option<&Path>, clis: &dyn Clis) -> Report {
     let locs = locations(agent, cwd, home, config_dir);
     if locs.is_empty() {
         return Report { agent: agent.into(), supported: false, note: unsupported_note(agent), scopes: vec![] };
     }
+    if agent == "copilot" {
+        if let Some(list) = clis.copilot_list(cwd) {
+            return Report { agent: agent.into(), supported: true, note: String::new(), scopes: copilot_scopes(&list, home) };
+        }
+    }
+    let claude = agent == "claude";
+    let claude_cli = claude && clis.claude_installed();
+    let state = claude.then(|| claude_state(home, cwd));
     let scopes = locs
         .iter()
         .map(|l| {
-            let (servers, mut note) = match read_location(l, cwd) {
+            let (mut servers, mut note) = match read_location(l, cwd) {
                 Ok(v) => (v, String::new()),
                 Err(e) => (vec![], e),
             };
-            let mut writable = note.is_empty();
-            if matches!(l.format, Format::ClaudeUser | Format::ClaudeLocal | Format::ClaudeProject) && !claude_cli {
+            if let Some(st) = &state {
+                apply_claude_state(l.format, &mut servers, st);
+            }
+            let read_ok = note.is_empty();
+            let mut writable = read_ok;
+            if claude && !claude_cli {
                 writable = false;
-                note = "Changes go through the `claude` command, which wasn't found.".into();
+                note = "Adding and removing go through the `claude` command, which wasn't found.".into();
             }
             if l.file.extension().is_some_and(|e| e == "jsonc") {
                 writable = false;
@@ -328,7 +465,8 @@ pub fn report(agent: &str, cwd: &Path, home: &Path, config_dir: Option<&Path>, c
                 label: l.label.into(),
                 file: l.file.display().to_string(),
                 writable,
-                can_toggle: writable && matches!(l.format, Format::Hive | Format::Opencode | Format::Codex),
+                // Claude Code's switches are settings, not `claude mcp` commands.
+                can_toggle: (writable && matches!(l.format, Format::Hive | Format::Opencode | Format::Codex)) || (claude && read_ok),
                 note,
                 servers: servers.iter().map(ServerView::from).collect(),
             }
@@ -523,10 +661,15 @@ fn codex_table(s: &McpServer) -> toml_edit::Table {
     t
 }
 
-/// How Claude Code's config is changed: its own `claude mcp` commands, run
-/// in the tab's folder (local and project scopes belong to it).
-pub trait ClaudeCli {
-    fn run(&self, cwd: &Path, args: &[String]) -> Result<(), String>;
+/// The agents' own commands Hive uses: `claude mcp add-json/remove` (run in
+/// the tab's folder, which local and project scopes belong to) and
+/// `copilot mcp list/enable/disable`.
+pub trait Clis {
+    fn claude(&self, cwd: &Path, args: &[String]) -> Result<(), String>;
+    fn claude_installed(&self) -> bool;
+    /// `copilot mcp list --json`, or None when Copilot CLI isn't there.
+    fn copilot_list(&self, cwd: &Path) -> Option<Value>;
+    fn copilot(&self, cwd: &Path, args: &[String]) -> Result<(), String>;
 }
 
 fn location(agent: &str, scope: &str, cwd: &Path, home: &Path, config_dir: Option<&Path>) -> Result<Location, String> {
@@ -549,7 +692,7 @@ pub struct Ctx<'a> {
     pub cwd: &'a Path,
     pub home: &'a Path,
     pub config_dir: Option<&'a Path>,
-    pub claude: &'a dyn ClaudeCli,
+    pub clis: &'a dyn Clis,
 }
 
 pub fn add(ctx: &Ctx, scope: &str, server: McpServer) -> Result<(), String> {
@@ -561,7 +704,7 @@ pub fn add(ctx: &Ctx, scope: &str, server: McpServer) -> Result<(), String> {
     match l.format {
         Format::ClaudeUser | Format::ClaudeLocal | Format::ClaudeProject => {
             let entry = to_json(l.format, &server).to_string();
-            ctx.claude.run(
+            ctx.clis.claude(
                 ctx.cwd,
                 &["mcp".into(), "add-json".into(), "--scope".into(), claude_scope(l.format).into(), server.name.clone(), entry],
             )
@@ -583,7 +726,7 @@ pub fn remove(ctx: &Ctx, scope: &str, name: &str) -> Result<(), String> {
         return Err(format!("{name} isn't there any more"));
     }
     match l.format {
-        Format::ClaudeUser | Format::ClaudeLocal | Format::ClaudeProject => ctx.claude.run(
+        Format::ClaudeUser | Format::ClaudeLocal | Format::ClaudeProject => ctx.clis.claude(
             ctx.cwd,
             &["mcp".into(), "remove".into(), "--scope".into(), claude_scope(l.format).into(), name.to_string()],
         ),
@@ -598,8 +741,128 @@ pub fn remove(ctx: &Ctx, scope: &str, name: &str) -> Result<(), String> {
     }
 }
 
+/// Change ~/.claude.json as little and as briefly as possible: re-read it,
+/// change one thing, replace the file in one step (permissions and a backup
+/// kept), then read it back. Claude Code writes the file too, each running
+/// copy under its own lock Hive can't share; if one wrote at the same moment
+/// and the change didn't stick, try again.
+fn edit_claude_json(home: &Path, change: &dyn Fn(&mut Value) -> bool, holds: &dyn Fn(&Value) -> bool) -> Result<(), String> {
+    let path = home.join(".claude.json");
+    for _ in 0..3 {
+        let text = std::fs::read_to_string(&path).map_err(|e| format!("Can't read ~/.claude.json: {e}"))?;
+        let mut root: Value = serde_json::from_str(&text).map_err(|_| "~/.claude.json isn't valid JSON right now; try again".to_string())?;
+        if !change(&mut root) {
+            return Ok(());
+        }
+        let mut out = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?;
+        if text.ends_with('\n') {
+            out.push('\n');
+        }
+        write_file(&path, &out)?;
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        let now: Option<Value> = std::fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str(&t).ok());
+        if now.as_ref().is_some_and(|v| holds(v)) {
+            return Ok(());
+        }
+    }
+    Err("Claude Code kept rewriting ~/.claude.json at the same moment; the change didn't stick. Try again, or use /mcp in Claude Code.".into())
+}
+
+/// Add `name` to (or take it from) the string list `key` of a JSON object.
+fn set_listed(obj: &mut Value, key: &str, name: &str, present: bool) -> bool {
+    if !obj.is_object() {
+        *obj = json!({});
+    }
+    let o = obj.as_object_mut().unwrap();
+    let list = o.entry(key).or_insert_with(|| json!([]));
+    if !list.is_array() {
+        *list = json!([]);
+    }
+    let a = list.as_array_mut().unwrap();
+    let has = a.iter().any(|x| x.as_str() == Some(name));
+    match (present, has) {
+        (true, false) => a.push(json!(name)),
+        (false, true) => a.retain(|x| x.as_str() != Some(name)),
+        _ => return false,
+    }
+    true
+}
+
+/// Switch a Claude Code server for this project, as `/mcp enable|disable` would.
+fn claude_set_enabled(ctx: &Ctx, format: Format, name: &str, on: bool) -> Result<(), String> {
+    let key = claude_project_key(ctx.cwd);
+    let project_has = |v: &Value, list: &str| v.get("projects").and_then(|p| p.get(&key)).is_some_and(|p| lists(p, list, name));
+    let project_list = |list: &'static str, present: bool| {
+        let key = key.clone();
+        edit_claude_json(
+            ctx.home,
+            &|root: &mut Value| {
+                let projects = root.as_object_mut().map(|o| o.entry("projects").or_insert_with(|| json!({})));
+                let Some(projects) = projects.and_then(Value::as_object_mut) else { return false };
+                set_listed(projects.entry(key.clone()).or_insert_with(|| json!({})), list, name, present)
+            },
+            &|root: &Value| project_has(root, list) == present,
+        )
+    };
+    if format != Format::ClaudeProject {
+        // User and local servers: the project entry's `disabledMcpServers`.
+        return project_list("disabledMcpServers", !on);
+    }
+    // Project (.mcp.json) servers: the folder's own settings.local.json.
+    let [user, shared, local] = claude_settings_files(ctx.home, ctx.cwd);
+    let state = claude_state(ctx.home, ctx.cwd);
+    if on {
+        if lists(&state.settings[1], "disabledMcpjsonServers", name) {
+            return Err(format!("{name} is turned off in the project's shared settings ({}); change it there.", tildify_path(&shared)));
+        }
+        if lists(&state.settings[0], "disabledMcpjsonServers", name) {
+            edit_settings(&user, &|v| set_listed(v, "disabledMcpjsonServers", name, false))?;
+        }
+        if lists(&state.project, "disabledMcpjsonServers", name) {
+            project_list("disabledMcpjsonServers", false)?;
+        }
+        if state.server_off(name) {
+            project_list("disabledMcpServers", false)?;
+        }
+    }
+    edit_settings(&local, &|v| {
+        let a = set_listed(v, "disabledMcpjsonServers", name, !on);
+        let b = set_listed(v, "enabledMcpjsonServers", name, on);
+        a || b
+    })
+}
+
+/// Change a Claude Code settings file (plain JSON; created when missing).
+fn edit_settings(path: &Path, change: &dyn Fn(&mut Value) -> bool) -> Result<(), String> {
+    let mut v = read_json_file(path)?.unwrap_or_else(|| json!({}));
+    if !change(&mut v) {
+        return Ok(());
+    }
+    write_file(path, &(serde_json::to_string_pretty(&v).map_err(|e| e.to_string())? + "\n"))
+}
+
+fn tildify_path(p: &Path) -> String {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let s = p.display().to_string();
+    match s.strip_prefix(&home) {
+        Some(rest) if !home.is_empty() => format!("~{rest}"),
+        _ => s,
+    }
+}
+
 pub fn set_enabled(ctx: &Ctx, scope: &str, name: &str, enabled: bool) -> Result<(), String> {
+    if ctx.agent == "copilot" {
+        // Any source (built-in, plugin, user, workspace): Copilot persists it.
+        let verb = if enabled { "enable" } else { "disable" };
+        return ctx.clis.copilot(ctx.cwd, &["mcp".into(), verb.into(), name.into()]);
+    }
     let l = location(ctx.agent, scope, ctx.cwd, ctx.home, ctx.config_dir)?;
+    if matches!(l.format, Format::ClaudeUser | Format::ClaudeLocal | Format::ClaudeProject) {
+        if !read_location(&l, ctx.cwd)?.iter().any(|s| s.name == name) {
+            return Err(format!("{name} isn't there any more"));
+        }
+        return claude_set_enabled(ctx, l.format, name, enabled);
+    }
     match l.format {
         Format::Hive | Format::Opencode => edit_json(&l, ctx.cwd, |m| {
             let e = m.get_mut(name).and_then(Value::as_object_mut).ok_or(format!("{name} isn't there any more"))?;
@@ -789,28 +1052,44 @@ pub async fn connect_all(servers: &[McpServer], cwd: &Path, path_env: Option<&st
 // Tauri commands
 // ---------------------------------------------------------------------------
 
-struct SystemClaude;
+struct SystemClis;
 
-impl ClaudeCli for SystemClaude {
-    fn run(&self, cwd: &Path, args: &[String]) -> Result<(), String> {
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
-        let line = std::iter::once("claude".to_string())
-            .chain(args.iter().map(|a| crate::registry::shell_quote(a)))
-            .collect::<Vec<_>>()
-            .join(" ");
-        let out = std::process::Command::new(shell)
-            .args(["-lc", &line])
-            .current_dir(cwd)
-            .stdin(std::process::Stdio::null())
-            .output()
-            .map_err(|e| e.to_string())?;
-        if out.status.success() {
-            Ok(())
-        } else {
-            let msg = String::from_utf8_lossy(&out.stderr);
-            let msg = if msg.trim().is_empty() { String::from_utf8_lossy(&out.stdout) } else { msg };
-            Err(format!("claude mcp: {}", msg.trim()))
-        }
+/// Run `<bin> <args…>` through the login shell in `cwd`; stdout on success.
+fn run_cli(bin: &str, cwd: &Path, args: &[String]) -> Result<String, String> {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+    let line = std::iter::once(bin.to_string())
+        .chain(args.iter().map(|a| crate::registry::shell_quote(a)))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let out = std::process::Command::new(shell)
+        .args(["-lc", &line])
+        .current_dir(cwd)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    } else {
+        let msg = String::from_utf8_lossy(&out.stderr);
+        let msg = if msg.trim().is_empty() { String::from_utf8_lossy(&out.stdout) } else { msg };
+        Err(format!("{bin} {}: {}", args.first().map(String::as_str).unwrap_or(""), msg.trim()))
+    }
+}
+
+impl Clis for SystemClis {
+    fn claude(&self, cwd: &Path, args: &[String]) -> Result<(), String> {
+        run_cli("claude", cwd, args).map(|_| ())
+    }
+    fn claude_installed(&self) -> bool {
+        crate::registry::run_with_env("claude", &["--version"], &[], std::time::Duration::from_secs(10)).is_some()
+    }
+    fn copilot_list(&self, cwd: &Path) -> Option<Value> {
+        crate::registry::run_with_env("copilot", &["--version"], &[], std::time::Duration::from_secs(10))?;
+        let out = run_cli("copilot", cwd, &["mcp".into(), "list".into(), "--json".into()]).ok()?;
+        serde_json::from_str(&out).ok()
+    }
+    fn copilot(&self, cwd: &Path, args: &[String]) -> Result<(), String> {
+        run_cli("copilot", cwd, args).map(|_| ())
     }
 }
 
@@ -818,17 +1097,12 @@ fn home() -> PathBuf {
     std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"))
 }
 
-fn claude_installed() -> bool {
-    crate::registry::run_with_env("claude", &["--version"], &[], std::time::Duration::from_secs(10)).is_some()
-}
-
 #[tauri::command]
 pub async fn mcp_list(app: tauri::AppHandle, agent: String, cwd: String) -> Result<Report, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let cwd = crate::agents::expand_home(&cwd);
         let cfg = crate::paths::config_dir(&app);
-        let claude = agent == "claude" && claude_installed();
-        report(&agent, &cwd, &home(), cfg.as_deref(), claude)
+        report(&agent, &cwd, &home(), cfg.as_deref(), &SystemClis)
     })
     .await
     .map_err(|e| e.to_string())
@@ -876,7 +1150,7 @@ fn with_ctx<T>(app: &tauri::AppHandle, agent: &str, cwd: &str, f: impl FnOnce(&C
     let cwd = crate::agents::expand_home(cwd);
     let cfg = crate::paths::config_dir(app);
     let home = home();
-    f(&Ctx { agent, cwd: &cwd, home: &home, config_dir: cfg.as_deref(), claude: &SystemClaude })
+    f(&Ctx { agent, cwd: &cwd, home: &home, config_dir: cfg.as_deref(), clis: &SystemClis })
 }
 
 #[tauri::command]

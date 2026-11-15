@@ -825,3 +825,5 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
 .mcp-list > .mcp-form { padding: 8px 10px; }
 .mcp-scope { flex-shrink: 0; font-size: 10px; color: var(--text-3); white-space: nowrap; }
 .sk-icon.hidden { display: none; }
+.sk-tag.pending { color: #b26b00; background: color-mix(in srgb, #ff9f0a 18%, transparent); }
+@media (prefers-color-scheme: dark) { .sk-tag.pending { color: #ffb340; } }

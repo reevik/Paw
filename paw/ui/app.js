@@ -1399,6 +1399,18 @@ const shouldBadge = (text) => text.split("\n").length >= PASTE_BADGE_LINES || te
 const withPasted = (text, atts = []) => [text, ...atts.filter(isPasted).map((a) => a.text)].filter((t) => t?.trim()).join("\n\n");
 const pastedLabel = (a) => `Pasted text · ${a.lines} line${a.lines === 1 ? "" : "s"}`;
 
+/** The badge nearest the caret (the tray's last): an attachment, else the $ badge. */
+function removeLastBadge(S) {
+  if (S.attachments?.length) {
+    S.attachments.pop();
+  } else if (shareShell() && S.shellContext?.length) {
+    S.shellContext = [];
+  } else return false;
+  renderAttachments();
+  updateGlyph();
+  return true;
+}
+
 /** Hand over the tab's attachments to whatever is sending them. */
 function takeAttachments(S) {
   const list = S.attachments ?? [];
@@ -1560,9 +1572,9 @@ async function shareShortOutput(S) {
   const small = lines <= SHELL_DIRECT_LINES && shellBlock(e, true, Infinity).length <= SHELL_DIRECT_CHARS;
   if (!small) {
     // Large: shared only if asked (the link under the output).
-    const id = nextOffer++;
+    const id = `${Date.now().toString(36)}-${nextOffer++}`;
     (S.shellOffers ??= new Map()).set(id, e);
-    pushLine(S, { stream: "shareoffer", offer: id, text: `${lines} lines`, ts: Date.now() });
+    pushLine(S, { stream: "shareoffer", offer: id, cwd: e.cwd, text: `${lines} lines`, ts: Date.now() });
     return;
   }
   // A Paw Agent conversation in this folder takes it right away.
@@ -1577,12 +1589,28 @@ async function shareShortOutput(S) {
   pushLine(S, { stream: "shared", next: true, ts: Date.now() });
 }
 
-/** The link under a large output: share it with the next message (the $ badge). */
-function shareOffer(S, id) {
-  const e = S.shellOffers?.get(id);
+/** A command and its output, rebuilt from the transcript (after a restart). */
+function entryFromLines(S, l) {
+  const at = S.lines.indexOf(l);
+  if (at < 0) return null;
+  let i = at - 1;
+  while (i >= 0 && S.lines[i].stream !== "cmd") i--;
+  if (i < 0) return null;
+  const between = S.lines.slice(i + 1, at);
+  return {
+    cmd: S.lines[i].text, cwd: l.cwd ?? S.cwd,
+    out: between.filter((x) => x.stream === "shell").map((x) => PawThemes.stripAnsi(String(x.text ?? ""))),
+    code: between.find((x) => x.stream === "shellexit")?.code ?? 0,
+  };
+}
+
+/** Follow up under a large output: it goes with the next message (the $ badge).
+ *  The button stays; using it again adds the output again for a later message. */
+function shareOffer(S, l) {
+  if (S.shellContext?.some((x) => x.offer === l.offer)) return true; // already waiting
+  const e = S.shellOffers?.get(l.offer) ?? entryFromLines(S, l);
   if (!e) return false;
-  S.shellOffers.delete(id);
-  (S.shellContext ??= []).push(e);
+  (S.shellContext ??= []).push({ ...e, offer: l.offer });
   inPane(S, renderAttachments);
   return true;
 }
@@ -1640,7 +1668,7 @@ function persistableLine(l) {
   if (l.code != null) out.code = l.code;
   if (l.local) out.local = true;
   if (l.next) out.next = true;
-  if (l.offer) { out.offer = l.offer; out.taken = !!l.taken; }
+  if (l.offer) { out.offer = l.offer; if (l.cwd) out.cwd = l.cwd; }
   if (l.attachments) out.attachments = l.attachments.map((a) => (isPasted(a) ? { kind: "text", name: a.name, path: a.file ?? a.path, size: a.size, lines: a.lines, text: String(a.text).slice(0, 600) } : { name: a.name, path: a.path, size: a.size }));
   if (l.shared) out.shared = l.shared;
   if (l.skills) out.skills = l.skills;
@@ -3131,18 +3159,19 @@ function renderLine(S, l) {
   if (l.stream === "shellexit") return div("tl shexit", l.code === 130 ? "^C" : `exit ${l.code}`);
   if (l.stream === "shared") return div("tl sys shared-note", l.next ? `↳ output goes to ${esc(S.agent.name)} with your next message` : `↳ output shared with ${esc(S.agent.name)}`);
   if (l.stream === "shareoffer") {
-    const live = S.shellOffers?.has(l.offer) && !l.taken;
     const el = div("tl sys shared-note share-offer");
-    if (l.taken) el.innerHTML = `↳ output (${esc(l.text)}) goes to ${esc(S.agent.name)} with your next message`;
-    else if (!live) el.innerHTML = `↳ output (${esc(l.text)}) not shared`;
-    else {
-      el.innerHTML = `↳ large output (${esc(l.text)}) <button class="follow-up" title="Send this output to ${esc(S.agent.name)} with your next message">↪ Follow up</button>`;
-      el.querySelector(".follow-up").onclick = (ev) => {
-        ev.preventDefault();
-        ev.stopPropagation();
-        if (shareOffer(S, l.offer)) { l.taken = true; inPane(S, renderOutput); saveWorkspaceSoon(); $("input").focus(); }
-      };
-    }
+    el.innerHTML = `↳ large output (${esc(l.text)}) <button class="follow-up" title="Send this output to ${esc(S.agent.name)} with your next message">↪ Follow up</button>`;
+    const b = el.querySelector(".follow-up");
+    b.onclick = (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (!shareOffer(S, l)) { b.textContent = "Output no longer available"; b.disabled = true; return; }
+      b.textContent = "✓ Added to your next message";
+      b.classList.add("done");
+      clearTimeout(b.resetTimer);
+      b.resetTimer = setTimeout(() => { b.textContent = "↪ Follow up"; b.classList.remove("done"); }, 1800);
+      $("input").focus();
+    };
     return el;
   }
   if (l.stream === "stdin") {
@@ -3828,6 +3857,11 @@ function bindPane(P) {
       const ta = e.target;
       const S = curS();
       if (!e.isComposing && autocompleteKey(e)) return;
+      // Backspace with the caret at the very start: remove the last badge.
+      if (e.key === "Backspace" && !e.isComposing && ta.selectionStart === 0 && ta.selectionEnd === 0 && S && removeLastBadge(S)) {
+        e.preventDefault();
+        return;
+      }
       if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
         e.preventDefault();
         const text = ta.value;

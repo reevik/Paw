@@ -2366,11 +2366,121 @@ function renderTabs() {
       (needs ? `<span class="tab-badge" title="${needs} step${needs > 1 ? "s" : ""} waiting for your approval">${needs}</span>` : "") +
       `${S.unread ? `<span class="tab-unread"></span>` : ""}<button class="close" title="Close tab (⌘W)">×</button>`;
     t.onmousedown = (e) => { if (e.button === 1) { e.preventDefault(); closeSession(sid); } };
+    t.dataset.sid = sid;
+    t.addEventListener("pointerdown", (e) => startTabDrag(e, t));
     t.onclick = () => select(sid);
     t.oncontextmenu = (e) => { e.preventDefault(); tabMenu(S, e.clientX, e.clientY); };
     t.querySelector(".close").onclick = (e) => { e.stopPropagation(); closeSession(sid); };
     tabs.appendChild(t);
   }
+}
+
+// ---------- dragging tabs ----------
+// Drag a tab to move it. A tab in a group moves among the group's tabs; any
+// other tab moves among the ungrouped tabs and whole groups (it never lands
+// inside one). Dragging a group's chip moves the whole group. The tab follows
+// the pointer and the others make room; the order is kept when you let go.
+
+const tabSid = (el) => openTabs.find((sid) => String(sid) === el.dataset.sid);
+
+function startTabDrag(e, el) {
+  if (e.button !== 0 || e.target.closest(".close, input")) return;
+  const x0 = e.clientX;
+  let d = null;
+  const move = (ev) => {
+    if (!d) {
+      if (Math.abs(ev.clientX - x0) < 5) return;
+      d = beginTabDrag(el, x0);
+      if (!d) return stop();
+    }
+    dragTabTo(d, ev.clientX);
+  };
+  const stop = () => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    window.removeEventListener("pointercancel", up);
+  };
+  const up = () => { stop(); if (d) endTabDrag(d); };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
+  window.addEventListener("pointercancel", up);
+}
+
+/** What can move where: units of elements (a tab, or a group's chip and tabs). */
+function beginTabDrag(el, x0) {
+  const kids = [...$("tabs").children];
+  const gid = el.classList.contains("tab") ? sessions.get(tabSid(el))?.group : null;
+  let units;
+  if (gid) {
+    units = kids.filter((k) => k.classList.contains("tab") && sessions.get(tabSid(k))?.group === gid).map((k) => [k]);
+  } else {
+    units = [];
+    for (const k of kids) {
+      if (k.classList.contains("tab-group")) units.push([k]);
+      else if (k.classList.contains("tab") && k.classList.contains("in-group") && units.length) units[units.length - 1].push(k);
+      else if (k.classList.contains("tab")) units.push([k]);
+    }
+  }
+  const idx = units.findIndex((u) => u.includes(el));
+  if (idx < 0 || units.length < 2) return null;
+  const unit = units[idx];
+  unit.forEach((u) => u.classList.add("dragging"));
+  document.body.classList.add("tab-dragging");
+  return { units, idx, gid, el, grab: x0 - unit[0].getBoundingClientRect().left, shift: 0 };
+}
+
+const unitBox = (u) => ({ left: u[0].getBoundingClientRect().left, right: u[u.length - 1].getBoundingClientRect().right });
+
+function dragTabTo(d, x) {
+  for (let guard = 0; guard < d.units.length; guard++) {
+    const unit = d.units[d.idx];
+    const natural = unit[0].getBoundingClientRect().left - d.shift;
+    d.shift = x - d.grab - natural;
+    for (const u of unit) u.style.transform = `translateX(${d.shift}px)`;
+    // Its leading edge past the middle of a neighbor: swap places with it
+    // (edges, not middles, so a wide group passes a narrow tab, and back).
+    const box = unitBox(unit);
+    const next = d.units[d.idx + 1], prev = d.units[d.idx - 1];
+    const middle = (u) => (unitBox(u).left + unitBox(u).right) / 2;
+    if (next && box.right > middle(next)) {
+      next[next.length - 1].after(...unit);
+      [d.units[d.idx], d.units[d.idx + 1]] = [next, unit];
+      d.idx++;
+    } else if (prev && box.left < middle(prev)) {
+      prev[0].before(...unit);
+      [d.units[d.idx], d.units[d.idx - 1]] = [prev, unit];
+      d.idx--;
+    } else return;
+  }
+}
+
+function endTabDrag(d) {
+  for (const u of d.units[d.idx]) { u.style.transform = ""; u.classList.remove("dragging"); }
+  document.body.classList.remove("tab-dragging");
+  // The click that ends a drag isn't a click on the tab (or the chip).
+  const swallow = (ev) => { ev.stopPropagation(); ev.preventDefault(); };
+  window.addEventListener("click", swallow, { capture: true, once: true });
+  setTimeout(() => window.removeEventListener("click", swallow, { capture: true }), 300);
+  const members = (gid) => openTabs.filter((sid) => sessions.get(sid)?.group === gid);
+  let order;
+  if (d.gid) {
+    // Within the group; tabs a folded group hides keep their places.
+    const shown = d.units.map((u) => tabSid(u[0]));
+    let i = 0;
+    const inGroup = members(d.gid).map((sid) => (shown.includes(sid) ? shown[i++] : sid));
+    order = [];
+    let placed = false;
+    for (const sid of openTabs) {
+      if (sessions.get(sid)?.group !== d.gid) order.push(sid);
+      else if (!placed) { order.push(...inGroup); placed = true; }
+    }
+  } else {
+    order = d.units.flatMap((u) => (u[0].classList.contains("tab-group") ? members(u[0].dataset.group) : [tabSid(u[0])]));
+  }
+  for (const sid of openTabs) if (!order.includes(sid)) order.push(sid); // anything not shown stays
+  openTabs = order.filter((sid) => sid !== undefined);
+  renderTabs();
+  saveWorkspaceSoon();
 }
 
 // ---------- tab groups ----------
@@ -2462,6 +2572,7 @@ function groupChip(g) {
   el.ondblclick = (e) => { e.preventDefault(); renameGroup(g); };
   el.oncontextmenu = (e) => { e.preventDefault(); groupMenu(g, e.clientX, e.clientY); };
   el.dataset.group = g.id;
+  el.addEventListener("pointerdown", (e) => startTabDrag(e, el));
   return el;
 }
 

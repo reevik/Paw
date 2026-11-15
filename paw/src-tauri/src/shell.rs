@@ -51,6 +51,11 @@ pub struct ShellManager {
 }
 
 impl ShellManager {
+    /// Still open (a window that comes back keeps using it).
+    pub fn alive(&self, id: u32) -> bool {
+        self.shells.lock().unwrap().contains_key(&id)
+    }
+
     pub fn kill_all(&self) {
         let mut map = self.shells.lock().unwrap();
         for (_, mut s) in map.drain() {

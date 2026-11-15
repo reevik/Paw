@@ -9,33 +9,24 @@
   "app": {
     "withGlobalTauri": true,
     "macOSPrivateApi": true,
-    "windows": [
-      {
-        "label": "main",
-        "title": "Paw",
-        "width": 1200,
-        "height": 780,
-        "minWidth": 760,
-        "minHeight": 480,
-        "transparent": true,
-        "titleBarStyle": "Overlay",
-        "hiddenTitle": true,
-        "trafficLightPosition": { "x": 18, "y": 22 },
-        "windowEffects": {
-          "effects": ["sidebar"],
-          "state": "followsWindowActiveState",
-          "radius": 12
-        }
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg"],
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.png"],
+    "targets": [
+      "app",
+      "dmg"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.png"
+    ],
     "category": "DeveloperTool"
   }
 }

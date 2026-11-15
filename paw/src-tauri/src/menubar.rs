@@ -1,17 +1,19 @@
-//! Paw in the menu bar. Closing the window hides it (and Paw's Dock icon):
-//! agents keep working, and the 🐾 in the menu bar lists the tabs (what's
-//! working, what waits for approval) and brings the window back. Quitting is
-//! ⌘Q or Quit in that menu; with agents still working it asks first.
+//! Paw in the menu bar. The 🐾 belongs to the daemon (daemon.rs), which runs
+//! the agents: it lists the window's tabs (what's working, what waits for
+//! approval), brings the window back, or starts it when it isn't running.
+//! Closing the window hides it; quitting the window (⌘Q) leaves the agents
+//! running here. Quit Paw in this menu stops everything, asking first while
+//! agents are working.
 //!
-//! The window tells this module what its tabs are doing (`tray_update`);
-//! picking a tab here asks the window to show it (`tray:open`).
+//! The window tells the daemon what its tabs are doing (`tray_update`);
+//! picking a tab here asks the window to show it.
 
 use serde::Deserialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{TrayIcon, TrayIconBuilder};
-use tauri::{AppHandle, Emitter, Manager, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 
 const MAIN: &str = "main";
 const TRAY_ID: &str = "paw";
@@ -96,15 +98,12 @@ pub fn setup(app: &AppHandle) -> tauri::Result<TrayIcon> {
         .on_menu_event(|app, event| {
             let id = event.id().as_ref();
             match id {
-                "tray:open" | "tray:more" => show_main(app),
-                "tray:settings" => {
-                    let _ = crate::show_preferences(app, None);
-                }
+                "tray:open" | "tray:more" => crate::daemon::open_window(app, None, false),
+                "tray:settings" => crate::daemon::open_window(app, None, true),
                 "tray:quit" => request_quit(app),
                 _ => {
                     if let Some(tab) = id.strip_prefix("tray:tab:") {
-                        show_main(app);
-                        let _ = app.emit_to(MAIN, "tray:open", tab.to_string());
+                        crate::daemon::open_window(app, Some(tab.to_string()), false);
                     }
                 }
             }
@@ -145,12 +144,12 @@ pub fn request_quit(app: &AppHandle) {
     let app = app.clone();
     if working == 0 {
         app.state::<MenuBar>().quitting.store(true, Ordering::SeqCst);
-        app.exit(0);
+        crate::daemon::quit_all(&app);
         return;
     }
     use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
     let msg = format!(
-        "{working} agent{} still working. Quitting stops {}.\n\nClose the window instead to keep {} running in the menu bar.",
+        "{working} agent{} still working. Quitting Paw stops {}.\n\nQuitting just the window (⌘Q there) keeps {} running in the menu bar.",
         if working == 1 { " is" } else { "s are" },
         if working == 1 { "it" } else { "them" },
         if working == 1 { "it" } else { "them" },
@@ -163,7 +162,7 @@ pub fn request_quit(app: &AppHandle) {
         .show(move |quit| {
             if quit {
                 app.state::<MenuBar>().quitting.store(true, Ordering::SeqCst);
-                app.exit(0);
+                crate::daemon::quit_all(&app);
             }
         });
 }

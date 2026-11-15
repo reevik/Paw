@@ -9,8 +9,47 @@
 //   - "oneshot" : CLIs that take the prompt as an argument (codex exec,
 //                 ollama run…). Each prompt runs the command once, in the
 //                 same tab, like typing commands into a shell.
-const { invoke } = window.__TAURI__.core;
-const { listen } = window.__TAURI__.event;
+// ---------- the daemon ----------
+// Agents, shells and Paw Agent sessions run in Paw's daemon (src-tauri/src/
+// daemon.rs), which keeps running when this window quits. Its commands go
+// through `daemon_call`; its events arrive like any other. Every handler is
+// kept, so events the window missed while it was gone can be replayed.
+const tauriInvoke = window.__TAURI__.core.invoke;
+const tauriListen = window.__TAURI__.event.listen;
+const DAEMON_COMMANDS = new Set([
+  "spawn_agent", "send_input", "close_input", "stop_agent", "remove_agent", "list_agents", "agent_output",
+  "shell_open", "shell_run", "shell_write", "shell_interrupt", "shell_close", "shell_write_raw", "shell_resize", "shell_raw_exit",
+  "paw_agent_start", "paw_agent_send", "paw_agent_note", "paw_agent_cancel", "paw_agent_close", "paw_agent_approve",
+  "tray_update", "daemon_attach",
+]);
+const invoke = (cmd, args) => (DAEMON_COMMANDS.has(cmd) ? tauriInvoke("daemon_call", { cmd, args: args ?? {} }) : tauriInvoke(cmd, args));
+const eventHandlers = new Map(); // event → [handler]
+const listen = (event, fn) => {
+  if (!eventHandlers.has(event)) eventHandlers.set(event, []);
+  eventHandlers.get(event).push(fn);
+  return tauriListen(event, (e) => { noteDseq(event, e.payload); fn(e); });
+};
+/** The daemon this window talks to; a tab's process ids only mean something to it. */
+const daemon = { instance: null, last: 0 };
+
+/** Remember the newest daemon event a tab has seen (session.json keeps it). */
+function noteDseq(event, p) {
+  const n = p && typeof p === "object" ? p.__dseq : null;
+  if (!n) return;
+  const S = sessions.get(event.startsWith("shell:") ? shellToSid.get(p.id) : procToSid.get(p.id));
+  if (S && n > (S.dseq ?? 0)) S.dseq = n;
+}
+
+/** Events a window missed, through the same handlers, in order. */
+function replayEvents(events) {
+  for (const ev of events) {
+    const payload = ev.payload && typeof ev.payload === "object" ? { ...ev.payload, __dseq: ev.dseq } : ev.payload;
+    noteDseq(ev.event, payload);
+    for (const fn of eventHandlers.get(ev.event) ?? []) {
+      try { fn({ event: ev.event, payload }); } catch (e) { console.error(e); }
+    }
+  }
+}
 // Ids inside the session view exist once per pane; they resolve inside the
 // pane being rendered (activePane). Everything else is a normal page id.
 const PANE_IDS = new Set(["session", "terminal", "output", "xterm-wrap", "xterm-title", "xterm-int", "xterm-back",
@@ -1793,6 +1832,12 @@ function tabSnapshot(S) {
       lines: S.lines.slice(-WS_LINES).map(persistableLine),
       task: taskSnapshot(S) ?? undefined,
       stepOf: S.stepOf ?? undefined,
+      // Its processes in the daemon: a window that starts again re-attaches.
+      live: daemon.instance && (S.proc != null || S.shell != null) ? {
+        instance: daemon.instance, proc: S.proc, shell: S.shell, dseq: S.dseq ?? 0,
+        busy: !!S.busy, busySince: S.busySince ?? null, working: !!S.working, turnStarted: S.turnStarted ?? null,
+        shellBusy: !!S.shellBusy, shellCmd: S.shellCmd ?? null, shellSince: S.shellSince ?? null,
+      } : undefined,
   };
 }
 
@@ -1953,11 +1998,48 @@ async function restoreTab(t, note = null) {
     session: t.session ?? t.claudeSession ?? null,
     turns: t.turns ?? [],
   };
-  if (t.task) S.task = restoreTask(t.task);
+  // The daemon that ran this tab still runs: re-attach to its agent and shell.
+  const live = t.live && daemon.instance && t.live.instance === daemon.instance ? t.live : null;
+  let attach = null;
+  if (live) {
+    attach = await invoke("daemon_attach", {
+      procs: live.proc != null ? [live.proc] : [], shells: live.shell != null ? [live.shell] : [], after: live.dseq ?? 0,
+    }).catch(() => null);
+  }
+  if (t.task) S.task = restoreTask(t.task, { live: !!attach });
   if (t.stepOf) S.stepOf = t.stepOf;
   if (t.group) S.group = t.group;
   sessions.set(S.sid, S);
   openTabs.push(S.sid);
+  const procAlive = attach?.procs?.[String(live.proc)];
+  if (procAlive) {
+    S.proc = live.proc;
+    S.info = procAlive.info;
+    S.agentCwd = procAlive.info.cwd;
+    procToSid.set(S.proc, S.sid);
+    S.busy = procAlive.paw ? !!procAlive.working : live.busy;
+    S.busySince = live.busySince;
+    S.working = live.working && (procAlive.paw ? !!procAlive.working || live.busy : true);
+    S.turnStarted = live.turnStarted;
+    S.dseq = live.dseq;
+  }
+  if (attach?.shells?.includes(live.shell)) {
+    S.shell = live.shell;
+    shellToSid.set(S.shell, S.sid);
+    S.shellBusy = live.shellBusy;
+    S.shellCmd = live.shellCmd;
+    S.shellSince = live.shellSince;
+  }
+  if (procAlive || S.shell != null) {
+    S.lines.push({ stream: "system", ts: Date.now(),
+      text: procAlive?.info.status === "running" ? `— re-attached · ${S.agent.name} kept running while Paw's window was closed —` : "— re-attached —" });
+    // What happened meanwhile, once every tab is back (restoreWorkspace).
+    S.replay = attach.events ?? [];
+    reloadThumbs(S);
+    if (S.shell == null) openShell(S);
+    if (!procAlive && S.mode !== "oneshot") startProc(S, undefined, { resume: !!(S.agent.continuity === "session" && S.session) });
+    return S;
+  }
   const resumable = S.agent.continuity === "session" && S.session;
   const replay = S.agent.continuity === "replay" && S.turns.length;
   const how = note ?? "restored after restart";
@@ -1989,6 +2071,11 @@ async function restoreWorkspace() {
     if (T && !S.group) addToGroup(S, T.group, false);
   }
   dropEmptyGroups();
+  // Events the window missed while it was gone (re-attached tabs), in order.
+  const missed = [...sessions.values()].flatMap((S) => S.replay ?? []).sort((a, b) => a.dseq - b.dseq);
+  for (const S of sessions.values()) delete S.replay;
+  replayEvents(missed);
+  for (const T of sessions.values()) if (T.task?.state === "running") taskPump(T);
   if (restored) select(openTabs[Math.min(ws.active ?? 0, openTabs.length - 1)]);
   return restored > 0;
 }
@@ -4226,21 +4313,13 @@ function waitForDetections(timeoutMs) {
   invoke("history_list").then((list) => { shellHistory = list; });
   invoke("shell_commands").then((list) => { shellCommands = new Set(list); for (const P of panes.values()) withPane(P, updateGlyph); });
 
-  // Re-attach to processes that survived a webview reload.
-  for (const pinfo of await invoke("list_agents")) {
-    if (pinfo.status !== "running") continue;
-    const agent = settings.agents.find((a) =>
-      (detections[a.id]?.path && pinfo.command.startsWith(detections[a.id].path)) || pinfo.command.startsWith(a.binary + " "))
-      ?? { id: "restored", name: pinfo.name, binary: "", template: "", io: "text", custom_models: [] };
-    const S = {
-      sid: nextSid++, agent, mode: sessionMode(agent), cwd: pinfo.cwd, model: "", approval: defaultApproval(agent),
-      proc: pinfo.id, info: pinfo, lines: await invoke("agent_output", { id: pinfo.id }),
-      busy: false, history: [], histIdx: 0, draft: "", unread: 0, inputMode: settings.general.input_mode || "auto",
-    };
-    sessions.set(S.sid, S);
-    procToSid.set(pinfo.id, S.sid);
-    openTabs.push(S.sid);
-    openShell(S);
+  // Which daemon runs the agents (started now if it wasn't running).
+  try {
+    const h = await tauriInvoke("daemon_hello");
+    daemon.instance = h?.instance ?? null;
+    daemon.last = h?.last ?? 0;
+  } catch (e) {
+    console.error("daemon:", e);
   }
   if (openTabs.length) { wsReady = true; select(openTabs[0]); return; }
 
@@ -4251,6 +4330,34 @@ function waitForDetections(timeoutMs) {
   loadPlugins();
   listen("plugins:changed", () => loadPlugins());
   trayUpdateSoon();
+  // The daemon stopped (Quit Paw in the menu bar quits this window too, so
+  // this is a crash): its agents and shells are gone; a new one starts.
+  listen("daemon:lost", () => {
+    daemon.instance = null;
+    for (const S of sessions.values()) {
+      if (S.proc != null) { procToSid.delete(S.proc); S.proc = null; if (S.info) S.info = { ...S.info, status: "stopped" }; }
+      if (S.shell != null) { shellToSid.delete(S.shell); S.shell = null; }
+      S.shellBusy = false;
+      S.raw = false;
+      if (isPaw(S.agent)) expirePawCards(S);
+      if (S.working || S.busy) {
+        S.busy = false;
+        taskTurnEnded(S, { ok: false, stopped: true, text: "", error: "Paw's background process stopped." });
+        turnFinished(S);
+      }
+      sys(S, "Paw's background process stopped, and its agents with it. It's starting again; your next prompt continues the conversation.");
+      refresh(S);
+    }
+  });
+  listen("daemon:up", ({ payload: h }) => {
+    daemon.instance = h?.instance ?? null;
+    daemon.last = h?.last ?? 0;
+    for (const S of sessions.values()) {
+      if (S.shell == null) openShell(S);
+      if (S.mode !== "oneshot" && S.proc == null) startProc(S, undefined, { resume: !!(S.agent.continuity === "session" && S.session) });
+    }
+    saveWorkspaceSoon();
+  });
   // A tab picked in the menu bar.
   listen("tray:open", ({ payload: id }) => {
     const S = [...sessions.values()].find((x) => x.pawId === id);

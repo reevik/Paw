@@ -13,6 +13,7 @@ mod sessions;
 mod stats;
 mod plugins;
 mod menubar;
+mod daemon;
 
 use agents::AgentManager;
 use history::History;
@@ -225,7 +226,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         let settings = MenuItem::with_id(app, "preferences", "Settings…", true, Some("CmdOrCtrl+,"))?;
         app_menu.insert(&PredefinedMenuItem::separator(app)?, 1)?;
         app_menu.insert(&settings, 2)?;
-        // Quit asks first when agents are working (menubar.rs).
+        // Quits the window only: the agents keep running in the daemon.
         let n = app_menu.items()?.len();
         if n > 0 {
             app_menu.remove_at(n - 1)?;
@@ -274,16 +275,43 @@ mod tests {
     }
 }
 
+/// The main window (created here rather than in tauri.conf.json, so the
+/// daemon, which shares the binary, never opens one).
+fn create_main_window(app: &AppHandle) -> tauri::Result<()> {
+    let mode = app.state::<Registry>().settings(app).appearance.mode;
+    WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+        .theme(registry::window_theme(&mode))
+        .title("Paw")
+        .inner_size(1200.0, 780.0)
+        .min_inner_size(760.0, 480.0)
+        .transparent(true)
+        .title_bar_style(TitleBarStyle::Overlay)
+        .hidden_title(true)
+        .traffic_light_position(tauri::LogicalPosition::new(18.0, 22.0))
+        .effects(WindowEffectsConfig {
+            effects: vec![Effect::Sidebar],
+            state: Some(EffectState::FollowsWindowActiveState),
+            radius: Some(12.0),
+            color: None,
+            ..Default::default()
+        })
+        .build()?;
+    Ok(())
+}
+
 fn main() {
-    let app = tauri::Builder::default()
+    // `paw --daemon` runs the agents and the menu bar; `paw` is the window.
+    let daemon_mode = std::env::args().any(|a| a == "--daemon");
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AgentManager::default())
         .manage(Registry::default())
         .manage(ShellManager::default())
         .manage(History::default())
         .manage(PawAgents::default())
-        .manage(menubar::MenuBar::default())
-        .menu(build_menu)
+        .manage(menubar::MenuBar::default());
+    let builder = if daemon_mode { builder } else { builder.menu(build_menu) };
+    let app = builder
         .on_menu_event(|app, event| {
             if event.id() == "about" {
                 let _ = show_about(app, None);
@@ -292,19 +320,27 @@ fn main() {
             } else if event.id() == "toggle-sidebar" {
                 let _ = app.emit_to("main", "ui:toggle-sidebar", ());
             } else if event.id() == "quit" {
-                menubar::request_quit(app);
+                // The window quits; the agents keep running in the daemon.
+                app.exit(0);
             }
         })
-        .setup(|app| {
+        .setup(move |app| {
+            if daemon_mode {
+                // No window, no Dock icon: the menu bar, the socket, the agents.
+                #[cfg(target_os = "macos")]
+                app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                menubar::setup(app.handle())?;
+                daemon::start_daemon(app.handle());
+                return Ok(());
+            }
             // First start after the rename: bring Hive's settings along.
             paths::move_to_paw_home(app.handle());
             // Detect installed agent CLIs in the background right away.
             registry::start_scan(app.handle().clone());
-            // Apply the saved light/dark choice before the first paint settles.
-            let mode = app.state::<Registry>().settings(app.handle()).appearance.mode;
-            registry::apply_window_theme(app.handle(), &mode);
-            // The 🐾 in the menu bar; closing the window only hides it.
-            menubar::setup(app.handle())?;
+            create_main_window(app.handle())?;
+            // Talk to the daemon (starting it when it isn't running).
+            daemon::start_link(app.handle());
+            // Closing the window only hides it.
             if let Some(w) = app.get_webview_window("main") {
                 let handle = app.handle().clone();
                 w.on_window_event(move |e| {
@@ -403,16 +439,24 @@ fn main() {
             mcp::mcp_remove,
             mcp::mcp_set_enabled,
             menubar::tray_update,
+            daemon::daemon_call,
+            daemon::daemon_hello,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Paw");
 
-    app.run(|handle, event| match event {
+    app.run(move |handle, event| match event {
         // The Dock icon clicked (or Paw opened again): the window comes back.
         #[cfg(target_os = "macos")]
-        RunEvent::Reopen { .. } => menubar::show_main(handle),
-        // Quit from the Dock or at logout: ask first when agents are working.
-        RunEvent::ExitRequested { api, code, .. } if code.is_none() && !menubar::quit_allowed(handle) => {
+        RunEvent::Reopen { .. } => {
+            if daemon_mode {
+                daemon::open_window(handle, None, false);
+            } else {
+                menubar::show_main(handle);
+            }
+        }
+        // The daemon quit from the Dock or at logout: ask first when agents are working.
+        RunEvent::ExitRequested { api, code, .. } if daemon_mode && code.is_none() && !menubar::quit_allowed(handle) => {
             api.prevent_exit();
             menubar::request_quit(handle);
         }

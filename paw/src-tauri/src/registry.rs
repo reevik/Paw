@@ -498,6 +498,11 @@ fn persist(app: &AppHandle, s: &Settings) -> Result<(), String> {
 }
 
 impl Registry {
+    /// Read settings.json again next time (the window may have changed it).
+    pub fn forget(&self) {
+        *self.settings.lock().unwrap() = None;
+    }
+
     pub fn settings(&self, app: &AppHandle) -> Settings {
         let mut guard = self.settings.lock().unwrap();
         guard.get_or_insert_with(|| load(app)).clone()

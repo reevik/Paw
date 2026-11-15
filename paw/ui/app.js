@@ -1447,12 +1447,13 @@ const withPaths = (text, atts) =>
 
 
 // ---------- markdown ----------
-// Claude's replies are markdown. marked turns them into HTML and DOMPurify
+// Agents' replies are markdown. marked turns them into HTML and DOMPurify
 // strips anything active (scripts, handlers, forms, frames, remote images).
 marked.setOptions({ gfm: true, breaks: false });
-function renderMarkdown(md) {
+/** `breaks`: single newlines stay line breaks (plain-text CLI output). */
+function renderMarkdown(md, breaks = false) {
   try {
-    const html = marked.parse(md, { async: false });
+    const html = marked.parse(md, { async: false, breaks });
     return DOMPurify.sanitize(html, {
       FORBID_TAGS: ["style", "form", "input", "button", "textarea", "select", "iframe", "img", "video", "audio"],
       FORBID_ATTR: ["style"],
@@ -2749,6 +2750,7 @@ function renderOutput() {
   out.innerHTML = "";
   if (!S) return;
   for (const l of S.lines) place(out, renderLine(S, l));
+  flushMd();
   out.scrollTop = out.scrollHeight;
 }
 
@@ -2801,6 +2803,24 @@ document.addEventListener("mousedown", (e) => {
   if (e.button === 0 && e.target.closest?.(".output summary")) e.preventDefault();
 }, true);
 
+// ---------- one-shot replies ----------
+// Text agents (Copilot, Codex, Gemini…) print their markdown a line at a
+// time; consecutive stdout lines share one block, rendered as a whole.
+const mdDirty = new Set();
+function mdRun(text) {
+  const d = div("tl say md-msg md-run");
+  d.mdSrc = [PawThemes.stripAnsi(text)];
+  return d;
+}
+/** Render the blocks that got lines since the last flush. */
+function flushMd() {
+  for (const d of mdDirty) {
+    const md = d.mdSrc.join("\n");
+    d.innerHTML = md.trim() ? `<span class="b">⏺</span><div class="md">${renderMarkdown(md, true)}</div>` : "";
+  }
+  mdDirty.clear();
+}
+
 /** Append rendered line(s), folding work steps into the open group. */
 function place(out, el) {
   if (!el) return;
@@ -2812,10 +2832,16 @@ function place(out, el) {
       summarizeGroup(g);
     } else {
       const last = out.lastElementChild;
+      if (node.mdSrc && last?.mdSrc) {
+        last.mdSrc.push(...node.mdSrc);
+        mdDirty.add(last);
+        continue;
+      }
       if (last?.classList.contains("tool-group") && !last.classList.contains("closed")) {
         last.classList.add("closed");
         summarizeGroup(last);
       }
+      if (node.mdSrc) mdDirty.add(node);
       out.appendChild(node);
     }
   }
@@ -2826,6 +2852,7 @@ function appendLines(S, lines) {
   const stick = out.scrollHeight - out.scrollTop - out.clientHeight < 120;
   out.querySelector(".partial-line")?.remove();
   for (const l of lines) place(out, renderLine(S, l));
+  flushMd();
   const extra = out.childElementCount - MAX_SCREEN_LINES;
   for (let i = 0; i < extra; i++) out.firstElementChild?.remove();
   if (S.partial) renderPartial(S);
@@ -2837,6 +2864,7 @@ function appendLine(S, line) {
   const stick = line.stream === "stdin" || out.scrollHeight - out.scrollTop - out.clientHeight < 120;
   out.querySelector(".partial-line")?.remove();
   place(out, renderLine(S, line));
+  flushMd();
   if (S.partial) renderPartial(S);
   if (stick) out.scrollTop = out.scrollHeight;
 }
@@ -2902,6 +2930,7 @@ function renderLine(S, l) {
     }
     return el;
   }
+  if (l.stream === "stdout" && S.mode === "oneshot") return mdRun(l.text);
   if (l.stream === "stdout" && l.text.startsWith("{")) {
     let ev;
     try { ev = JSON.parse(l.text); } catch { ev = null; }
@@ -3006,6 +3035,32 @@ function captureSession(S, l) {
   }
 }
 
+// Copilot CLI ends every `-p` run with a stats block on stderr (Changes,
+// AI Credits, Tokens, Resume — Resume last). Shown as one dim line instead
+// of four error lines; captureSession has already taken the session id.
+const COPILOT_STAT = /^(Changes|AI Credits|Tokens|Resume)\s+(.*)$/;
+/** Whether stderr line `l` is part of Copilot's closing stats (handled here). */
+function foldCopilotStats(S, l) {
+  const text = PawThemes.stripAnsi(l.text).trim();
+  if (!text) return true; // the blank lines before the block
+  const m = text.match(COPILOT_STAT);
+  if (!m) return false;
+  const st = (S.copilotStats ??= {});
+  st[m[1]] = m[2];
+  if (m[1] !== "Resume") return true;
+  S.copilotStats = null;
+  const credits = st["AI Credits"]?.match(/^(\S+)\s*(?:\((.+)\))?/);
+  const tokens = st.Tokens?.match(/↑\s*(\S+).*↓\s*(\S+)/);
+  const bits = [
+    credits?.[2],
+    credits && `${credits[1]} AI credits`,
+    st.Changes && !/^\+0 -0$/.test(st.Changes) ? st.Changes : "",
+    tokens && `↑${tokens[1]} ↓${tokens[2]} tokens`,
+  ].filter(Boolean);
+  if (bits.length) sys(S, bits.join(" · "));
+  return true;
+}
+
 const REPLAY_BUDGET = 16000;
 /** Earlier turns of this tab, for agents without sessions of their own. */
 function withReplay(S, text) {
@@ -3050,6 +3105,7 @@ function onAgentOutput(l) {
   // One-shot runs end every prompt; a clean exit is not news.
   if (S.mode === "oneshot" && l.stream === "system" && l.text === "Process exited with code 0") return;
   captureSession(S, l);
+  if (S.agent.id === "copilot" && S.mode === "oneshot" && l.stream === "stderr" && foldCopilotStats(S, l)) return;
   if (S.mode === "claude" && l.stream === "stdout") logAgentCommands(S, l.text);
   if (S.mode === "claude" && l.stream === "stdout" && l.text.startsWith('{"type":"assistant"')) noteAnswer(S, l.text);
   let ended = null; // a finished turn, for tasks

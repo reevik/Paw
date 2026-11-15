@@ -2155,12 +2155,15 @@ function mcpMsg(text, error = false) {
   if (text) mcpMsgTimer = setTimeout(() => m.classList.add("hidden"), error ? 9000 : 4000);
 }
 
-function mcpServerHtml(sc, s) {
+const SCOPE_TAG = { user: "user", local: "this folder", project: "project" };
+
+function mcpServerHtml(sc, s, showScope) {
   const target = s.transport === "stdio" ? [s.command, ...s.args].map(shq).join(" ") : s.url;
   const keys = [...s.env_keys.map((k) => `<span class="sk-tag" title="Environment variable (value not shown)">${esc(k)}</span>`),
     ...s.header_keys.map((k) => `<span class="sk-tag" title="Header (value not shown)">${esc(k)}:</span>`)].join("");
-  return `<div class="mcp-srv${s.enabled ? "" : " off"}" data-scope="${esc(sc.id)}" data-name="${esc(s.name)}">
-      <div class="mcp-row"><span class="mcp-name">${esc(s.name)}</span><span class="sk-tag">${TRANSPORT_TAG[s.transport] ?? esc(s.transport)}</span><span class="mcp-grow"></span>
+  return `<div class="mcp-srv${s.enabled ? "" : " off"}" data-scope="${esc(sc.id)}" data-name="${esc(s.name)}" title="${esc(tildify(sc.file))}">
+      <div class="mcp-row"><span class="mcp-name">${esc(s.name)}</span><span class="sk-tag">${TRANSPORT_TAG[s.transport] ?? esc(s.transport)}</span>
+        ${showScope ? `<span class="mcp-scope">${esc(SCOPE_TAG[sc.id] ?? sc.id)}</span>` : ""}<span class="mcp-grow"></span>
         ${sc.can_toggle ? `<label class="mcp-toggle" title="${s.enabled ? "On — click to switch off" : "Off — click to switch on"}"><input type="checkbox" data-mcp-toggle ${s.enabled ? "checked" : ""}><span></span></label>` : ""}
         ${sc.writable ? `<button class="sk-x" data-mcp-remove title="Remove">×</button>` : ""}</div>
       <div class="mcp-cmd" title="${esc(target)}">${esc(target)}</div>
@@ -2168,9 +2171,12 @@ function mcpServerHtml(sc, s) {
     </div>`;
 }
 
-function mcpFormHtml(sc) {
-  return `<form class="mcp-form" data-scope="${esc(sc.id)}" data-t="stdio" autocomplete="off">
+function mcpFormHtml(writable) {
+  const where = writable.length > 1
+    ? `<select name="scope">${writable.map((sc) => `<option value="${esc(sc.id)}">${esc(sc.label)}</option>`).join("")}</select>` : "";
+  return `<form class="mcp-form" data-scope="${esc(writable[0].id)}" data-t="stdio" autocomplete="off">
       <input name="name" placeholder="Name, e.g. filesystem" spellcheck="false" />
+      ${where}
       <select name="transport">
         <option value="stdio">Local command (stdio)</option>
         <option value="http">Remote — streamable HTTP</option>
@@ -2180,32 +2186,30 @@ function mcpFormHtml(sc) {
       <input name="url" class="f-remote" placeholder="https://example.com/mcp" spellcheck="false" />
       <textarea name="env" class="f-stdio" rows="2" placeholder="Environment, one per line: API_KEY=…" spellcheck="false"></textarea>
       <textarea name="headers" class="f-remote" rows="2" placeholder="Headers, one per line: Authorization: Bearer …" spellcheck="false"></textarea>
-      <div class="mcp-hint">Values are written to ${esc(tildify(sc.file))} and aren't shown here again.</div>
       <div class="skills-add-btns"><button type="button" data-mcp-cancel>Cancel</button><button type="submit" class="primary">Add</button></div>
     </form>`;
 }
 
+/** One list of every server the agent has, wherever it's configured. */
 function renderMcp() {
   const body = $("mcp-body");
   const S = focusedS();
   $("mcp-sub").textContent = S ? `${S.agent.name} · ${tildify(S.cwd)}` : "";
+  $("mcp-sub").title = S && isHive(S.agent)
+    ? "Hive Agent connects to these when a session starts. Tools a server marks read-only run without asking; the others follow the tab's approval level." : "";
+  const r = S ? mcp.report : null;
+  const writable = r?.supported ? r.scopes.filter((sc) => sc.writable) : [];
+  $("mcp-add").classList.toggle("hidden", !writable.length);
   if (!S) { body.innerHTML = `<div class="mcp-note">Open a session to see its agent's MCP servers.</div>`; return; }
-  const r = mcp.report;
   if (!r) { body.innerHTML = `<div class="mcp-note">Reading…</div>`; return; }
   if (!r.supported) { body.innerHTML = `<div class="mcp-note">${esc(r.note)}</div>`; return; }
-  const hiveNote = isHive(S.agent) ? `<div class="mcp-note">Hive Agent connects to these when a session starts. Tools a server marks read-only run without asking; the others follow the tab's approval level.</div>` : "";
-  body.innerHTML = hiveNote + r.scopes.map((sc) => `<section class="sk-sec mcp-card">
-      <div class="sk-sec-head"><span class="sk-sec-title" title="${esc(sc.label)}">${esc(sc.label)}</span><span class="sk-count">${sc.servers.length}</span>
-        ${sc.writable ? `<button class="sk-sec-add" data-mcp-add="${esc(sc.id)}" title="Add a server here">+</button>` : ""}</div>
-      <div class="sk-sec-body">
-        ${sc.note ? `<div class="mcp-note">${esc(sc.note)}</div>` : ""}
-        ${sc.servers.map((s) => mcpServerHtml(sc, s)).join("") || (mcp.adding === sc.id ? "" : `<div class="sk-empty">No servers</div>`)}
-        ${mcp.adding === sc.id ? mcpFormHtml(sc) : ""}
-        <div class="mcp-file"><a data-reveal="${esc(sc.file)}" title="Show in Finder">${esc(tildify(sc.file))}</a></div>
-      </div>
-    </section>`).join("");
-  const form = body.querySelector(".mcp-form");
-  if (form) form.querySelector("[name=name]").focus();
+  const several = r.scopes.length > 1;
+  const rows = r.scopes.flatMap((sc) => sc.servers.map((s) => mcpServerHtml(sc, s, several))).join("");
+  const form = mcp.adding && writable.length ? mcpFormHtml(writable) : "";
+  const notes = [...new Set(r.scopes.filter((sc) => sc.note).map((sc) => sc.note))];
+  body.innerHTML = (form || rows ? `<div class="mcp-list">${form}${rows}</div>` : `<div class="mcp-note">No MCP servers yet.${writable.length ? " + adds one." : ""}</div>`) +
+    notes.map((n) => `<div class="mcp-note">${esc(n)}</div>`).join("");
+  body.querySelector(".mcp-form [name=name]")?.focus();
 }
 
 /** Running tabs of this agent load the change (see the comment above). */
@@ -2242,8 +2246,6 @@ async function mcpChange(fn, done) {
 }
 
 $("mcp-body").addEventListener("click", (e) => {
-  const add = e.target.closest("[data-mcp-add]");
-  if (add) { mcp.adding = add.dataset.mcpAdd; renderMcp(); return; }
   if (e.target.closest("[data-mcp-cancel]")) { mcp.adding = null; renderMcp(); return; }
   const rm = e.target.closest("[data-mcp-remove]");
   if (rm) {
@@ -2259,6 +2261,7 @@ $("mcp-body").addEventListener("click", (e) => {
 });
 $("mcp-body").addEventListener("change", (e) => {
   if (e.target.name === "transport") { e.target.closest("form").dataset.t = e.target.value === "stdio" ? "stdio" : "remote"; return; }
+  if (e.target.name === "scope") { e.target.closest("form").dataset.scope = e.target.value; return; }
   const t = e.target.closest("[data-mcp-toggle]");
   if (t) {
     const row = t.closest(".mcp-srv");
@@ -2279,6 +2282,7 @@ $("mcp-body").addEventListener("submit", (e) => {
 $("mcp-toggle").onclick = () => setMcpOpen(!mcp.open);
 $("mcp-close").onclick = () => setMcpOpen(false);
 $("mcp-refresh").onclick = () => loadMcp();
+$("mcp-add").onclick = () => { mcp.adding = !mcp.adding; renderMcp(); };
 // At load only the visibility: the first renderSidebar() fills it in.
 $("mcp-panel").classList.toggle("hidden", !mcp.open);
 $("mcp-toggle").classList.toggle("on", mcp.open);

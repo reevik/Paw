@@ -264,7 +264,7 @@ body.prefs { display: flex; flex-direction: column; height: 100vh; }
   box-shadow: 0 1px 3px rgba(0,0,0,.3), 0 0 0 0.5px rgba(0,0,0,.15);
 }
 
-.approval-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.approval-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
 .approval-grid label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--text-2); }
 .approval-grid input { font: 11.5px var(--mono); }
 

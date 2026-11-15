@@ -691,3 +691,49 @@ async fn mcp_tools_run_through_the_approval_gate() {
     let offered: Vec<String> = model.requests()[0].tools.iter().map(|t| t.name.to_string()).collect();
     assert!(offered.contains(&"mcp__test__echo".to_string()) && offered.contains(&"read".to_string()), "{offered:?}");
 }
+
+// ---------- auto mode ----------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn auto_mode_runs_routine_actions_and_asks_about_risky_ones() {
+    let dir = Tmp::new("auto");
+    let model = script(vec![
+        // Allowed by the rules: a file in the folder, a read-only command.
+        call("c1", "write", json!({ "path": "notes.txt", "content": "hi\n" })),
+        call("c2", "shell", json!({ "command": "ls -la" })),
+        // Risky on its face: asked, with the reason; the user denies.
+        call("c3", "shell", json!({ "command": "git push origin main" })),
+        // Not decided by the rules: the reviewer (the next scripted turn) allows it.
+        call("c4", "shell", json!({ "command": "touch reviewed.txt" })),
+        say("ALLOW"),
+        // The reviewer says ask; the user allows once.
+        call("c5", "shell", json!({ "command": "touch asked.txt" })),
+        say("ASK: it creates a file nobody asked for."),
+        say("Done."),
+    ]);
+    let mut h = Harness::start(config(&dir.0, "auto", &new_conversation_id()), model.clone());
+    h.send("make some notes");
+    let mut asked = vec![];
+    let evs = h
+        .until_result(|req| {
+            asked.push((req.ask.label.clone(), req.ask.why.clone()));
+            Some(if req.ask.label.contains("push") { "deny" } else { "once" })
+        })
+        .await;
+    assert_eq!(
+        asked,
+        vec![
+            ("$ git push origin main".to_string(), Some("it pushes to a remote repository".to_string())),
+            ("$ touch asked.txt".to_string(), Some("it creates a file nobody asked for".to_string())),
+        ]
+    );
+    assert_eq!(std::fs::read_to_string(dir.0.join("notes.txt")).unwrap(), "hi\n");
+    assert!(dir.0.join("reviewed.txt").exists() && dir.0.join("asked.txt").exists());
+    let errors: Vec<bool> = tool_results(&evs).iter().map(|r| r["is_error"] == true).collect();
+    assert_eq!(errors, vec![false, false, true, false, false]);
+    assert_eq!(result_of(&evs)["result"], "Done.");
+    // The reviewer saw the user's request and the command, with its own instructions.
+    let review = model.requests().into_iter().find(|r| format!("{r:?}").contains("Paw's auto mode")).expect("a review request");
+    let asked_about = format!("{:?}", review.chat_history);
+    assert!(asked_about.contains("make some notes") && asked_about.contains("touch reviewed.txt"), "{asked_about}");
+}

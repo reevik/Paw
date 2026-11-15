@@ -16,7 +16,8 @@
 //!
 //! Tool calls go through a hook that applies the tab's approval level:
 //! reading is always allowed; `plan` refuses writes and commands; `edits`
-//! allows writes and asks before commands; `ask` asks before both; `full`
+//! allows writes and asks before commands; `ask` asks before both; `auto`
+//! lets routine actions run and asks about risky ones (see `auto`); `full`
 //! allows everything. Asking pauses the loop on that call until the user
 //! decides (Allow once / Always in this folder / Deny).
 
@@ -41,6 +42,8 @@ use tokio::sync::oneshot;
 
 /// Model calls one prompt may make (each tool round is one).
 const MAX_TURNS: usize = 60;
+/// How long auto mode's reviewer may take before Paw asks the user instead.
+const REVIEW_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
 /// Context window asked of Ollama (its own default is small for an agent).
 const OLLAMA_NUM_CTX: u32 = 32_768;
 /// Project instructions put into the system prompt, at most.
@@ -71,6 +74,9 @@ pub struct Ask {
     pub detail: String,
     /// The rule covers more than this one call.
     pub broad: bool,
+    /// Why auto mode stopped to ask (the card says so).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
 }
 
 const PLAN_REFUSAL: &str = "Paw is in plan mode (read-only): changing files and running commands is not allowed. \
@@ -131,11 +137,11 @@ pub fn classify(level: &str, tool: &str, args: &Value, rules: &[String]) -> Gate
                 "delete" => "Delete",
                 _ => "Move",
             };
-            Ask { label: format!("{verb} {path}").trim().to_string(), rule: "edit".into(), detail: clip(&detail, 20_000), broad: true }
+            Ask { label: format!("{verb} {path}").trim().to_string(), rule: "edit".into(), detail: clip(&detail, 20_000), broad: true, why: None }
         }
         "shell" => {
             let command = arg(args, "command").trim();
-            Ask { label: format!("$ {command}"), rule: format!("shell({command})"), detail: command.to_string(), broad: false }
+            Ask { label: format!("$ {command}"), rule: format!("shell({command})"), detail: command.to_string(), broad: false, why: None }
         }
         _ => Ask {
             // mcp__server__tool reads "server › tool".
@@ -146,6 +152,7 @@ pub fn classify(level: &str, tool: &str, args: &Value, rules: &[String]) -> Gate
             rule: tool.to_string(),
             detail: serde_json::to_string_pretty(args).unwrap_or_default(),
             broad: true,
+            why: None,
         },
     };
     if rules.iter().any(|r| *r == ask.rule) {
@@ -300,7 +307,7 @@ pub struct SessionConfig {
     pub provider: String,
     pub model: String,
     pub cwd: PathBuf,
-    /// "ask", "edits", "plan" or "full".
+    /// "ask", "edits", "auto", "plan" or "full".
     pub approval: String,
     /// Rules the user allowed for this folder ("edit", "shell(<command>)").
     pub allow_rules: Vec<String>,
@@ -323,6 +330,8 @@ pub struct Session {
     model: DynModel<Completion>,
     level: Mutex<String>,
     rules: Mutex<Vec<String>>,
+    /// The prompt being worked on (auto mode's reviewer sees it).
+    request: Mutex<String>,
     history: Mutex<Vec<Message>>,
     /// Terminal output shared since the last prompt; it goes in front of the next one.
     notes: Mutex<Vec<String>>,
@@ -423,6 +432,39 @@ impl Session {
         rx.await.unwrap_or(false)
     }
 
+    /// Auto mode's reviewer: one short call to the tab's model about an
+    /// action the rules couldn't decide. `None` allows it; otherwise the
+    /// reason to ask the user.
+    async fn review(&self, ask: &Ask) -> Option<String> {
+        use futures::StreamExt;
+        let request = self.request.lock().unwrap().clone();
+        let preamble = auto::REVIEWER.replace("{cwd}", &self.cfg.cwd.display().to_string());
+        let mut b = AgentBuilder::new(self.model.clone()).name("Paw auto review").preamble(preamble);
+        if self.cfg.provider == "anthropic" {
+            b = b.max_tokens(400);
+        } else {
+            use rig_core::providers::ollama::extension::{KeepAlive, OllamaOptions};
+            b = b.provider_option(OllamaOptions::default().num_ctx(OLLAMA_NUM_CTX).keep_alive(KeepAlive::duration("30m")));
+        }
+        let agent = b.build();
+        let question = auto::review_prompt(&request, &ask.label, &ask.detail);
+        let run = async {
+            let mut stream = agent.prompt(question).max_turns(1).stream();
+            while let Some(item) = stream.next().await {
+                match item {
+                    Ok(MultiTurnStreamItem::FinalResponse(r)) => return Some(r.output()),
+                    Err(_) => return None,
+                    _ => {}
+                }
+            }
+            None
+        };
+        match tokio::time::timeout(REVIEW_TIMEOUT, run).await {
+            Ok(Some(answer)) => auto::parse_review(&answer),
+            _ => Some("Paw couldn't check this action".into()),
+        }
+    }
+
     fn tools_agent(self: &Arc<Self>) -> rig_agent::Agent {
         let mut b = AgentBuilder::new(self.model.clone()).name("Paw Agent").preamble(self.cfg.preamble.clone());
         if self.cfg.provider == "anthropic" {
@@ -483,6 +525,24 @@ impl AgentHook for GateHook {
             let level = self.sess.level.lock().unwrap().clone();
             let rules = self.sess.rules.lock().unwrap();
             classify(&level, &tool, &args, &rules)
+        };
+        let auto = *self.sess.level.lock().unwrap() == "auto";
+        let gate = match gate {
+            Gate::Ask(mut ask) if auto => match auto::check(&tool, &args, &self.sess.cfg.cwd) {
+                auto::Check::Allow => Gate::Allow,
+                auto::Check::Ask(why) => {
+                    ask.why = Some(why);
+                    Gate::Ask(ask)
+                }
+                auto::Check::Review => match self.sess.review(&ask).await {
+                    None => Gate::Allow,
+                    Some(why) => {
+                        ask.why = Some(why);
+                        Gate::Ask(ask)
+                    }
+                },
+            },
+            g => g,
         };
         match gate {
             Gate::Allow => DispatchAction::proceed(),
@@ -583,6 +643,7 @@ async fn run_turn(sess: Arc<Session>, prompt: String, mut cancel: oneshot::Recei
     let history = sess.history.lock().unwrap().clone();
     // Terminal output shared since the last prompt goes along with this one.
     let notes = std::mem::take(&mut *sess.notes.lock().unwrap());
+    *sess.request.lock().unwrap() = prompt.clone();
     let message = prompt_message(&notes, &prompt);
     let agent = sess.tools_agent();
     let mut stream = agent.prompt(message.clone()).history(history).max_turns(MAX_TURNS).stream();
@@ -718,6 +779,7 @@ impl PawAgents {
             id,
             level: Mutex::new(cfg.approval.clone()),
             rules: Mutex::new(cfg.allow_rules.clone()),
+            request: Mutex::default(),
             history: Mutex::new(history),
             notes: Mutex::new(notes),
             pending: Mutex::default(),
@@ -896,6 +958,7 @@ fn level_text(level: &str) -> &'static str {
         "plan" => "plan — read-only. Read and search freely, but don't change files or run commands; propose a plan instead.",
         "ask" => "ask — the user confirms every file change and every command before it runs.",
         "full" => "full — file changes and commands run without confirmation. Be careful.",
+        "auto" => "auto — file changes in this folder and routine commands run on their own; risky actions (pushing, deleting outside the folder, installing, system changes) wait for the user's confirmation.",
         _ => "edits — file changes run without asking; the user confirms commands before they run.",
     }
 }
@@ -1063,7 +1126,7 @@ pub async fn paw_agent_start(
         return Err("Paw Agent needs a model — pick one with /model (Ollama models with tool support are listed).".into());
     }
     let mut base_url = if opts.base_url.trim().is_empty() && provider == "ollama" { DEFAULT_OLLAMA_URL.to_string() } else { opts.base_url.trim().to_string() };
-    let approval = if ["ask", "edits", "plan", "full"].contains(&opts.approval.as_str()) { opts.approval.clone() } else { "edits".into() };
+    let approval = if ["ask", "edits", "auto", "plan", "full"].contains(&opts.approval.as_str()) { opts.approval.clone() } else { "edits".into() };
 
     let app2 = app.clone();
     let (cwd2, provider2, model2, base2, approval2, source2) =
@@ -1188,6 +1251,7 @@ pub async fn paw_key_delete(provider: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || keychain::delete(&provider)).await.map_err(|e| e.to_string())?
 }
 
+pub mod auto;
 pub mod keys;
 
 #[cfg(test)]

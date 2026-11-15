@@ -9,7 +9,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
@@ -979,6 +979,27 @@ mod tests {
     }
 
     #[test]
+    fn workspace_tabs_live_in_session_folders() {
+        let home = std::env::temp_dir().join(format!("paw-ws-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let id = "5b0c1d2e-aaaa-bbbb-cccc-0123456789ab";
+        let ws = serde_json::json!({ "version": 1, "active": 0, "tabs": [
+            { "id": id, "agent": "claude", "lines": [{ "stream": "stdin", "text": "hi" }] },
+            { "agent": "paw", "cwd": "~" },
+        ]});
+        save_workspace_in(&home, ws.clone()).unwrap();
+        let saved = read_json(&home.join("workspace.json")).unwrap();
+        assert_eq!(saved["tabs"][0], serde_json::json!({ "id": id }), "only a reference in workspace.json");
+        assert_eq!(read_json(&home.join("session").join(id).join("session.json")).unwrap()["agent"], "claude");
+        assert_eq!(load_workspace_in(&home), ws, "loads back the same");
+        // A tab whose folder is gone is dropped.
+        std::fs::remove_dir_all(home.join("session")).unwrap();
+        assert_eq!(load_workspace_in(&home)["tabs"].as_array().unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
     fn auto_level_reaches_saved_agents() {
         let cat = catalog();
         let claude = cat.iter().find(|a| a.id == "claude").unwrap();
@@ -1141,26 +1162,65 @@ mod scan_tests {
 // Workspace: the open tabs, restored on the next launch
 // ---------------------------------------------------------------------------
 
-fn workspace_path(app: &AppHandle) -> Option<PathBuf> {
-    crate::paths::config_dir(&app).map(|d| d.join("workspace.json"))
-}
+
+// workspace.json lists the tabs by id; each tab's state (agent, folder,
+// transcript, task…) is in its session folder, `session/<id>/session.json`.
+// Tabs saved before session folders had their state inline; they still load.
 
 #[tauri::command]
 pub fn load_workspace(app: AppHandle) -> serde_json::Value {
-    workspace_path(&app)
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or(serde_json::Value::Null)
+    crate::paths::config_dir(&app).map(|h| load_workspace_in(&h)).unwrap_or(serde_json::Value::Null)
 }
 
 #[tauri::command]
 pub fn save_workspace(app: AppHandle, workspace: serde_json::Value) -> Result<(), String> {
-    let p = workspace_path(&app).ok_or("No config directory")?;
+    let home = crate::paths::config_dir(&app).ok_or("No config directory")?;
+    save_workspace_in(&home, workspace)
+}
+
+fn read_json(p: &Path) -> Option<serde_json::Value> {
+    std::fs::read_to_string(p).ok().and_then(|t| serde_json::from_str(&t).ok())
+}
+
+/// Write-then-rename so a crash mid-save never leaves a truncated file.
+fn write_json(p: &Path, v: &serde_json::Value) -> Result<(), String> {
     if let Some(dir) = p.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
-    // Write-then-rename so a crash mid-save never leaves a truncated file.
     let tmp = p.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_vec(&workspace).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, &p).map_err(|e| e.to_string())
+    std::fs::write(&tmp, serde_json::to_vec(v).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, p).map_err(|e| e.to_string())
+}
+
+/// A tab in workspace.json that only names its session folder.
+fn tab_ref(t: &serde_json::Value) -> Option<&str> {
+    let o = t.as_object()?;
+    (o.len() == 1).then(|| o.get("id")?.as_str()).flatten()
+}
+
+pub fn load_workspace_in(home: &Path) -> serde_json::Value {
+    let mut ws = read_json(&home.join("workspace.json")).unwrap_or(serde_json::Value::Null);
+    if let Some(tabs) = ws.get_mut("tabs").and_then(|t| t.as_array_mut()) {
+        let loaded: Vec<serde_json::Value> = tabs
+            .iter()
+            .filter_map(|t| match tab_ref(t) {
+                Some(id) => crate::paths::session_dir_in(home, id).and_then(|d| read_json(&d.join("session.json"))),
+                None => Some(t.clone()),
+            })
+            .collect();
+        *tabs = loaded;
+    }
+    ws
+}
+
+pub fn save_workspace_in(home: &Path, mut workspace: serde_json::Value) -> Result<(), String> {
+    if let Some(tabs) = workspace.get_mut("tabs").and_then(|t| t.as_array_mut()) {
+        for t in tabs.iter_mut() {
+            let Some(id) = t.get("id").and_then(|v| v.as_str()).map(str::to_string) else { continue };
+            let Some(dir) = crate::paths::session_dir_in(home, &id) else { continue };
+            write_json(&dir.join("session.json"), t)?;
+            *t = serde_json::json!({ "id": id });
+        }
+    }
+    write_json(&home.join("workspace.json"), &workspace)
 }

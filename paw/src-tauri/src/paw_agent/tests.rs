@@ -58,12 +58,13 @@ fn config(dir: &Path, approval: &str, conversation: &str) -> SessionConfig {
         cwd: dir.to_path_buf(),
         approval: approval.into(),
         allow_rules: vec![],
-        preamble: build_preamble(dir, approval, true, ""),
+        preamble: build_preamble(dir, approval, true, "", None),
         conversation: conversation.into(),
         history_path: Some(dir.join(".paw-history").join(format!("{conversation}.json"))),
         tools: true,
         path_env: None,
         mcp: Default::default(),
+        scripts: None,
     }
 }
 
@@ -448,12 +449,13 @@ async fn model_errors_end_the_turn() {
 fn preamble_mentions_folder_level_and_skills() {
     let dir = Tmp::new("pre");
     std::fs::write(dir.0.join("AGENTS.md"), "Use tabs.").unwrap();
-    let p = build_preamble(&dir.0, "plan", true, "<skills>\n- x: y (/s/SKILL.md)\n</skills>");
+    let p = build_preamble(&dir.0, "plan", true, "<skills>\n- x: y (/s/SKILL.md)\n</skills>", Some(Path::new("/h/.paw/session/abc/scripts")));
     assert!(p.contains(&dir.0.display().to_string()));
     assert!(p.contains("plan — read-only"));
     assert!(p.contains("Use tabs."));
     assert!(p.contains("/s/SKILL.md"));
-    let p = build_preamble(&dir.0, "edits", false, "<skills>x</skills>");
+    assert!(p.contains("Scripts folder for this session: /h/.paw/session/abc/scripts"));
+    let p = build_preamble(&dir.0, "edits", false, "<skills>x</skills>", None);
     assert!(p.contains("can't call tools"));
     assert!(!p.contains("<skills>"));
 }

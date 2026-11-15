@@ -322,6 +322,9 @@ pub struct SessionConfig {
     pub path_env: Option<String>,
     /// Tools of the MCP servers Paw Agent connected to.
     pub mcp: crate::mcp::McpSetup,
+    /// The session's `scripts/` folder: helper scripts that aren't part of
+    /// the project go there (auto mode treats it like the working folder).
+    pub scripts: Option<PathBuf>,
 }
 
 pub struct Session {
@@ -528,7 +531,7 @@ impl AgentHook for GateHook {
         };
         let auto = *self.sess.level.lock().unwrap() == "auto";
         let gate = match gate {
-            Gate::Ask(mut ask) if auto => match auto::check(&tool, &args, &self.sess.cfg.cwd) {
+            Gate::Ask(mut ask) if auto => match auto::check(&tool, &args, &self.sess.cfg.cwd, self.sess.cfg.scripts.as_deref()) {
                 auto::Check::Allow => Gate::Allow,
                 auto::Check::Ask(why) => {
                     ask.why = Some(why);
@@ -953,6 +956,16 @@ pub fn make_model(provider: &str, model: &str, base_url: &str, cred: Option<keys
     }
 }
 
+/// What agents are told about the session's scripts folder (Claude Code gets
+/// the same words).
+pub fn scripts_note(dir: &Path) -> String {
+    format!(
+        "Scripts folder for this session: {}\nWrite one-off helper scripts (anything that isn't part of the project) there, \
+not into the working folder, and run them from there.",
+        dir.display()
+    )
+}
+
 fn level_text(level: &str) -> &'static str {
     match level {
         "plan" => "plan — read-only. Read and search freely, but don't change files or run commands; propose a plan instead.",
@@ -990,10 +1003,13 @@ fn project_notes(cwd: &Path) -> String {
     out
 }
 
-pub fn build_preamble(cwd: &Path, level: &str, tools: bool, skills_index: &str) -> String {
+pub fn build_preamble(cwd: &Path, level: &str, tools: bool, skills_index: &str, scripts: Option<&Path>) -> String {
     let mut p = String::new();
     p.push_str("You are Paw Agent, a coding agent built into Paw, a macOS app where people work with coding agents in terminal-like tabs.\n\n");
     p.push_str(&format!("Working folder: {}\nRelative paths are resolved there; the shell tool runs commands there.\n", cwd.display()));
+    if let (true, Some(dir)) = (tools, scripts) {
+        p.push_str(&format!("{}\n", scripts_note(dir)));
+    }
     if tools {
         p.push_str(
             "\nTools: read (a file's lines), search (regex over the tree), list (a folder's files), edit (exact replacements in a file), \
@@ -1102,6 +1118,9 @@ pub struct StartOpts {
     /// Where the Anthropic key comes from (keys::list ids; empty: automatic).
     #[serde(default)]
     pub key_source: String,
+    /// The tab's id: its folder `~/.paw/session/<id>` keeps the conversation.
+    #[serde(default)]
+    pub paw_session: Option<String>,
 }
 
 fn valid_conversation_id(s: &str) -> bool {
@@ -1128,7 +1147,12 @@ pub async fn paw_agent_start(
     let mut base_url = if opts.base_url.trim().is_empty() && provider == "ollama" { DEFAULT_OLLAMA_URL.to_string() } else { opts.base_url.trim().to_string() };
     let approval = if ["ask", "edits", "auto", "plan", "full"].contains(&opts.approval.as_str()) { opts.approval.clone() } else { "edits".into() };
 
+    let conversation = opts.session.clone().filter(|s| valid_conversation_id(s)).unwrap_or_else(new_conversation_id);
+    // The tab's folder (a tab from before session folders: its conversation's).
+    let session_dir = crate::paths::ensure_session_dir(opts.paw_session.as_deref().filter(|s| crate::paths::valid_session_id(s)).unwrap_or(&conversation)).ok();
+    let scripts = session_dir.as_ref().map(|d| d.join("scripts"));
     let app2 = app.clone();
+    let scripts2 = scripts.clone();
     let (cwd2, provider2, model2, base2, approval2, source2) =
         (cwd.clone(), provider.clone(), model.clone(), base_url.clone(), approval.clone(), opts.key_source.clone());
     // Keys, `ollama show` and the skill folders: off the async threads.
@@ -1136,7 +1160,7 @@ pub async fn paw_agent_start(
         let cred = (provider2 == "anthropic").then(|| keys::resolve(&keys::System, &source2)).transpose()?;
         let tools = provider2 == "anthropic" || ollama_supports_tools(&base2, &model2).unwrap_or(true);
         let skills = crate::skills::agent_skills_index(&app2, &cwd2);
-        Ok::<_, String>((cred, tools, build_preamble(&cwd2, &approval2, tools, &skills)))
+        Ok::<_, String>((cred, tools, build_preamble(&cwd2, &approval2, tools, &skills, scripts2.as_deref())))
     })
     .await
     .map_err(|e| e.to_string())??;
@@ -1156,8 +1180,20 @@ pub async fn paw_agent_start(
         crate::mcp::McpSetup::default()
     };
 
-    let conversation = opts.session.filter(|s| valid_conversation_id(s)).unwrap_or_else(new_conversation_id);
-    let history_path = crate::paths::config_dir(&app).map(|d| d.join("paw-agent").join(format!("{conversation}.json")));
+    let history_path = session_dir.as_ref().map(|d| d.join("conversations").join(format!("{conversation}.json")));
+    // Continuing a conversation kept in another tab's folder (or the old
+    // shared folder): it moves here.
+    if let (Some(path), Some(home)) = (&history_path, crate::paths::home()) {
+        if !path.exists() {
+            let elsewhere = [
+                crate::paths::session_dir_in(&home, &conversation).map(|d| d.join("conversations").join(format!("{conversation}.json"))),
+                Some(home.join("paw-agent").join(format!("{conversation}.json"))),
+            ];
+            if let Some(old) = elsewhere.into_iter().flatten().find(|p| p.is_file()) {
+                let _ = std::fs::rename(old, path);
+            }
+        }
+    }
     let cfg = SessionConfig {
         name: opts.name,
         provider,
@@ -1171,6 +1207,7 @@ pub async fn paw_agent_start(
         tools,
         path_env: Some(path_env),
         mcp,
+        scripts,
     };
     let id = procs.alloc_id();
     let sink: Arc<dyn Sink> = Arc::new(TauriSink { app, seq: Mutex::default() });

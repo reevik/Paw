@@ -1,4 +1,6 @@
-//! Files attached to a prompt: picked with the "+" button or pasted images.
+//! Files attached to a prompt: picked with the "+" button, pasted images
+//! and pasted text. Each tab keeps copies in its session folder
+//! (`~/.paw/session/<id>/files`), and the agent gets the copy.
 //!
 //! Images small enough to send inline come back base64-encoded (Claude gets
 //! them as image content; the UI uses them for thumbnails). Everything else is
@@ -61,26 +63,84 @@ pub fn describe_attachment(path: String) -> Result<Attachment, String> {
     describe(Path::new(&path))
 }
 
+/// Files bigger than this are passed by their own path, not copied.
+const COPY_LIMIT: u64 = 256 * 1024 * 1024;
+
+/// The session's `files/` folder (created), or the temp folder without a session.
+fn files_dir(session: Option<&str>) -> Result<PathBuf, String> {
+    match session.filter(|s| crate::paths::valid_session_id(s)) {
+        Some(id) => Ok(crate::paths::ensure_session_dir(id)?.join("files")),
+        None => {
+            let uid = unsafe { libc::getuid() };
+            let dir = std::env::temp_dir().join(format!("paw-attachments-{uid}"));
+            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+            Ok(dir)
+        }
+    }
+}
+
+/// `dir/name`, or `dir/name-2.ext`… when that's taken.
+fn free_name(dir: &Path, name: &str) -> PathBuf {
+    let p = dir.join(name);
+    if !p.exists() {
+        return p;
+    }
+    let (stem, ext) = match name.rsplit_once('.') {
+        Some((s, e)) if !s.is_empty() => (s, format!(".{e}")),
+        _ => (name, String::new()),
+    };
+    (2..).map(|n| dir.join(format!("{stem}-{n}{ext}"))).find(|p| !p.exists()).unwrap()
+}
+
+/// Copy an attached file into `dir` (unless it's already there or too big).
+pub fn keep_copy(path: &Path, dir: &Path) -> Result<PathBuf, String> {
+    let meta = std::fs::metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if !meta.is_file() {
+        return Err(format!("{} is not a file", path.display()));
+    }
+    if path.starts_with(dir) || meta.len() > COPY_LIMIT {
+        return Ok(path.to_path_buf());
+    }
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "file".into());
+    let to = free_name(dir, &name);
+    std::fs::copy(path, &to).map_err(|e| format!("couldn't copy {}: {e}", path.display()))?;
+    Ok(to)
+}
+
 /// "+" button: native multi-file picker.
 #[tauri::command]
-pub async fn pick_attachments(app: AppHandle) -> Result<Vec<Attachment>, String> {
+pub async fn pick_attachments(app: AppHandle, session: Option<String>) -> Result<Vec<Attachment>, String> {
     use tauri_plugin_dialog::DialogExt;
     let picked = tauri::async_runtime::spawn_blocking(move || {
         app.dialog().file().set_title("Attach Files").blocking_pick_files()
     })
     .await
     .map_err(|e| e.to_string())?;
+    let dir = files_dir(session.as_deref())?;
     let mut out = Vec::new();
     for f in picked.unwrap_or_default() {
         let path = f.into_path().map_err(|e| e.to_string())?;
-        out.push(describe(&path)?);
+        out.push(describe(&keep_copy(&path, &dir)?)?);
     }
     Ok(out)
 }
 
+fn stamp() -> u128 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)
+}
+
+/// Pasted text that became a badge: kept as a file in the session too.
+#[tauri::command]
+pub fn save_pasted_text(text: String, session: Option<String>) -> Result<Attachment, String> {
+    let dir = files_dir(session.as_deref())?;
+    let path = free_name(&dir, &format!("pasted-{}.txt", stamp()));
+    std::fs::write(&path, text).map_err(|e| e.to_string())?;
+    describe(&path)
+}
+
 /// A pasted image: saved to a temp file so it also has a path.
 #[tauri::command]
-pub fn save_pasted_image(data: String, mime: String) -> Result<Attachment, String> {
+pub fn save_pasted_image(data: String, mime: String, session: Option<String>) -> Result<Attachment, String> {
     let ext = match mime.as_str() {
         "image/png" => "png",
         "image/jpeg" => "jpg",
@@ -89,14 +149,8 @@ pub fn save_pasted_image(data: String, mime: String) -> Result<Attachment, Strin
         other => return Err(format!("unsupported image type {other}")),
     };
     let bytes = base64::engine::general_purpose::STANDARD.decode(data.as_bytes()).map_err(|e| e.to_string())?;
-    let uid = unsafe { libc::getuid() };
-    let dir = std::env::temp_dir().join(format!("paw-attachments-{uid}"));
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    let path: PathBuf = dir.join(format!("pasted-{stamp}.{ext}"));
+    let dir = files_dir(session.as_deref())?;
+    let path: PathBuf = free_name(&dir, &format!("pasted-{}.{ext}", stamp()));
     std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
     describe(&path)
 }
@@ -125,9 +179,27 @@ mod tests {
 
     #[test]
     fn saves_pasted_image() {
-        let a = save_pasted_image("iVBORw==".into(), "image/png".into()).unwrap();
+        let a = save_pasted_image("iVBORw==".into(), "image/png".into(), None).unwrap();
         assert!(a.path.ends_with(".png") && a.size == 4);
         std::fs::remove_file(a.path).unwrap();
-        assert!(save_pasted_image("AAAA".into(), "image/tiff".into()).is_err());
+        assert!(save_pasted_image("AAAA".into(), "image/tiff".into(), None).is_err());
+    }
+
+    #[test]
+    fn attached_files_are_copied_once() {
+        let base = std::env::temp_dir().join(format!("paw-keep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (src, files) = (base.join("src"), base.join("files"));
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(&files).unwrap();
+        std::fs::write(src.join("notes.md"), "# a").unwrap();
+        let a = keep_copy(&src.join("notes.md"), &files).unwrap();
+        assert_eq!(a, files.join("notes.md"));
+        let b = keep_copy(&src.join("notes.md"), &files).unwrap();
+        assert_eq!(b, files.join("notes-2.md"), "a second copy doesn't overwrite the first");
+        assert_eq!(keep_copy(&a, &files).unwrap(), a, "a copy isn't copied again");
+        assert!(keep_copy(&src, &files).is_err());
+        assert_eq!(std::fs::read_to_string(&b).unwrap(), "# a");
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

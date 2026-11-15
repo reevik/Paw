@@ -97,6 +97,54 @@ function pushLine(S, line) {
 const sys = (S, text) => pushLine(S, { stream: "system", text, ts: Date.now() });
 const info = (S, html) => pushLine(S, { stream: "info", html, ts: Date.now() });
 
+// ---------- session folders ----------
+// Every tab has an id and a folder, ~/.paw/session/<id>: its state
+// (session.json), Paw Agent's conversations, copies of attached and pasted
+// files (files/), helper scripts the agents write (scripts/), a log of
+// every command run in it, yours and the agent's (commands.log), and the
+// command its agent was last started with (launch.sh).
+
+const newPawId = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 10)}-tab`);
+/** The tab's folder (created on first use). */
+async function sessionDir(S) {
+  S.sessionDir ??= await invoke("session_dir", { id: S.pawId }).catch(() => null);
+  return S.sessionDir;
+}
+const stampNow = () => {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+};
+/** One entry in commands.log: when, who, how it went, the command. */
+function logCommand(S, who, outcome, command) {
+  const cmd = String(command).trim().replace(/\n/g, "\n" + " ".repeat(37));
+  const line = `${stampNow()}  ${who.padEnd(6)} ${String(outcome).padEnd(9)} ${cmd}`;
+  invoke("session_log", { id: S.pawId, text: line }).catch(() => {});
+}
+/** Shell commands the agent ran (Bash / shell tool calls), logged when their result comes. */
+const SHELL_TOOLS = new Set(["Bash", "shell", "run_shell_command", "bash"]);
+function logAgentCommands(S, text) {
+  if (!text.startsWith('{"type":"assistant"') && !text.startsWith('{"type":"user"')) return;
+  let ev;
+  try { ev = JSON.parse(text); } catch { return; }
+  for (const c of ev.message?.content ?? []) {
+    if (c.type === "tool_use" && SHELL_TOOLS.has(c.name) && c.input?.command) (S.toolCmds ??= new Map()).set(c.id, c.input.command);
+    if (c.type === "tool_result" && S.toolCmds?.has(c.tool_use_id)) {
+      logCommand(S, "agent", c.is_error ? "error" : "ok", S.toolCmds.get(c.tool_use_id));
+      S.toolCmds.delete(c.tool_use_id);
+    }
+  }
+}
+/** Claude Code: the scripts folder is one it may write to, and it's told what it's for. */
+async function scriptsArgs(S) {
+  if (S.agent.io !== "claude-stream-json") return "";
+  const dir = await sessionDir(S);
+  if (!dir) return "";
+  const scripts = `${dir}/scripts`;
+  const note = `Scripts folder for this session: ${scripts}\nWrite one-off helper scripts (anything that isn't part of the project) there, not into the working folder, and run them from there.`;
+  return ` --add-dir ${shq(scripts)} --append-system-prompt ${shq(note)}`;
+}
+
 /** opts: cwd, model, approval; background (don't switch to it), after (a task
  *  tab: open right after it and its steps); task / stepOf (see tasks.js). */
 async function newSession(agentId, opts = {}) {
@@ -111,6 +159,7 @@ async function newSession(agentId, opts = {}) {
 
   const S = {
     sid: nextSid++,
+    pawId: newPawId(),
     agent: structuredClone(agent),
     mode: sessionMode(agent),
     cwd,
@@ -169,6 +218,7 @@ async function startProc(S, prompt, { resume = false } = {}) {
     });
     command += allowArgs(S);
     command += await skillsArgs(S);
+    command += await scriptsArgs(S);
     if (!useSession) S.skillsNoteSig = null; // a new conversation hasn't heard of any skills
     S.runWithSession = !!useSession;
     S.resuming = !!useSession; // cleared once the agent reports the session id
@@ -178,9 +228,13 @@ async function startProc(S, prompt, { resume = false } = {}) {
     // The agent runs with its own configuration, in the tab's folder — so its
     // skills, instructions and settings load exactly as on the command line.
     // A new tab never passes a session to resume: it is a brand-new conversation.
+    const dir = await sessionDir(S);
     const pinfo = await invoke("spawn_agent", {
       name: `${S.agent.name} — ${basename(S.cwd)}`, command, cwd: S.cwd, noStdin: S.mode === "oneshot",
+      env: dir ? { PAW_SESSION_DIR: dir } : null,
     });
+    invoke("session_launch", { id: S.pawId, cwd: S.cwd, command }).catch(() => {});
+    logCommand(S, "paw", "started", `${S.agent.name} (the command is in launch.sh)`);
     S.proc = pinfo.id;
     S.info = pinfo;
     S.agentCwd = S.cwd;
@@ -216,6 +270,7 @@ async function pawStart(S, { resume = false } = {}) {
       allow_rules: saved,
       session: resume && S.session ? S.session : null,
       key_source: S.agent.key_source || "",
+      paw_session: S.pawId,
     } });
     const { lines, session, ...pinfo } = reply;
     S.runWithSession = !!(resume && S.session);
@@ -444,6 +499,7 @@ function helpHtml(S) {
     row("/new [agent]", "open a new tab with a new conversation"),
     row("/task [what]", `plan a task with ${name} and run its steps on several agents (pasted text counts too)`),
     row("/clear", "clear the screen (⌘K)"),
+    row("/session", "open this tab's folder: its conversation, files, scripts and command log"),
     "", head("Shell"),
     row("/cd <dir>", "change folder; the agent follows with a new conversation"),
     row("history [n | -c]", "show the last n shell commands, or clear the history"),
@@ -547,6 +603,15 @@ async function slashCommand(S, line) {
     case "/new":
       await newSession(arg || undefined);
       return true;
+    case "/session": {
+      echo();
+      const dir = await sessionDir(S);
+      if (!dir) { sys(S, "✗ couldn't make this tab's session folder"); return true; }
+      info(S, `<span class="dim">This tab's folder</span> ${esc(tildify(dir))}\n` +
+        `<span class="dim">session.json · conversations/ · files/ (attached and pasted) · scripts/ · commands.log · launch.sh</span>`);
+      if (arg !== "path") invoke("session_dir", { id: S.pawId, reveal: true }).catch(() => {});
+      return true;
+    }
     case "/task": {
       // Plan it with this tab's agent, in this tab's folder. Pasted text
       // badges are part of the goal ("/task" alone: the pasted text is it).
@@ -808,6 +873,7 @@ listen("shell:done", ({ payload: d }) => {
     inPane(S, () => $("output").querySelector(".partial-line")?.remove());
   }
   if (d.code !== 0) pushLine(S, { stream: "shellexit", code: d.code, ts: Date.now() });
+  if (S.shellCmd) logCommand(S, "you", `exit ${d.code}`, S.shellCmd);
   if (d.cwd) S.cwd = d.cwd;
   inPane(S, renderAttachments);
   shareShortOutput(S);
@@ -1506,7 +1572,7 @@ function persistableLine(l) {
   }
   if (l.html != null) out.html = l.html;
   if (l.code != null) out.code = l.code;
-  if (l.attachments) out.attachments = l.attachments.map((a) => (isPasted(a) ? { kind: "text", name: a.name, path: a.path, size: a.size, lines: a.lines, text: String(a.text).slice(0, 600) } : { name: a.name, path: a.path, size: a.size }));
+  if (l.attachments) out.attachments = l.attachments.map((a) => (isPasted(a) ? { kind: "text", name: a.name, path: a.file ?? a.path, size: a.size, lines: a.lines, text: String(a.text).slice(0, 600) } : { name: a.name, path: a.path, size: a.size }));
   if (l.shared) out.shared = l.shared;
   if (l.skills) out.skills = l.skills;
   if (l.stream === "approval") Object.assign(out, { id: l.id, kind: l.kind, items: l.items, state: l.state === "pending" && l.kind === "paw" ? "expired" : l.state,
@@ -1519,6 +1585,7 @@ function workspaceSnapshot() {
     version: 1,
     active: Math.max(0, openTabs.indexOf(activeId)),
     tabs: openTabs.map((sid) => sessions.get(sid)).filter(Boolean).map((S) => ({
+      id: S.pawId,
       agent: S.agent.id,
       cwd: S.cwd,
       model: S.model,
@@ -1585,8 +1652,11 @@ async function restoreWorkspace() {
     if (!agent) continue;
     let cwd = t.cwd;
     try { cwd = await invoke("resolve_dir", { path: cwd, base: homeDir }); } catch { cwd = homeDir; }
+    // Tabs from before session folders take their conversation's id (Paw
+    // Agent's conversation moved into session/<that id>), or a new one.
+    const pawId = t.id ?? (isPaw(agent) && /^[0-9a-f-]{8,64}$/i.test(t.session ?? "") ? t.session : newPawId());
     const S = {
-      sid: nextSid++, agent: structuredClone(agent), mode: sessionMode(agent), cwd,
+      sid: nextSid++, pawId, agent: structuredClone(agent), mode: sessionMode(agent), cwd,
       model: t.model ?? defaultModel(agent), approval: t.approval ?? approvalFromLegacy(t.perm) ?? defaultApproval(agent),
       proc: null, info: null, lines: (t.lines ?? []).slice(-WS_LINES), busy: false,
       history: t.history ?? [], histIdx: (t.history ?? []).length, draft: "", unread: 0,
@@ -2697,6 +2767,7 @@ function onAgentOutput(l) {
   // One-shot runs end every prompt; a clean exit is not news.
   if (S.mode === "oneshot" && l.stream === "system" && l.text === "Process exited with code 0") return;
   captureSession(S, l);
+  if (S.mode === "claude" && l.stream === "stdout") logAgentCommands(S, l.text);
   if (S.mode === "claude" && l.stream === "stdout" && l.text.startsWith('{"type":"assistant"')) noteAnswer(S, l.text);
   let ended = null; // a finished turn, for tasks
   if (S.mode === "claude" && l.stream === "stdout" && l.text.includes('"type":"result"')) {
@@ -3014,7 +3085,7 @@ function bindPane(P) {
       const S = curS();
       if (!S) return;
       try {
-        addAttachments(S, await invoke("pick_attachments"));
+        addAttachments(S, await invoke("pick_attachments", { session: S.pawId }));
       } catch (e) {
         sys(S, `✗ ${e}`);
       }
@@ -3029,7 +3100,10 @@ function bindPane(P) {
         const text = (e.clipboardData?.getData("text/plain") ?? "").replace(/\r\n?/g, "\n");
         if (!S.shellBusy && !S.raw && text.trim() && shouldBadge(text)) {
           e.preventDefault();
-          addAttachments(S, [pastedAttachment(text.replace(/^\n+|\s+$/g, ""))]);
+          const a = pastedAttachment(text.replace(/^\n+|\s+$/g, ""));
+          addAttachments(S, [a]);
+          // A copy in the session's files/ too.
+          invoke("save_pasted_text", { text: a.text, session: S.pawId }).then((f) => { a.file = f.path; }).catch(() => {});
         }
         return;
       }
@@ -3041,7 +3115,7 @@ function bindPane(P) {
         reader.onload = async () => {
           const data = String(reader.result).split(",")[1] ?? "";
           try {
-            addAttachments(S, [await invoke("save_pasted_image", { data, mime: file.type === "image/jpg" ? "image/jpeg" : file.type })]);
+            addAttachments(S, [await invoke("save_pasted_image", { data, mime: file.type === "image/jpg" ? "image/jpeg" : file.type, session: S.pawId })]);
           } catch (err) {
             sys(S, `✗ couldn't attach the pasted image: ${err}`);
           }

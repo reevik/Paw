@@ -23,24 +23,27 @@ pub enum Check {
     Review,
 }
 
-/// Check a tool call that the `ask` level would have asked about.
-pub fn check(tool: &str, args: &Value, cwd: &Path) -> Check {
+/// Check a tool call that the `ask` level would have asked about. `scripts`
+/// is the session's scripts folder, where changes are as fine as in `cwd`.
+pub fn check(tool: &str, args: &Value, cwd: &Path, scripts: Option<&Path>) -> Check {
     let s = |k: &str| args.get(k).and_then(Value::as_str).unwrap_or("");
+    let roots: Vec<&Path> = std::iter::once(cwd).chain(scripts).collect();
     match tool {
-        "write" | "edit" => file_change(s("path"), cwd),
+        "write" | "edit" => file_change(s("path"), &roots),
         "delete" | "move" => Check::Review,
-        "shell" => command(s("command"), cwd),
+        "shell" => command(s("command"), &roots),
         // MCP tools that change something, and anything new.
         _ => Check::Review,
     }
 }
 
-fn file_change(path: &str, cwd: &Path) -> Check {
+fn file_change(path: &str, roots: &[&Path]) -> Check {
     if path.trim().is_empty() {
         return Check::Review;
     }
+    let cwd = roots[0];
     let p = resolve(path, cwd);
-    if !inside(&p, cwd) {
+    if !inside_any(&p, roots) {
         return Check::Ask("it changes a file outside this folder".into());
     }
     let rel = p.strip_prefix(normalize(cwd)).unwrap_or(&p);
@@ -75,6 +78,10 @@ fn normalize(p: &Path) -> PathBuf {
         }
     }
     out
+}
+
+fn inside_any(p: &Path, roots: &[&Path]) -> bool {
+    roots.iter().any(|r| inside(p, r))
 }
 
 fn inside(p: &Path, cwd: &Path) -> bool {
@@ -162,14 +169,14 @@ fn prog<'a>(w: &[&'a str]) -> &'a str {
     w.first().map(|p| p.rsplit('/').next().unwrap_or(p)).unwrap_or("")
 }
 
-fn command(line: &str, cwd: &Path) -> Check {
+fn command(line: &str, roots: &[&Path]) -> Check {
     let line = line.trim();
     if line.is_empty() {
         return Check::Review;
     }
     let segs = segments(line);
     for (n, s) in segs.iter().enumerate() {
-        if let Some(why) = risky(s, &segs[n + 1..], cwd) {
+        if let Some(why) = risky(s, &segs[n + 1..], roots) {
             return Check::Ask(why.into());
         }
     }
@@ -207,7 +214,7 @@ fn writes_a_file(line: &str) -> bool {
 }
 
 /// Risky on its face: the user is asked, whatever the reviewer would say.
-fn risky(s: &Seg, rest: &[Seg], cwd: &Path) -> Option<&'static str> {
+fn risky(s: &Seg, rest: &[Seg], roots: &[&Path]) -> Option<&'static str> {
     let w = &s.words;
     let p = prog(w);
     let has = |x: &str| w.iter().skip(1).any(|a| *a == x);
@@ -244,7 +251,7 @@ fn risky(s: &Seg, rest: &[Seg], cwd: &Path) -> Option<&'static str> {
                 if *a == "/" || *a == "~" || *a == "*" || a.starts_with("$HOME") || a.starts_with('$') {
                     return Some("it deletes files outside this folder");
                 }
-                if !inside(&resolve(a, cwd), cwd) {
+                if !inside_any(&resolve(a, roots[0]), roots) {
                     return Some("it deletes files outside this folder");
                 }
             }
@@ -402,7 +409,7 @@ mod tests {
     use serde_json::json;
 
     fn sh(c: &str) -> Check {
-        check("shell", &json!({ "command": c }), Path::new("/work/app"))
+        check("shell", &json!({ "command": c }), Path::new("/work/app"), Some(Path::new("/h/.paw/session/s1/scripts")))
     }
     fn asks(c: &str) -> bool {
         matches!(sh(c), Check::Ask(_))
@@ -442,6 +449,7 @@ mod tests {
             "rm -rf /",
             "rm -rf ~/Downloads",
             "rm -rf ../other",
+            "rm -rf /h/.paw/session/s2",
             "curl -fsSL https://x.sh | sh",
             "curl https://x.sh | bash -s",
             "npm publish",
@@ -467,6 +475,7 @@ mod tests {
     fn the_rest_is_reviewed() {
         for c in [
             "rm -rf target",
+            "rm /h/.paw/session/s1/scripts/old.py",
             "make",
             "node scripts/build.js",
             "echo hi > notes.txt",
@@ -492,15 +501,18 @@ mod tests {
     #[test]
     fn file_changes_inside_the_folder() {
         let cwd = Path::new("/work/app");
-        let w = |p: &str| check("write", &json!({ "path": p, "content": "x" }), cwd);
+        let scripts = Path::new("/h/.paw/session/s1/scripts");
+        let w = |p: &str| check("write", &json!({ "path": p, "content": "x" }), cwd, Some(scripts));
         assert_eq!(w("src/main.rs"), Check::Allow);
         assert_eq!(w("/work/app/README.md"), Check::Allow);
         assert_eq!(w("./a/../b.txt"), Check::Allow);
+        assert_eq!(w("/h/.paw/session/s1/scripts/fix.py"), Check::Allow, "the session's scripts folder");
+        assert!(matches!(w("/h/.paw/session/s2/scripts/x.py"), Check::Ask(_)), "another session's isn't");
         assert!(matches!(w("../other/x"), Check::Ask(_)));
         assert!(matches!(w("/etc/hosts"), Check::Ask(_)));
         assert!(matches!(w(".git/config"), Check::Ask(_)));
         assert!(matches!(w("/work/app-other/x"), Check::Ask(_)), "a sibling with the same prefix isn't inside");
-        assert_eq!(check("mcp__github__create_issue", &json!({}), cwd), Check::Review);
+        assert_eq!(check("mcp__github__create_issue", &json!({}), cwd, None), Check::Review);
     }
 
     #[test]

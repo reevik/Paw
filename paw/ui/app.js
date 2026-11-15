@@ -530,7 +530,7 @@ async function sendToAgent(S, text, atts = [], opts = {}) {
       S.turns = [];
       sys(S, `folder changed to ${tildify(S.cwd)} · new conversation`);
     }
-    pushLine(S, { stream: "stdin", text, attachments: echoed, shared: ctx.count, skills: skillNote.count, ts: Date.now() });
+    pushLine(S, { stream: "stdin", text, attachments: echoed, shared: ctx.count, skills: skillNote.count, ts: Date.now(), turn: newTurn(S) });
     const prompt = S.agent.continuity === "replay" ? withReplay(S, full) : full;
     if (S.agent.continuity === "replay") (S.turns ??= []).push({ user: body, assistant: "", open: true });
     S.lastPrompt = withPaths(full, atts);
@@ -552,7 +552,7 @@ async function sendToAgent(S, text, atts = [], opts = {}) {
   }
   // Echo the prompt (with its attachments) ourselves; the backend's copy of
   // the stdin line would carry the raw JSON / image data.
-  pushLine(S, { stream: "stdin", text, attachments: echoed, shared: ctx.count, skills: skillNote.count, ts: Date.now() });
+  pushLine(S, { stream: "stdin", text, attachments: echoed, shared: ctx.count, skills: skillNote.count, ts: Date.now(), turn: newTurn(S) });
   if (isPaw(S.agent)) {
     S.busy = true;
     S.busySince = Date.now();
@@ -996,7 +996,8 @@ function renderPartial(S) {
   if (!S.partial) { el?.remove(); return; }
   if (!el) {
     el = div(S.partialMd ? "tl say md-msg partial partial-line" : "tl out partial partial-line");
-    out.appendChild(el);
+    // The agent's text being written goes in its turn's block; a shell's at the end.
+    ((S.partialMd && S.turnId != null && turnBlock(out, S.turnId)) || out).appendChild(el);
   }
   el.innerHTML = S.partialMd ? `<span class="b">⏺</span><div class="md">${renderMarkdown(S.partial)}</div>` : ansi(S.partial);
   out.scrollTop = out.scrollHeight;
@@ -1779,6 +1780,7 @@ function persistableLine(l) {
   if (l.html != null) out.html = l.html;
   if (l.code != null) out.code = l.code;
   if (l.local) out.local = true;
+  if (l.turn != null) out.turn = l.turn;
   if (l.next) out.next = true;
   if (l.offer) { out.offer = l.offer; if (l.cwd) out.cwd = l.cwd; }
   if (l.attachments) out.attachments = l.attachments.map((a) => (isPasted(a) ? { kind: "text", name: a.name, path: a.file ?? a.path, size: a.size, lines: a.lines, text: String(a.text).slice(0, 600) } : { name: a.name, path: a.path, size: a.size }));
@@ -2006,6 +2008,8 @@ async function restoreTab(t, note = null) {
       procs: live.proc != null ? [live.proc] : [], shells: live.shell != null ? [live.shell] : [], after: live.dseq ?? 0,
     }).catch(() => null);
   }
+  // The last prompt's turn: an answer still coming in goes in its block.
+  S.turnId = [...S.lines].reverse().find((l) => l.turn != null)?.turn ?? null;
   if (t.task) S.task = restoreTask(t.task, { live: !!attach });
   if (t.stepOf) S.stepOf = t.stepOf;
   if (t.group) S.group = t.group;
@@ -2112,7 +2116,7 @@ function allowArgs(S) {
 }
 
 function addApprovalCard(S, card) {
-  pushLine(S, { stream: "approval", id: nextCardId++, state: "pending", agentName: S.agent.name, ts: Date.now(), ...card });
+  pushLine(S, { stream: "approval", id: nextCardId++, state: "pending", agentName: S.agent.name, ts: Date.now(), turn: S.turnId ?? undefined, ...card });
   if (!paneOf(S)) { S.unread++; renderTabs(); renderSidebar(); }
 }
 
@@ -3182,7 +3186,7 @@ function renderOutput() {
   const out = $("output");
   out.innerHTML = "";
   if (!S) return;
-  for (const l of S.lines) place(out, renderLine(S, l));
+  for (const l of S.lines) place(hostFor(out, l), renderLine(S, l));
   flushMd();
   out.scrollTop = out.scrollHeight;
 }
@@ -3255,6 +3259,31 @@ function flushMd() {
 }
 
 /** Append rendered line(s), folding work steps into the open group. */
+// ---------- turns ----------
+// A prompt and the agent's answer stay together: the answer (and approval
+// cards) is drawn inside the prompt's block, even when you ran shell
+// commands while the agent worked; those go after the block, each with its
+// own output. Lines are kept in the order they came; only drawing groups them.
+
+function newTurn(S) {
+  S.turnSeq = Math.max(S.turnSeq ?? 0, ...S.lines.map((l) => l.turn ?? 0)) + 1;
+  S.turnId = S.turnSeq;
+  return S.turnId;
+}
+
+/** Where a line goes: its turn's block (made by the prompt), else the end. */
+function hostFor(out, l) {
+  if (l?.turn == null) return out;
+  if (l.stream === "stdin") {
+    const block = div("turn-block");
+    block.dataset.turn = l.turn;
+    out.appendChild(block);
+    return block;
+  }
+  return turnBlock(out, l.turn) ?? out;
+}
+const turnBlock = (out, turn) => out.querySelector(`:scope > .turn-block[data-turn="${turn}"]`);
+
 function place(out, el) {
   if (!el) return;
   const nodes = el.nodeType === 11 ? [...el.childNodes] : [el];
@@ -3284,7 +3313,7 @@ function appendLines(S, lines) {
   const out = $("output");
   const stick = out.scrollHeight - out.scrollTop - out.clientHeight < 120;
   out.querySelector(".partial-line")?.remove();
-  for (const l of lines) place(out, renderLine(S, l));
+  for (const l of lines) place(hostFor(out, l), renderLine(S, l));
   flushMd();
   const extra = out.childElementCount - MAX_SCREEN_LINES;
   for (let i = 0; i < extra; i++) out.firstElementChild?.remove();
@@ -3296,7 +3325,7 @@ function appendLine(S, line) {
   const out = $("output");
   const stick = line.stream === "stdin" || out.scrollHeight - out.scrollTop - out.clientHeight < 120;
   out.querySelector(".partial-line")?.remove();
-  place(out, renderLine(S, line));
+  place(hostFor(out, line), renderLine(S, line));
   flushMd();
   if (S.partial) renderPartial(S);
   if (stick) out.scrollTop = out.scrollHeight;
@@ -3688,6 +3717,7 @@ function onAgentOutput(l) {
   }
   // A task tab shows the plan as a graph: the planner's JSON would only repeat it.
   if (S.task && S.mode === "claude" && l.stream === "stdout" && l.text.startsWith('{"type":"assistant"') && l.text.includes("```")) l = { ...l, text: foldPlanJson(l.text) };
+  if (S.turnId != null) l = { ...l, turn: S.turnId };
   pushLine(S, l);
   checkDenials(S, l);
   if (ended) taskTurnEnded(S, ended);

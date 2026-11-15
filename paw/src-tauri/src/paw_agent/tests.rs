@@ -243,6 +243,7 @@ async fn text_turn_and_continuity() {
     assert_eq!(r["is_error"], false);
     assert_eq!(r["subtype"], "success");
     assert_eq!(r["session_id"], conv);
+    assert_eq!(r["result"], "Hello from the mock.", "the final answer, as Claude Code's result has it");
 
     // Saved: a new session on the same conversation sends the earlier turn.
     let sess = h.paw.get(h.id).unwrap();

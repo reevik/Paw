@@ -15,7 +15,7 @@ const { listen } = window.__TAURI__.event;
 // pane being rendered (activePane). Everything else is a normal page id.
 const PANE_IDS = new Set(["session", "terminal", "output", "xterm-wrap", "xterm-title", "xterm-int", "xterm-back",
   "xterm-hosts", "busy", "busy-spin", "busy-text", "busy-time", "ac", "prompt-line", "att-tray", "input",
-  "attach-btn", "mode-pill", "sl-left", "eof", "prompt-glyph"]);
+  "attach-btn", "mode-pill", "sl-left", "eof", "prompt-glyph", "task-view"]);
 let activePane = null;
 const $ = (id) => (PANE_IDS.has(id) ? activePane?.root.querySelector(`[data-id="${id}"]`) : document.getElementById(id));
 /** The session shown in the pane being rendered (the focused one, normally). */
@@ -97,6 +97,8 @@ function pushLine(S, line) {
 const sys = (S, text) => pushLine(S, { stream: "system", text, ts: Date.now() });
 const info = (S, html) => pushLine(S, { stream: "info", html, ts: Date.now() });
 
+/** opts: cwd, model, approval; background (don't switch to it), after (a task
+ *  tab: open right after it and its steps); task / stepOf (see tasks.js). */
 async function newSession(agentId, opts = {}) {
   closeMenu();
   const agent = agentId ? settings.agents.find((a) => a.id === agentId) : defaultAgent();
@@ -126,16 +128,20 @@ async function newSession(agentId, opts = {}) {
     shellBusy: false,
     inputMode: settings.general.input_mode || "auto", // auto | shell | agent
   };
+  if (opts.approval) S.approval = opts.approval;
+  if (opts.task) S.task = opts.task;
+  if (opts.stepOf) S.stepOf = opts.stepOf;
   sessions.set(S.sid, S);
-  openTabs.push(S.sid);
+  openTabs.splice(opts.after ? tabInsertIndex(opts.after) : openTabs.length, 0, S.sid);
   banner(S);
-  select(S.sid);
+  if (opts.background) { renderTabs(); saveWorkspaceSoon(); } else select(S.sid);
   openShell(S);
   if (S.mode !== "oneshot") await startProc(S);
   return S;
 }
 
 function banner(S) {
+  if (S.task) return taskBanner(S);
   const d = detections[S.agent.id];
   const ver = isPaw(S.agent) ? ` <span class="dim">built-in · ${esc(S.agent.provider === "anthropic" ? "Anthropic" : "Ollama")}</span>`
     : d?.version ? ` <span class="dim">${esc(d.version)}</span>` : "";
@@ -168,6 +174,7 @@ async function startProc(S, prompt, { resume = false } = {}) {
     S.resuming = !!useSession; // cleared once the agent reports the session id
     S.runStarted = Date.now();
     S.runLines = [];
+    S.runOut = []; // stdout only: a one-shot agent's answer
     // The agent runs with its own configuration, in the tab's folder — so its
     // skills, instructions and settings load exactly as on the command line.
     // A new tab never passes a session to resume: it is a brand-new conversation.
@@ -267,6 +274,8 @@ async function closeSession(sid) {
   const S = sessions.get(sid);
   if (!S) return;
   if (isBusy(S) && !confirm(`${S.agent.name} is still working. Close the tab and stop it?`)) return;
+  if (S.task?.state === "running" && !confirm("This task is running. Close it and stop its steps? Their tabs stay open.")) return;
+  taskTabClosing(S);
   if (S.proc != null) invoke(isPaw(S.agent) ? "paw_agent_close" : "remove_agent", { id: S.proc }).catch(() => {});
   disposeTerm(S);
   if (S.shell != null) { invoke("shell_close", { id: S.shell }); shellToSid.delete(S.shell); }
@@ -311,13 +320,16 @@ async function submit(text) {
     await runShell(S, [route.command, ...atts.map((a) => shq(a.path))].join(" "));
     return;
   }
+  if (S.task) return taskSubmit(S, text, atts);
   await sendToAgent(S, text, atts);
 }
 
-async function sendToAgent(S, text, atts = []) {
+/** opts.wrap(text): what the agent gets around the text you see (tasks add their context). */
+async function sendToAgent(S, text, atts = [], opts = {}) {
   const skillNote = await syncExternalSkills(S);
   const ctx = takeShellContext(S);
-  const full = [skillNote.text, ctx.text, text].filter(Boolean).join("\n\n");
+  const full = [skillNote.text, ctx.text, opts.wrap ? opts.wrap(text) : text].filter(Boolean).join("\n\n");
+  S.lastAnswer = "";
   renderAttachments();
   if (S.mode === "oneshot") {
     if (isRunning(S)) {
@@ -425,6 +437,7 @@ function helpHtml(S) {
     row("/restart", "restart the agent (conversation continues)"),
     row("/stop", "stop the agent or running command (⌘. · Ctrl-C)"),
     row("/new [agent]", "open a new tab with a new conversation"),
+    row("/task [what]", `plan a task with ${name} and run its steps on several agents`),
     row("/clear", "clear the screen (⌘K)"),
     "", head("Shell"),
     row("/cd <dir>", "change folder; the agent follows with a new conversation"),
@@ -528,6 +541,10 @@ async function slashCommand(S, line) {
       return true;
     case "/new":
       await newSession(arg || undefined);
+      return true;
+    case "/task":
+      // Plan it with this tab's agent, in this tab's folder.
+      await newTask({ agentId: S.agent.id, cwd: S.cwd, goal: arg });
       return true;
     default:
       return false; // not ours — send it to the agent unchanged
@@ -1454,6 +1471,8 @@ function workspaceSnapshot() {
         .map((t) => ({ user: String(t.user).slice(0, 8000), assistant: String(t.assistant).slice(-8000) })),
       history: S.history.slice(-200),
       lines: S.lines.slice(-WS_LINES).map(persistableLine),
+      task: taskSnapshot(S) ?? undefined,
+      stepOf: S.stepOf ?? undefined,
     })),
   };
 }
@@ -1517,6 +1536,8 @@ async function restoreWorkspace() {
       session: t.session ?? t.claudeSession ?? null,
       turns: t.turns ?? [],
     };
+    if (t.task) S.task = restoreTask(t.task);
+    if (t.stepOf) S.stepOf = t.stepOf;
     sessions.set(S.sid, S);
     openTabs.push(S.sid);
     restored++;
@@ -1532,6 +1553,7 @@ async function restoreWorkspace() {
       startProc(S, undefined, { resume: !!resumable });
     }
   }
+  relinkTasks();
   if (restored) select(openTabs[Math.min(ws.active ?? 0, openTabs.length - 1)]);
   return restored > 0;
 }
@@ -1732,6 +1754,9 @@ window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", app
 
 // ---------- rendering: tabs, sidebar, header ----------
 function tabLabel(S) {
+  if (S.task) return taskTabLabel(S);
+  const step = stepOfTab(S)?.st;
+  if (step) return step.title;
   return `${S.agent.name} · ${basename(S.cwd)}`;
 }
 
@@ -1742,9 +1767,14 @@ function renderTabs() {
     const S = sessions.get(sid);
     if (!S) continue;
     const t = document.createElement("div");
-    t.className = "tab" + (sid === activeId ? " active" : paneOf(S) ? " visible" : "");
-    t.title = `${S.agent.name} — ${tildify(S.cwd)}`;
-    t.innerHTML = `<span class="dot ${sessionState(S)}"></span><span class="label">${esc(tabLabel(S))}</span>${S.unread ? `<span class="tab-unread"></span>` : ""}<button class="close" title="Close tab (⌘W)">×</button>`;
+    const step = stepOfTab(S);
+    t.className = "tab" + (sid === activeId ? " active" : paneOf(S) ? " visible" : "") + (S.task ? " task-tab" : step ? " step-tab" : "");
+    t.title = S.task ? `Task: ${S.task.goal || "new"} — planned by ${S.agent.name}` : step ? `Step of ${step.T.task.title}: ${S.agent.name} — ${tildify(S.cwd)}` : `${S.agent.name} — ${tildify(S.cwd)}`;
+    const needs = S.task ? taskNeedsYou(S) : 0;
+    t.innerHTML = (S.task ? `<span class="task-ico" aria-hidden="true"></span>` : "") +
+      `<span class="dot ${S.task ? taskDotState(S) : sessionState(S)}"></span><span class="label">${esc(tabLabel(S))}</span>` +
+      (needs ? `<span class="tab-badge" title="${needs} step${needs > 1 ? "s" : ""} waiting for your approval">${needs}</span>` : "") +
+      `${S.unread ? `<span class="tab-unread"></span>` : ""}<button class="close" title="Close tab (⌘W)">×</button>`;
     t.onmousedown = (e) => { if (e.button === 1) { e.preventDefault(); closeSession(sid); } };
     t.onclick = () => select(sid);
     t.querySelector(".close").onclick = (e) => { e.stopPropagation(); closeSession(sid); };
@@ -1770,7 +1800,7 @@ function renderHeader() {
     stdin: isRunning(S) ? "Write to stdin…" : "Process ended — ⏎ restarts it and sends",
     oneshot: isRunning(S) ? "Running… (⌘. to stop)" : `Prompt for ${S.agent.name}…`,
   }[S.mode];
-  $("input").placeholder = S.shellBusy ? "Input for the running command…  (Ctrl-C interrupts)" : ph;
+  $("input").placeholder = S.shellBusy ? "Input for the running command…  (Ctrl-C interrupts)" : S.task ? taskPlaceholder(S) : ph;
   updateGlyph();
   $("sl-left").textContent = [S.agent.name, S.model || "default model", tildify(S.cwd)].join("  ·  ");
   renderModePill();
@@ -1801,12 +1831,14 @@ function select(sid) {
     S.unread = 0;
     renderHeader();
     renderOutput();
+    renderTaskView();
     $("input").value = S.draft ?? "";
     renderAttachments();
     autosize();
     $("input").focus();
   } else {
     renderWelcome();
+    renderTaskView();
   }
   showTermView();
   renderTabs();
@@ -2546,6 +2578,7 @@ setInterval(() => { spinFrame++; for (const P of panes.values()) withPane(P, ren
 function captureSession(S, l) {
   if (l.stream !== "stdout" && l.stream !== "stderr") return;
   S.runLines?.push(l.text);
+  if (l.stream === "stdout" && S.mode === "oneshot") S.runOut?.push(PawThemes.stripAnsi(l.text));
   const pat = S.agent.continuity === "session" && S.agent.session_pattern;
   if (pat) {
     try {
@@ -2584,6 +2617,15 @@ function resumeRejected(S, pinfo) {
   return /session|conversation|thread|chat/i.test(out) && /not found|no such|unknown|invalid|does not exist|couldn'?t find/i.test(out);
 }
 
+/** The text of the turn's latest assistant message (a task step's answer). */
+function noteAnswer(S, line) {
+  try {
+    const parts = JSON.parse(line).message?.content ?? [];
+    const text = parts.filter((c) => c.type === "text").map((c) => c.text).join("\n").trim();
+    if (text) S.lastAnswer = text;
+  } catch {}
+}
+
 // ---------- backend events ----------
 listen("agent:output", ({ payload: l }) => onAgentOutput(l));
 
@@ -2595,9 +2637,15 @@ function onAgentOutput(l) {
   // One-shot runs end every prompt; a clean exit is not news.
   if (S.mode === "oneshot" && l.stream === "system" && l.text === "Process exited with code 0") return;
   captureSession(S, l);
+  if (S.mode === "claude" && l.stream === "stdout" && l.text.startsWith('{"type":"assistant"')) noteAnswer(S, l.text);
+  let ended = null; // a finished turn, for tasks
   if (S.mode === "claude" && l.stream === "stdout" && l.text.includes('"type":"result"')) {
     try {
-      if (JSON.parse(l.text).type === "result") {
+      const ev = JSON.parse(l.text);
+      if (ev.type === "result") {
+        const text = typeof ev.result === "string" && ev.result ? ev.result : S.lastAnswer ?? "";
+        ended = { ok: !ev.is_error, stopped: !!ev.stopped, text,
+          error: ev.is_error ? text || `${S.agent.name} reported an error (${ev.subtype ?? "unknown"}). Its tab has the details.` : null };
         S.busy = false;
         if (isPaw(S.agent)) { expirePawCards(S); S.partial = null; inPane(S, () => renderPartial(S)); }
         refresh(S);
@@ -2605,8 +2653,11 @@ function onAgentOutput(l) {
       }
     } catch {}
   }
+  // A task tab shows the plan as a graph: the planner's JSON would only repeat it.
+  if (S.task && S.mode === "claude" && l.stream === "stdout" && l.text.startsWith('{"type":"assistant"') && l.text.includes("```")) l = { ...l, text: foldPlanJson(l.text) };
   pushLine(S, l);
   checkDenials(S, l);
+  if (ended) taskTurnEnded(S, ended);
   if (S.mode !== "oneshot" && S.onceTurn && l.stream === "stdout" && l.text.includes('"type":"result"') && !l.text.includes('"permission_denials":[{')) {
     endOnceAllowance(S);
   }
@@ -2621,13 +2672,22 @@ listen("agent:status", ({ payload: pinfo }) => {
   const S = sessions.get(procToSid.get(pinfo.id));
   if (!S || S.proc !== pinfo.id) return; // ignore processes this tab has moved on from
   S.info = pinfo;
+  let ended = null; // a turn that ended with the process, for tasks
   if (pinfo.status !== "running") {
+    const wasBusy = S.busy;
     S.busy = false;
     const turn = S.turns?.at(-1);
     if (turn?.open) { turn.open = false; saveWorkspaceSoon(); }
     if (S.mode === "oneshot" && pinfo.status !== "stopped") {
       checkApprovalText(S);
       if (S.onceTurn) endOnceAllowance(S);
+    }
+    const ok = pinfo.status !== "failed" && pinfo.status !== "stopped" && (pinfo.exit_code ?? 0) === 0;
+    if (S.mode === "oneshot") {
+      ended = { ok, stopped: pinfo.status === "stopped", text: (S.runOut ?? []).join("\n"),
+        error: ok ? null : PawThemes.stripAnsi((S.runLines ?? []).slice(-20).join("\n")) || `exited with code ${pinfo.exit_code}` };
+    } else if (wasBusy) {
+      ended = { ok: false, stopped: pinfo.status === "stopped", text: S.lastAnswer ?? "", error: `${S.agent.name} stopped before it finished.` };
     }
   }
   if (pinfo.status !== "running" && resumeRejected(S, pinfo)) {
@@ -2640,6 +2700,7 @@ listen("agent:status", ({ payload: pinfo }) => {
     return;
   }
   refresh(S);
+  if (ended) taskTurnEnded(S, ended);
 });
 
 listen("settings:changed", ({ payload }) => {
@@ -2873,6 +2934,7 @@ $("split-h").onclick = () => splitPane("column");
 // Runs once per pane with that pane active, so $() finds its elements. The
 // handlers run later with the focused pane active (focusin/mousedown above).
 function bindPane(P) {
+  bindTaskView(P);
   withPane(P, () => {
     $("xterm-back").onclick = () => {
       const S = curS();
@@ -2987,6 +3049,13 @@ function openMenu() {
     menu.appendChild(b);
   }
   menu.appendChild(div("menu-sep"));
+  if (list.some((a) => sessionMode(a) !== "stdin")) {
+    const tk = document.createElement("button");
+    tk.className = "menu-item";
+    tk.innerHTML = `<span class="mini-avatar ghost">◇</span><span class="mi-name">New task…</span><span class="mi-sub">plan, then run</span>`;
+    tk.onclick = () => { closeMenu(); const S = focusedS(); newTask({ cwd: S?.cwd }); };
+    menu.appendChild(tk);
+  }
   const s = document.createElement("button");
   s.className = "menu-item";
   s.innerHTML = `<span class="mini-avatar ghost">⚙</span><span class="mi-name">Manage Agents…</span>`;

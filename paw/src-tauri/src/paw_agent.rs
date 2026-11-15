@@ -631,6 +631,8 @@ async fn run_turn(sess: Arc<Session>, prompt: String, mut cancel: oneshot::Recei
         "session_id": sess.cfg.conversation,
         "usage": { "input_tokens": st.input_tokens, "output_tokens": st.output_tokens },
         "permission_denials": [],
+        // The final answer, as Claude Code's result carries it (tasks pass it on).
+        "result": match &outcome { Outcome::Done(resp) => resp.output(), _ => String::new() },
     });
     *sess.cancel.lock().unwrap() = None;
     sess.sink.line(sess.id, "stdout", event(result));

@@ -110,6 +110,60 @@ pub fn move_to_paw_home(app: &AppHandle) {
     if let Err(e) = move_conversations(&home) {
         eprintln!("Paw: couldn't move Paw Agent's conversations: {e}");
     }
+    if let Err(e) = shorten_session_ids(&home) {
+        eprintln!("Paw: couldn't shorten the session folders' names: {e}");
+    }
+}
+
+/// Session folders were named by a UUID; now by 8 characters. A folder with
+/// a long name becomes `session/<first 8>` (unless that's taken), and the
+/// references to it follow: the tab's id in session.json and workspace.json,
+/// and paths into the folder inside session.json.
+fn shorten_session_ids(home: &Path) -> std::io::Result<()> {
+    let root = home.join("session");
+    if !root.is_dir() {
+        return Ok(());
+    }
+    let mut renamed: Vec<(String, String)> = Vec::new();
+    for e in std::fs::read_dir(&root)? {
+        let e = e?;
+        let Some(old) = e.file_name().to_str().map(str::to_string) else { continue };
+        if old.len() <= 8 || !valid_session_id(&old) || !e.path().is_dir() {
+            continue;
+        }
+        let short: String = old.chars().filter(|c| c.is_ascii_alphanumeric()).take(8).collect::<String>().to_ascii_lowercase();
+        let to = root.join(&short);
+        if short.len() < 8 || to.exists() {
+            continue;
+        }
+        std::fs::rename(e.path(), &to)?;
+        let file = to.join("session.json");
+        if let Ok(text) = std::fs::read_to_string(&file) {
+            let text = text.replace(&format!("/session/{old}/"), &format!("/session/{short}/"));
+            let text = match serde_json::from_str::<serde_json::Value>(&text) {
+                Ok(mut v) if v["id"] == old.as_str() => {
+                    v["id"] = short.clone().into();
+                    v.to_string()
+                }
+                _ => text,
+            };
+            std::fs::write(&file, text)?;
+        }
+        renamed.push((old, short));
+    }
+    let ws = home.join("workspace.json");
+    if renamed.is_empty() || !ws.is_file() {
+        return Ok(());
+    }
+    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&std::fs::read_to_string(&ws)?) else { return Ok(()) };
+    if let Some(tabs) = v.get_mut("tabs").and_then(|t| t.as_array_mut()) {
+        for t in tabs {
+            if let Some((_, short)) = renamed.iter().find(|(old, _)| t["id"] == old.as_str()) {
+                t["id"] = short.clone().into();
+            }
+        }
+    }
+    std::fs::write(&ws, v.to_string())
 }
 
 /// `paw-agent/<c>.json` (one folder for every conversation) becomes
@@ -198,6 +252,35 @@ mod tests {
         std::fs::remove_file(home.join("paw-agent/notes.txt")).unwrap();
         move_conversations(&home).unwrap();
         assert!(!home.join("paw-agent").exists(), "the empty folder goes");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn long_session_folders_get_short_names() {
+        let home = std::env::temp_dir().join(format!("paw-short-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let old = "f4fa73bf-fdcf-40fa-8c3f-6caade59cedd";
+        let dir = home.join("session").join(old);
+        std::fs::create_dir_all(dir.join("files")).unwrap();
+        let tab = format!(
+            r#"{{"id":"{old}","session":"{old}","lines":[{{"stream":"stdin","attachments":[{{"path":"/h/.paw/session/{old}/files/a.png"}}]}}]}}"#
+        );
+        std::fs::write(dir.join("session.json"), tab).unwrap();
+        // Taken already: stays as it is.
+        std::fs::create_dir_all(home.join("session/0f1e2d3c")).unwrap();
+        std::fs::create_dir_all(home.join("session/0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b")).unwrap();
+        std::fs::write(home.join("workspace.json"), format!(r#"{{"tabs":[{{"id":"{old}"}},{{"agent":"paw"}}]}}"#)).unwrap();
+
+        shorten_session_ids(&home).unwrap();
+        let new = home.join("session/f4fa73bf");
+        assert!(new.join("files").is_dir() && !dir.exists());
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(new.join("session.json")).unwrap()).unwrap();
+        assert_eq!(v["id"], "f4fa73bf");
+        assert_eq!(v["session"], old, "the agent's own conversation id stays");
+        assert_eq!(v["lines"][0]["attachments"][0]["path"], "/h/.paw/session/f4fa73bf/files/a.png");
+        let ws: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(home.join("workspace.json")).unwrap()).unwrap();
+        assert_eq!(ws["tabs"][0]["id"], "f4fa73bf");
+        assert!(home.join("session/0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b").is_dir(), "a taken short name keeps the long one");
         let _ = std::fs::remove_dir_all(&home);
     }
 

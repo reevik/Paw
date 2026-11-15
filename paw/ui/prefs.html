@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Settings</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="prefs.css" />
+</head>
+<body class="prefs">
+  <header class="toolbar" data-tauri-drag-region>
+    <nav class="ptabs" id="ptabs">
+      <button data-tab="general">
+        <svg viewBox="0 0 24 24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 8.9 19.4a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 8.9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 8.9 4.6 1.7 1.7 0 0 0 9.97 3V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1.03 1.51 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87V9c.26.6.85 1 1.51 1H21a2 2 0 1 1 0 4h-.09c-.66 0-1.25.4-1.51 1Z"/></svg>
+        General
+      </button>
+      <button data-tab="appearance">
+        <svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.8-.8 1.8-1.8 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.2 0-1 .8-1.8 1.8-1.8H17a4 4 0 0 0 4-4c0-4.4-4-8-9-8Z"/><circle cx="7.5" cy="11" r="1.2"/><circle cx="10" cy="7" r="1.2"/><circle cx="14.5" cy="7" r="1.2"/><circle cx="17" cy="11" r="1.2"/></svg>
+        Appearance
+      </button>
+      <button data-tab="agents">
+        <svg viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4M9 12h.01M15 12h.01M9 16h6"/></svg>
+        Agents
+      </button>
+      <button data-tab="about">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/></svg>
+        About
+      </button>
+    </nav>
+  </header>
+
+  <!-- General -->
+  <section class="pane" id="pane-general">
+    <div class="form-grid">
+      <label for="g-cwd">Default working directory</label>
+      <div>
+        <input id="g-cwd" placeholder="~" />
+        <p class="hint">Where new sessions start. <code>~</code> is your home folder; use <code>/cd</code> in a tab to move.</p>
+      </div>
+
+      <label for="g-agent">Default agent</label>
+      <div>
+        <select id="g-agent"></select>
+        <p class="hint">Opened by <code>⌘T</code>, the + button, and when Paw starts.</p>
+      </div>
+
+      <label for="g-mode">Input mode</label>
+      <div>
+        <select id="g-mode">
+          <option value="auto">Auto — commands to the shell, everything else to the agent</option>
+          <option value="shell">Shell — every line runs in the shell</option>
+          <option value="agent">Agent — every line goes to the agent</option>
+        </select>
+        <p class="hint">Default for new tabs. Switch any tab with <code>⇧Tab</code> or by clicking the mode under the prompt; <code>!cmd</code> always runs in the shell.</p>
+      </div>
+
+      <span>Agent context</span>
+      <div>
+        <label class="check"><input type="checkbox" id="g-share-shell" /> Share shell output with the agent</label>
+
+        <p class="hint">Commands you run in a tab, and their output, go along with your next message so the agent knows what happened. A badge in the prompt shows what will be shared; click its × to leave it out.</p>
+      </div>
+
+      <label for="g-approval">Default approval</label>
+      <div>
+        <select id="g-approval">
+          <option value="ask">Ask — actions that need approval are declined</option>
+          <option value="edits">Edits — may edit files without asking</option>
+          <option value="plan">Plan — read-only</option>
+          <option value="full">Full — no confirmations</option>
+        </select>
+        <p class="hint">For new tabs, on agents that support it. Change a tab with <code>/approval</code>.</p>
+      </div>
+
+      <label for="g-history">Shell history</label>
+      <div>
+        <div class="inline-row">
+          <input id="g-history" type="number" min="0" max="100000" step="100" class="num" />
+          <span class="unit">commands</span>
+          <span class="grow"></span>
+          <button id="g-history-clear" type="button" class="btn-ghost small">Clear History…</button>
+        </div>
+        <p class="hint" id="g-history-hint">Shared by all tabs and kept between launches. 0 turns it off.</p>
+      </div>
+
+      <span>New session menu</span>
+      <div>
+        <label class="check"><input type="checkbox" id="g-only-installed" /> Only offer agents that are installed</label>
+      </div>
+    </div>
+  </section>
+
+  <!-- Agents -->
+  <!-- Appearance -->
+  <section class="pane" id="pane-appearance">
+    <div class="ap-wrap">
+      <div class="ap-section">
+        <div class="ap-head"><h3>Window</h3></div>
+        <div class="ap-box ap-window">
+          <div class="ap-line">
+            <div>
+              <div>Appearance</div>
+              <div class="hint">System follows macOS. Light and Dark force it for Paw's windows.</div>
+            </div>
+            <div class="seg" id="ap-mode">
+              <button type="button" data-mode="system">System</button>
+              <button type="button" data-mode="light">Light</button>
+              <button type="button" data-mode="dark">Dark</button>
+            </div>
+          </div>
+          <div class="ap-line">
+            <div>
+              <div>Background opacity</div>
+              <div class="hint">Lower values let the frosted desktop show through the terminal.</div>
+            </div>
+            <div class="ap-slider">
+              <input type="range" id="ap-opacity" min="30" max="100" step="1" />
+              <span id="ap-opacity-val">94%</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="ap-section" data-mode="light">
+        <div class="ap-head">
+          <h3>Light Mode <span class="ap-active">— Active</span></h3>
+          <button class="ap-new" data-new="light" type="button">
+            <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5"/><path d="M8 5v6M5 8h6"/></svg> New
+          </button>
+        </div>
+        <div class="ap-box">
+          <div class="ap-row" id="ap-row-light"></div>
+          <div class="ap-toggle">
+            <div>
+              <div>Use extended theme palette</div>
+              <div class="hint">Show program colors (ls, git diff…) with this theme's 16 colors.</div>
+            </div>
+            <label class="switch"><input type="checkbox" id="ap-ext-light" /><span></span></label>
+          </div>
+        </div>
+      </div>
+
+      <div class="ap-section" data-mode="dark">
+        <div class="ap-head">
+          <h3>Dark Mode <span class="ap-active">— Active</span></h3>
+          <button class="ap-new" data-new="dark" type="button">
+            <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5"/><path d="M8 5v6M5 8h6"/></svg> New
+          </button>
+        </div>
+        <div class="ap-box">
+          <div class="ap-row" id="ap-row-dark"></div>
+          <div class="ap-toggle">
+            <div>
+              <div>Use extended theme palette</div>
+              <div class="hint">Show program colors (ls, git diff…) with this theme's 16 colors.</div>
+            </div>
+            <label class="switch"><input type="checkbox" id="ap-ext-dark" /><span></span></label>
+          </div>
+        </div>
+      </div>
+
+      <div class="ap-section">
+        <div class="ap-head"><h3>Import Theme</h3></div>
+        <div class="ap-box ap-import">
+          <div>
+            <div>Import a Ghostty or iTerm theme file</div>
+            <div class="hint" id="ap-import-msg">Themes are matched to an appearance based on their background color.</div>
+          </div>
+          <button id="ap-import" class="btn-ghost" type="button">Import</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Theme editor -->
+  <div id="te" class="te-backdrop hidden">
+    <form id="te-form" class="te">
+      <div class="te-top">
+        <div class="te-preview" id="te-preview"></div>
+        <div class="te-fields">
+          <label>Name <input id="te-name" required maxlength="40" /></label>
+          <div class="te-colors">
+            <label><input type="color" id="te-background" /> Background</label>
+            <label><input type="color" id="te-foreground" /> Text</label>
+            <label><input type="color" id="te-cursor" /> Accent / cursor</label>
+            <label><input type="color" id="te-selection" /> Selection</label>
+          </div>
+        </div>
+      </div>
+      <div class="te-pal">
+        <div class="te-pal-label">Normal</div>
+        <div class="te-swatches" id="te-normal"></div>
+        <div class="te-pal-label">Bright</div>
+        <div class="te-swatches" id="te-bright"></div>
+      </div>
+      <div class="te-actions">
+        <button type="button" id="te-delete" class="btn-danger small">Delete Theme</button>
+        <span class="grow"></span>
+        <button type="button" id="te-cancel" class="btn-ghost small">Cancel</button>
+        <button type="submit" class="btn-primary small">Save</button>
+      </div>
+    </form>
+  </div>
+
+  <section class="pane agents-pane" id="pane-agents">
+    <aside class="alist-wrap">
+      <ul id="alist" class="alist"></ul>
+      <div class="alist-footer">
+        <button id="a-add" class="icon-btn" title="Add custom agent">+</button>
+        <button id="a-del" class="icon-btn" title="Remove custom agent">−</button>
+        <span class="grow"></span>
+        <button id="a-rescan" class="btn-ghost small"><span class="spin hidden" id="a-spin"></span>Rescan</button>
+      </div>
+    </aside>
+
+    <div class="adetail" id="adetail">
+      <div class="ahead">
+        <div class="avatar" id="d-avatar"></div>
+        <div class="ahead-text">
+          <input id="d-name" class="name-input" />
+          <div id="d-status" class="astatus"></div>
+        </div>
+        <label class="switch" title="Show in New Agent sheet">
+          <input type="checkbox" id="d-enabled" /><span></span>
+        </label>
+      </div>
+
+      <div class="group">
+        <div class="group-head">
+          <h4>Models</h4>
+          <span class="src" id="d-msrc"></span>
+        </div>
+        <ul class="models" id="d-models"></ul>
+        <form class="add-model" id="d-addmodel">
+          <input id="d-newmodel" placeholder="Add a model id…" />
+          <button class="btn-ghost small" type="submit">Add</button>
+        </form>
+      </div>
+
+      <div class="group hidden" id="d-paw">
+        <div class="group-head"><h4>Provider</h4></div>
+        <div class="form-grid tight">
+          <label for="d-provider">Models from</label>
+          <select id="d-provider">
+            <option value="ollama">Ollama — local models on this Mac</option>
+            <option value="anthropic">Anthropic — Claude models with your API key</option>
+          </select>
+
+          <label for="d-baseurl">Address</label>
+          <div>
+            <input id="d-baseurl" spellcheck="false" />
+            <p class="hint" id="d-baseurl-hint"></p>
+          </div>
+
+          <label for="d-keysource" class="d-anthropic-only">Key from</label>
+          <div class="d-anthropic-only">
+            <select id="d-keysource"></select>
+            <ul class="key-sources" id="d-keysources"></ul>
+            <p class="hint">Paw looks where other tools keep an Anthropic key: your login shell, Claude Code, opencode. It reads the key from there when a session starts and never copies it.</p>
+          </div>
+
+          <label for="d-apikey" class="d-anthropic-only">Paw's own key</label>
+          <div class="d-anthropic-only">
+            <form class="key-row" id="d-keyform" autocomplete="off">
+              <input id="d-apikey" type="password" spellcheck="false" autocomplete="off" placeholder="sk-ant-…" />
+              <button class="btn-ghost small" type="submit">Save</button>
+              <button class="btn-ghost small" type="button" id="d-keydel">Remove</button>
+            </form>
+            <p class="hint" id="d-keystatus"></p>
+          </div>
+
+          <span>How it works</span>
+          <p class="hint">Paw Agent runs inside Paw: it reads, searches and edits files in the tab's folder and runs commands there, asking first as the tab's approval level says (<code>/approval</code>). Ollama models need tool support (<code>ollama show &lt;model&gt;</code> lists “tools”); the list above only shows those. A model written <code>anthropic/…</code> or <code>ollama/…</code> uses that provider.</p>
+        </div>
+      </div>
+
+      <div class="group" id="d-command">
+        <div class="group-head"><h4>Command</h4></div>
+        <div class="form-grid tight">
+          <label for="d-binary">Executable</label>
+          <input id="d-binary" placeholder="name on PATH or absolute path" />
+
+          <label for="d-io">Input protocol</label>
+          <select id="d-io">
+            <option value="text">Plain text — prompt in arguments, stdin as text</option>
+            <option value="claude-stream-json">Claude stream-json — prompt and follow-ups via stdin</option>
+          </select>
+
+          <label for="d-template">Template</label>
+          <div>
+            <textarea id="d-template" rows="3" spellcheck="false"></textarea>
+            <p class="hint">Placeholders: <code>{bin}</code> <code>{prompt}</code> <code>{model}</code> <code>{permission}</code> <code>{session}</code>. Wrap optional parts in <code>[[ … ]]</code> — they're dropped when a placeholder inside is empty.</p>
+          </div>
+
+          <span>Approval levels</span>
+          <div>
+            <div class="approval-grid">
+              <label>ask <input id="d-ap-ask" spellcheck="false" /></label>
+              <label>edits <input id="d-ap-edits" spellcheck="false" /></label>
+              <label>plan <input id="d-ap-plan" spellcheck="false" /></label>
+              <label>full <input id="d-ap-full" spellcheck="false" /></label>
+            </div>
+            <p class="hint">What <code>{permission}</code> becomes for each of Paw's levels (<code>/approval</code>). Leave a level empty if this agent can't express it.</p>
+          </div>
+
+          <label for="d-allow">Allow one action</label>
+          <div>
+            <input id="d-allow" spellcheck="false" placeholder="e.g. --allowedTools {rule}" />
+            <p class="hint">Added at launch for each action you approve on an approval card; <code>{rule}</code> is the action. Empty: approval cards can't allow single actions for this agent.</p>
+          </div>
+
+          <label for="d-skills">External skills</label>
+          <div>
+            <input id="d-skills" spellcheck="false" placeholder="e.g. --plugin-dir {skills}" />
+            <select id="d-skills-delivery" class="d-skills-delivery">
+              <option value="index">Otherwise: list them with their SKILL.md paths</option>
+              <option value="inline">Otherwise: include their instructions</option>
+            </select>
+            <p class="hint">How this agent gets the skills from the External folders in the sidebar. With a flag, <code>{skills}</code> is a plugin folder Paw keeps up to date. Without one, Paw tells the agent about them in the conversation: a list it can read from, or — for agents that can't open files — the instructions themselves.</p>
+          </div>
+
+          <label for="d-continuity">Conversation</label>
+          <div>
+            <select id="d-continuity">
+              <option value="session">Agent's own sessions — resume with {session}</option>
+              <option value="replay">Paw keeps the history — earlier turns go with each prompt</option>
+              <option value="none">None — every prompt stands alone</option>
+            </select>
+            <p class="hint">A new tab always starts a new conversation. Follow-up prompts and restarts continue it.</p>
+          </div>
+
+          <label for="d-pattern" class="d-session-only">Session ID pattern</label>
+          <div class="d-session-only">
+            <input id="d-pattern" spellcheck="false" placeholder="regex with one ( ) group, e.g. session id:\s*(\S+)" />
+            <p class="hint">Found in the agent's output after each run; used as <code>{session}</code> for the next prompt and after a restart.</p>
+          </div>
+
+          <span>Preview</span>
+          <code class="cmd-preview" id="d-preview"></code>
+        </div>
+      </div>
+
+      <div class="group d-allowed-only">
+        <div class="group-head"><h4>Always allowed</h4></div>
+        <ul class="allowed-list" id="d-allowed"></ul>
+      </div>
+
+      <div class="detail-footer">
+        <button id="d-reset" class="btn-ghost small">Restore Defaults</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- About -->
+  <section class="pane" id="pane-about">
+    <div class="about">
+      <div class="logo"></div>
+      <h2>Paw</h2>
+      <p class="hint" id="about-version">Version 0.1.0</p>
+      <p>Runs coding agents as ordinary processes and keeps them side by side.</p>
+      <div class="about-links">
+        <button class="btn-ghost small" data-about="license">MIT License</button>
+        <button class="btn-ghost small" data-about="oss">Open Source Projects</button>
+      </div>
+    </div>
+  </section>
+
+  <script src="themes.js"></script>
+  <script src="prefs.js"></script>
+</body>
+</html>

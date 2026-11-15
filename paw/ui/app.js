@@ -353,6 +353,8 @@ async function closeSession(sid) {
   if (S.task?.state === "running" && !confirm("This task is running. Close it and stop its steps? Their tabs stay open.")) return;
   taskTabClosing(S);
   keepClosedSession(S);
+  dropWaiting(S);
+  if (S.working) { S.working = false; setTimeout(pumpAgents, 0); }
   if (S.proc != null) invoke(isPaw(S.agent) ? "paw_agent_close" : "remove_agent", { id: S.proc }).catch(() => {});
   disposeTerm(S);
   if (S.shell != null) { invoke("shell_close", { id: S.shell }); shellToSid.delete(S.shell); }
@@ -406,7 +408,63 @@ async function submit(text) {
 }
 
 /** opts.wrap(text): what the agent gets around the text you see (tasks add their context). */
+// ---------- agents at once ----------
+// Settings › General › Agents at once: how many agents may work at the same
+// time, across tabs and task steps. A prompt beyond it waits its turn and
+// starts when one finishes; task steps wait the same way (prompts you typed
+// go first). A tab "works" from sending a prompt until its turn ends.
+
+const waitingPrompts = []; // { S, text, atts, opts, since }
+const maxAgents = () => { const n = Number(settings.general.max_agents ?? 3); return n > 0 ? n : Infinity; };
+/** Agents working now: tabs mid-turn, and task steps whose tab isn't working yet. */
+function agentsWorking() {
+  let n = 0;
+  for (const S of sessions.values()) if (S.working) n++;
+  for (const T of sessions.values()) {
+    if (!T.task) continue;
+    for (const st of T.task.steps) if (activeStep(st) && !sessions.get(st.sid)?.working) n++;
+  }
+  return n;
+}
+const atCapacity = () => agentsWorking() >= maxAgents();
+
+/** A turn ended (or never started): free its slot and start what waits. */
+function turnFinished(S) {
+  if (!S.working) return;
+  S.working = false;
+  setTimeout(pumpAgents, 0);
+}
+
+/** Start waiting prompts (oldest first), then task steps, while there's room. */
+function pumpAgents() {
+  for (let i = 0; i < waitingPrompts.length && !atCapacity(); ) {
+    const w = waitingPrompts[i];
+    if (!sessions.has(w.S.sid)) { waitingPrompts.splice(i, 1); continue; }
+    if (w.S.working) { i++; continue; } // its own tab is still busy: wait for it
+    waitingPrompts.splice(i, 1);
+    sendToAgent(w.S, w.text, w.atts, { ...w.opts, slot: true });
+    inPane(w.S, renderBusy);
+  }
+  for (const T of sessions.values()) if (T.task?.state === "running") taskPump(T);
+}
+
+/** Drop a tab's waiting prompts (⌘., closing it). Returns how many. */
+function dropWaiting(S) {
+  let n = 0;
+  for (let i = waitingPrompts.length - 1; i >= 0; i--) if (waitingPrompts[i].S === S) { waitingPrompts.splice(i, 1); n++; }
+  return n;
+}
+
 async function sendToAgent(S, text, atts = [], opts = {}) {
+  // Too many agents working: this prompt waits its turn.
+  if (!opts.slot && !S.working && atCapacity()) {
+    waitingPrompts.push({ S, text, atts, opts, since: Date.now() });
+    const n = agentsWorking();
+    sys(S, `⏳ waiting: ${n} agent${n === 1 ? " is" : "s are"} working (Settings › General › Agents at once: ${maxAgents()}). This prompt starts when one finishes; ⌘. drops it.`);
+    inPane(S, renderBusy);
+    return;
+  }
+  S.working = true;
   // Pasted text badges go along as text after what was typed; files as files.
   const pasted = atts.filter(isPasted);
   atts = atts.filter((a) => !isPasted(a));
@@ -437,6 +495,7 @@ async function sendToAgent(S, text, atts = [], opts = {}) {
     if (S.agent.continuity === "replay") (S.turns ??= []).push({ user: body, assistant: "", open: true });
     S.lastPrompt = withPaths(full, atts);
     await startProc(S, withPaths(prompt, atts));
+    if (!isRunning(S)) turnFinished(S);
     skillNote.sent();
     return;
   }
@@ -449,7 +508,7 @@ async function sendToAgent(S, text, atts = [], opts = {}) {
   if (!isRunning(S)) {
     sys(S, "agent was not running — starting it");
     await startProc(S);
-    if (!isRunning(S)) return;
+    if (!isRunning(S)) { turnFinished(S); return; }
   }
   // Echo the prompt (with its attachments) ourselves; the backend's copy of
   // the stdin line would carry the raw JSON / image data.
@@ -463,6 +522,7 @@ async function sendToAgent(S, text, atts = [], opts = {}) {
       await invoke("paw_agent_send", { id: S.proc, text: withPaths(full, atts) });
     } catch (e) {
       S.busy = false;
+      turnFinished(S);
       sys(S, `✗ ${e}`);
     }
     refresh(S);
@@ -477,6 +537,7 @@ async function sendToAgent(S, text, atts = [], opts = {}) {
     skillNote.sent();
   } catch (e) {
     S.busy = false;
+    turnFinished(S);
     sys(S, `✗ ${e}`);
   }
   refresh(S);
@@ -720,6 +781,8 @@ async function runShell(S, command) {
 
 /** Ctrl-C / ⌘. — interrupt the shell command if one runs, else stop the agent. */
 async function interrupt(S) {
+  const dropped = dropWaiting(S);
+  if (dropped) { sys(S, `dropped ${dropped === 1 ? "the waiting prompt" : `${dropped} waiting prompts`}`); inPane(S, renderBusy); return; }
   if (S.raw && S.shell != null) return invoke("shell_write_raw", { id: S.shell, data: "\x03" });
   if (S.shellBusy && S.shell != null) return invoke("shell_interrupt", { id: S.shell });
   if (isPaw(S.agent)) return isRunning(S) && invoke("paw_agent_cancel", { id: S.proc }).catch(() => {});
@@ -3368,9 +3431,16 @@ async function statsHtml(arg) {
 
 function renderBusy() {
   const S = curS();
-  const busy = !!S && isBusy(S) && !S.raw;
+  const waiting = !!S && !isBusy(S) && waitingPrompts.find((w) => w.S === S);
+  const busy = !!S && (isBusy(S) || !!waiting) && !S.raw;
   $("busy").classList.toggle("hidden", !busy);
   if (!busy) return;
+  if (waiting) {
+    $("busy-spin").textContent = "⏳";
+    $("busy-text").textContent = `Waiting for a free agent (${agentsWorking()} of ${maxAgents()} working)…`;
+    $("busy-time").textContent = fmtElapsed(Date.now() - waiting.since);
+    return;
+  }
   $("busy-spin").textContent = SPIN[spinFrame % SPIN.length];
   $("busy-text").textContent = S.shellBusy ? `Running ${S.shellCmd}…` : S.waitingApproval ? "Waiting for your approval…"
     : S.mode === "claude" ? "Working…" : "Running…";
@@ -3490,6 +3560,7 @@ function onAgentOutput(l) {
         ended = { ok: !ev.is_error, stopped: !!ev.stopped, text,
           error: ev.is_error ? text || `${S.agent.name} reported an error (${ev.subtype ?? "unknown"}). Its tab has the details.` : null };
         recordQuery(S, ended, ev);
+        turnFinished(S);
         S.busy = false;
         if (isPaw(S.agent)) { expirePawCards(S); S.partial = null; inPane(S, () => renderPartial(S)); }
         refresh(S);
@@ -3545,6 +3616,7 @@ listen("agent:status", ({ payload: pinfo }) => {
   }
   refresh(S);
   if (ended) recordQuery(S, ended);
+  if (pinfo.status !== "running") turnFinished(S);
   if (ended) taskTurnEnded(S, ended);
 });
 
@@ -3554,6 +3626,7 @@ listen("settings:changed", ({ payload }) => {
   applyCurrentTheme();
   applyFonts();
   if (payload.general?.max_sessions !== limit) refreshArchive();
+  setTimeout(pumpAgents, 0);
   if (activeId == null) renderWelcome();
 });
 listen("agents:detected", ({ payload }) => {

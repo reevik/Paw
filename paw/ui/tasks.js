@@ -9,7 +9,6 @@
 //
 // Loaded before app.js; everything here only runs when app.js calls it.
 
-const TASK_MAX_PARALLEL = 3; // steps running at once
 const TASK_INPUT_BUDGET = 8000; // characters of earlier results one step gets
 const TASK_MAX_STEPS = 12;
 
@@ -328,12 +327,10 @@ function taskPump(T) {
   if (t.state === "running") {
     const byId = new Map(t.steps.map((s) => [s.id, s]));
     const ready = (s) => s.needs.every((n) => ["done", "skipped"].includes(byId.get(n)?.state));
-    let running = t.steps.filter(activeStep).length;
     let editing = t.steps.some((s) => activeStep(s) && s.edits);
     for (const s of t.steps) {
-      if (running >= TASK_MAX_PARALLEL) break;
+      if (atCapacity()) break; // Settings › General › Agents at once
       if (s.state !== "waiting" || !ready(s) || (s.edits && editing)) continue;
-      running++;
       if (s.edits) editing = true;
       startStep(T, s);
     }
@@ -367,7 +364,8 @@ async function startStep(T, st) {
     st.sid = C.sid;
   }
   if (!activeStep(st)) return; // stopped while its tab was opening
-  await sendToAgent(C, st.prompt, [], { wrap: (x) => stepPrompt(T, st, x) });
+  // Its slot was counted when the step started (slot: true skips the queue).
+  await sendToAgent(C, st.prompt, [], { wrap: (x) => stepPrompt(T, st, x), slot: true });
 }
 
 function stepFailed(T, st, why) {
@@ -640,7 +638,7 @@ function taskSummaryHtml(S) {
   const t = S.task;
   const parts = [`<div class="tk-side-title">The task</div><div class="tk-goal">${esc(t.goal)}</div>`,
     `<div class="tk-dim">Planned by ${esc(S.agent.name)} · ${esc(tildify(S.cwd))}</div>`];
-  if (t.state === "draft") parts.push(`<div class="tk-hint">Click a step to change it, or ask the planner below to change the plan. Steps that change files run one at a time; others run side by side, ${TASK_MAX_PARALLEL} at most.</div>`);
+  if (t.state === "draft") parts.push(`<div class="tk-hint">Click a step to change it, or ask the planner below to change the plan. Steps that change files run one at a time; others run side by side, as many as Settings › General › Agents at once allows (${maxAgents() === Infinity ? "no limit" : maxAgents()}).</div>`);
   if (t.state === "done") {
     // The steps nobody else needed: their answers are the task's outcome.
     const needed = new Set(t.steps.flatMap((s) => s.needs));

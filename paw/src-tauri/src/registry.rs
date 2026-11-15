@@ -96,6 +96,9 @@ pub struct General {
     pub share_shell: bool,
     /// Closed sessions kept in ~/.paw/session (the oldest go first); 0 keeps all.
     pub max_sessions: usize,
+    /// Agents working at the same time, across tabs and task steps; more
+    /// prompts wait their turn. 0: no limit.
+    pub max_agents: usize,
 }
 
 impl Default for General {
@@ -109,6 +112,7 @@ impl Default for General {
             approval: "edits".into(),
             share_shell: true,
             max_sessions: 50,
+            max_agents: 3,
         }
     }
 }

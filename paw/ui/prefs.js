@@ -45,6 +45,7 @@ function renderGeneral() {
   $("g-only-installed").checked = settings.general.only_installed;
   $("g-history").value = settings.general.history_size ?? 1000;
   $("g-max-sessions").value = settings.general.max_sessions ?? 50;
+  $("g-max-agents").value = settings.general.max_agents ?? 3;
   showSessionCount();
   $("g-mode").value = settings.general.input_mode || "auto";
   $("g-approval").value = settings.general.approval || "edits";
@@ -96,6 +97,10 @@ async function showSessionCount() {
       "A tab's folder (~/.paw/session) stays after you close it, so /sessions can reopen it. Beyond this number the oldest go first. 0 keeps all.";
   } catch { /* keep the plain hint */ }
 }
+$("g-max-agents").addEventListener("input", (e) => {
+  settings.general.max_agents = Math.max(0, Math.min(20, Math.floor(Number(e.target.value) || 0)));
+  save();
+});
 let sessionsTimer = null;
 $("g-max-sessions").addEventListener("input", (e) => {
   settings.general.max_sessions = Math.max(0, Math.min(10000, Math.floor(Number(e.target.value) || 0)));

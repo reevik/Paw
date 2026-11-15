@@ -818,3 +818,10 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
 .mcp-card .sk-sec-head:hover { background: none; }
 .mcp-card .sk-sec-add { margin-left: 0; }
 .tab-tool.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+/* One block of servers: rows separated by hairlines. */
+.mcp-list { border-radius: 10px; overflow: hidden; background: var(--sk-card); border: 1px solid var(--sk-card-line); }
+.mcp-list > .mcp-srv { border-radius: 0; padding: 7px 10px; }
+.mcp-list > * + * { border-top: 1px solid var(--sk-card-line); }
+.mcp-list > .mcp-form { padding: 8px 10px; }
+.mcp-scope { flex-shrink: 0; font-size: 10px; color: var(--text-3); white-space: nowrap; }
+.sk-icon.hidden { display: none; }

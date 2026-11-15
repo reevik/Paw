@@ -738,7 +738,7 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
    behind the window — a light wallpaper turns it mid-grey, where tertiary text
    all but vanishes. A tint steadies the background and the sidebar gets its own,
    stronger text colours. */
-.sidebar {
+.sidebar, .mcp-panel {
   background: rgba(255, 255, 255, 0.34);
   --text-2: #4a4a4f;
   --text-3: #6e6e73;
@@ -748,7 +748,7 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
   --sk-card-line: rgba(0, 0, 0, 0.08);
 }
 @media (prefers-color-scheme: dark) {
-  .sidebar {
+  .sidebar, .mcp-panel {
     background: rgba(18, 18, 22, 0.46);
     --text-2: #cfcfd4;
     --text-3: #a1a1a6;
@@ -758,9 +758,63 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
     --sk-card-line: rgba(255, 255, 255, 0.09);
   }
 }
-.sidebar .section-title { color: var(--text-2); }
-.sidebar .sk-tag { background: rgba(128, 128, 128, 0.22); }
+.sidebar .section-title, .mcp-panel .section-title { color: var(--text-2); }
+.sidebar .sk-tag, .mcp-panel .sk-tag { background: rgba(128, 128, 128, 0.22); }
 
 /* ⌃R history search */
 .ac-icon.prompt { color: var(--t-accent); }
 .ac-empty { padding: 6px 8px; color: var(--t-dim); font: 12px var(--font); }
+
+/* ---------- MCP panel (right) ----------
+   Same material and cards as the sidebar; servers of the focused tab's agent. */
+.mcp-panel {
+  width: 300px; flex-shrink: 0; display: flex; flex-direction: column; min-height: 0;
+  border-left: 0.5px solid var(--hair); overflow: hidden;
+}
+.mcp-panel.hidden { display: none; }
+.mcp-top { height: 44px; flex-shrink: 0; }
+.mcp-head { display: flex; align-items: center; gap: 2px; padding: 0 10px 0 10px; }
+.mcp-head .section-title { flex: 1; }
+.mcp-sub { font-size: 11.5px; color: var(--text-2); padding: 0 18px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mcp-panel .skills-msg { margin: 0 10px; }
+.mcp-body { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 0 10px 10px; min-height: 0; }
+.mcp-note { font-size: 11px; color: var(--text-2); padding: 6px 10px; line-height: 1.35; overflow-wrap: anywhere; }
+.mcp-file { font-size: 10.5px; color: var(--text-3); padding: 0 6px 4px; overflow-wrap: anywhere; }
+.mcp-file a { color: inherit; cursor: pointer; }
+.mcp-file a:hover { color: var(--accent); text-decoration: underline; }
+.mcp-srv { padding: 6px; border-radius: 7px; }
+.mcp-srv:hover { background: var(--hover); }
+.mcp-srv.off .mcp-name, .mcp-srv.off .mcp-cmd { opacity: .5; }
+.mcp-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.mcp-name { font-size: 12.5px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.mcp-grow { flex: 1; }
+.mcp-cmd {
+  font: 10.5px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text-2); margin-top: 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mcp-keys { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 3px; }
+.mcp-keys .sk-tag { font-weight: 500; }
+.mcp-toggle { position: relative; width: 26px; height: 15px; flex-shrink: 0; }
+.mcp-toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+.mcp-toggle span { position: absolute; inset: 0; border-radius: 8px; background: rgba(128,128,128,.35); transition: background .15s; cursor: pointer; }
+.mcp-toggle span::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 11px; height: 11px; border-radius: 50%;
+  background: white; transition: transform .15s; box-shadow: 0 1px 2px rgba(0,0,0,.25);
+}
+.mcp-toggle input:checked + span { background: var(--accent); }
+.mcp-toggle input:checked + span::after { transform: translateX(11px); }
+.mcp-form { display: flex; flex-direction: column; gap: 6px; padding: 6px; }
+.mcp-form input, .mcp-form select, .mcp-form textarea {
+  width: 100%; box-sizing: border-box; font: 12px var(--font, -apple-system, system-ui); padding: 5px 7px;
+  border-radius: 6px; border: 1px solid var(--sk-card-line); background: var(--bg-input, rgba(255,255,255,.6)); color: var(--text); outline: none;
+}
+@media (prefers-color-scheme: dark) { .mcp-form input, .mcp-form select, .mcp-form textarea { background: rgba(0,0,0,.25); } }
+.mcp-form textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; resize: vertical; min-height: 38px; }
+.mcp-form input:focus, .mcp-form textarea:focus, .mcp-form select:focus { border-color: var(--accent); }
+.mcp-form .mcp-hint { font-size: 10.5px; color: var(--text-3); line-height: 1.3; }
+.mcp-form .skills-add-btns { margin-top: 2px; }
+.mcp-form[data-t="stdio"] .f-remote, .mcp-form[data-t="remote"] .f-stdio { display: none; }
+.mcp-card .sk-sec-head { cursor: default; }
+.mcp-card .sk-sec-head:hover { background: none; }
+.mcp-card .sk-sec-add { margin-left: 0; }
+.tab-tool.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }

@@ -4,6 +4,7 @@ mod agents;
 mod attachments;
 mod history;
 mod hive_agent;
+mod mcp;
 mod paths;
 mod registry;
 mod shell;
@@ -204,6 +205,10 @@ fn main() {
             hive_agent::hive_key_sources,
             hive_agent::hive_key_set,
             hive_agent::hive_key_delete,
+            mcp::mcp_list,
+            mcp::mcp_add,
+            mcp::mcp_remove,
+            mcp::mcp_set_enabled,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Hive");

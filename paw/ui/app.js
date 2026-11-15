@@ -2240,6 +2240,7 @@ function tabLabel(S) {
 }
 
 function renderTabs() {
+  trayUpdateSoon();
   const tabs = $("tabs");
   tabs.innerHTML = "";
   const shown = new Set();
@@ -2547,7 +2548,26 @@ function renderHeader() {
   renderBusy();
 }
 
+// ---------- menu bar ----------
+// The 🐾 in the menu bar lists the tabs and what they're doing (closing the
+// window keeps Paw running there); picking one shows it.
+let trayTimer = null;
+function trayUpdateSoon() {
+  clearTimeout(trayTimer);
+  trayTimer = setTimeout(() => {
+    const tabs = openTabs.map((sid) => sessions.get(sid)).filter(Boolean).map((S) => ({
+      id: S.pawId,
+      label: tabLabel(S),
+      state: hasPendingApproval(S) || (S.task && taskNeedsYou(S)) ? "needs"
+        : agentBusy(S) || (S.task && taskDotState(S) === "running") ? "working"
+        : waitingPrompts.some((w) => w.S === S) ? "waiting" : "idle",
+    }));
+    invoke("tray_update", { tabs, working: agentsWorking() }).catch(() => {});
+  }, 250);
+}
+
 function refresh(S) {
+  trayUpdateSoon();
   saveWorkspaceSoon();
   renderTabs();
   renderSidebar();
@@ -4230,6 +4250,15 @@ function waitForDetections(timeoutMs) {
   refreshArchive();
   loadPlugins();
   listen("plugins:changed", () => loadPlugins());
+  trayUpdateSoon();
+  // A tab picked in the menu bar.
+  listen("tray:open", ({ payload: id }) => {
+    const S = [...sessions.values()].find((x) => x.pawId === id);
+    if (!S) return;
+    const g = S.group ? groups.get(S.group) : null;
+    if (g?.collapsed) g.collapsed = false;
+    select(S.sid);
+  });
   if (restored) { saveWorkspaceSoon(); return; }
 
   // Like a terminal: open a tab with the default agent on launch.

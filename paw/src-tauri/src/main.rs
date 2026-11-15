@@ -12,6 +12,7 @@ mod skills;
 mod sessions;
 mod stats;
 mod plugins;
+mod menubar;
 
 use agents::AgentManager;
 use history::History;
@@ -117,7 +118,7 @@ fn open_preferences(app: AppHandle, tab: Option<String>) -> Result<(), String> {
     show_preferences(&app, tab.as_deref()).map_err(|e| e.to_string())
 }
 
-fn show_preferences(app: &AppHandle, tab: Option<&str>) -> tauri::Result<()> {
+pub(crate) fn show_preferences(app: &AppHandle, tab: Option<&str>) -> tauri::Result<()> {
     if let Some(w) = app.get_webview_window(PREFS_LABEL) {
         if let Some(tab) = tab {
             let _ = w.eval(&format!("window.selectTab && window.selectTab({:?})", tab));
@@ -224,6 +225,12 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         let settings = MenuItem::with_id(app, "preferences", "Settings…", true, Some("CmdOrCtrl+,"))?;
         app_menu.insert(&PredefinedMenuItem::separator(app)?, 1)?;
         app_menu.insert(&settings, 2)?;
+        // Quit asks first when agents are working (menubar.rs).
+        let n = app_menu.items()?.len();
+        if n > 0 {
+            app_menu.remove_at(n - 1)?;
+        }
+        app_menu.append(&MenuItem::with_id(app, "quit", "Quit Paw", true, Some("CmdOrCtrl+Q"))?)?;
     }
     // View › Show/Hide Sidebar (⌃⌘S, the macOS convention).
     let toggle = MenuItem::with_id(app, "toggle-sidebar", "Toggle Sidebar", true, Some("Ctrl+Cmd+S"))?;
@@ -275,6 +282,7 @@ fn main() {
         .manage(ShellManager::default())
         .manage(History::default())
         .manage(PawAgents::default())
+        .manage(menubar::MenuBar::default())
         .menu(build_menu)
         .on_menu_event(|app, event| {
             if event.id() == "about" {
@@ -283,6 +291,8 @@ fn main() {
                 let _ = show_preferences(app, None);
             } else if event.id() == "toggle-sidebar" {
                 let _ = app.emit_to("main", "ui:toggle-sidebar", ());
+            } else if event.id() == "quit" {
+                menubar::request_quit(app);
             }
         })
         .setup(|app| {
@@ -293,6 +303,17 @@ fn main() {
             // Apply the saved light/dark choice before the first paint settles.
             let mode = app.state::<Registry>().settings(app.handle()).appearance.mode;
             registry::apply_window_theme(app.handle(), &mode);
+            // The 🐾 in the menu bar; closing the window only hides it.
+            menubar::setup(app.handle())?;
+            if let Some(w) = app.get_webview_window("main") {
+                let handle = app.handle().clone();
+                w.on_window_event(move |e| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = e {
+                        api.prevent_close();
+                        menubar::hide_main(&handle);
+                    }
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -381,16 +402,26 @@ fn main() {
             mcp::mcp_add,
             mcp::mcp_remove,
             mcp::mcp_set_enabled,
+            menubar::tray_update,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Paw");
 
-    app.run(|handle, event| {
-        if let RunEvent::Exit = event {
+    app.run(|handle, event| match event {
+        // The Dock icon clicked (or Paw opened again): the window comes back.
+        #[cfg(target_os = "macos")]
+        RunEvent::Reopen { .. } => menubar::show_main(handle),
+        // Quit from the Dock or at logout: ask first when agents are working.
+        RunEvent::ExitRequested { api, code, .. } if code.is_none() && !menubar::quit_allowed(handle) => {
+            api.prevent_exit();
+            menubar::request_quit(handle);
+        }
+        RunEvent::Exit => {
             // Never leave orphaned agent processes behind.
             handle.state::<AgentManager>().kill_all();
             handle.state::<ShellManager>().kill_all();
             handle.state::<PawAgents>().close_all();
         }
+        _ => {}
     });
 }

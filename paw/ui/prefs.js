@@ -87,11 +87,13 @@ $("g-only-installed").addEventListener("change", (e) => { settings.general.only_
 
 // ---------- agent list ----------
 function sortedAgents() {
-  // Installed first, then alphabetical.
+  // Paw Agent first; then the CLI agents, installed first, then alphabetical.
   return [...settings.agents].sort((a, b) => {
+    const pa = a.io === "paw" ? 0 : 1;
+    const pb = b.io === "paw" ? 0 : 1;
     const ia = detections[a.id]?.installed ? 0 : 1;
     const ib = detections[b.id]?.installed ? 0 : 1;
-    return ia - ib || a.name.localeCompare(b.name);
+    return pa - pb || ia - ib || a.name.localeCompare(b.name);
   });
 }
 
@@ -105,7 +107,11 @@ function statusText(a) {
 function renderList() {
   const ul = $("alist");
   ul.innerHTML = "";
+  let prev = null;
   for (const a of sortedAgents()) {
+    // A faint line between Paw Agent and the CLI agents.
+    if (prev?.io === "paw" && a.io !== "paw") ul.appendChild(Object.assign(document.createElement("li"), { className: "alist-sep", role: "separator" }));
+    prev = a;
     const d = detections[a.id];
     const li = document.createElement("li");
     li.className = (a.id === selectedId ? "active " : "") + (a.enabled && d?.installed !== false ? "" : "disabled");

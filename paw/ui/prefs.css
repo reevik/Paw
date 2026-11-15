@@ -54,6 +54,7 @@ body.prefs { display: flex; flex-direction: column; height: 100vh; }
 .alist li.active { background: var(--accent); color: white; }
 .alist li.active .sub { color: rgba(255,255,255,.8); }
 .alist li.disabled:not(.active) .nm { color: var(--text-3); }
+.alist li.alist-sep { height: 0; padding: 0; margin: 6px 10px; border-top: 0.5px solid var(--hair); border-radius: 0; pointer-events: none; }
 .alist .meta { flex: 1; min-width: 0; }
 .alist .nm { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .alist .sub { font-size: 11px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

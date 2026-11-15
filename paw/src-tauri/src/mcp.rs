@@ -164,7 +164,7 @@ fn locations(agent: &str, cwd: &Path, home: &Path, config_dir: Option<&Path>) ->
 
 fn unsupported_note(agent: &str) -> String {
     match agent {
-        "aider" | "ollama" => "This agent doesn't use MCP servers.".into(),
+        "aider" => "This agent doesn't use MCP servers.".into(),
         "goose" => "Goose keeps MCP servers as extensions in ~/.config/goose/config.yaml; Paw can't edit that file yet.".into(),
         _ => "Paw doesn't know where this agent keeps its MCP servers.".into(),
     }

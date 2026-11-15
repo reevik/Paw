@@ -515,7 +515,11 @@ function renderTaskView() {
   const S = curS();
   const t = S?.task;
   host.classList.toggle("hidden", !t);
-  if (!t) { host.innerHTML = ""; return; }
+  if (!t) { host.innerHTML = ""; $("task-split")?.classList.add("hidden"); return; }
+  // Sizes the user dragged (the dividers): the board's height, the details' width.
+  $("task-split")?.classList.toggle("hidden", !t);
+  applyBoardSizes(host);
+  if (host.dataset.dragging) return; // a divider is being dragged
   // Don't rebuild under the user's typing (the step editor is part of it).
   if (host.contains(document.activeElement) && document.activeElement.matches("input, textarea, select")) {
     updateTaskTimes(host, t);
@@ -548,9 +552,10 @@ function renderTaskView() {
   } else if (!t.steps.length) {
     body = `<div class="tk-empty"><span class="spin-ch">${SPIN[spinFrame % SPIN.length]}</span> ${esc(S.agent.name)} is planning…</div>`;
   } else {
+    const vsplit = `<div class="tk-vsplit" title="Drag to resize · double-click to reset"></div>`;
     body = viewKey === "graph"
-      ? `<div class="tk-body"><div class="tk-graph">${graphHtml(t)}</div><aside class="tk-side">${sideHtml(S)}</aside></div>`
-      : `<div class="tk-body"><div class="tk-viewslot"></div><aside class="tk-side">${sideHtml(S)}</aside></div>`;
+      ? `<div class="tk-body"><div class="tk-graph">${graphHtml(t)}</div>${vsplit}<aside class="tk-side">${sideHtml(S)}</aside></div>`
+      : `<div class="tk-body"><div class="tk-viewslot"></div>${vsplit}<aside class="tk-side">${sideHtml(S)}</aside></div>`;
   }
   // A plugin's view keeps its canvas across redraws: take it out first.
   S.view?.el.remove();
@@ -565,6 +570,48 @@ function renderTaskView() {
     g.scrollLeft = scroll;
     requestAnimationFrame(() => drawEdges(g, t));
   }
+}
+
+// ---------- resizing the board ----------
+// Two dividers: under the board (its height against the transcript) and
+// between the graph and the step's details (their width). The sizes are
+// kept for every task tab; double-click a divider for the default.
+const BOARD_KEY = "paw.taskBoard";
+function boardSizes() {
+  try { return JSON.parse(localStorage.getItem(BOARD_KEY)) || {}; } catch { return {}; }
+}
+function saveBoardSizes(s) {
+  try { localStorage.setItem(BOARD_KEY, JSON.stringify(s)); } catch { /* not kept */ }
+}
+function applyBoardSizes(host) {
+  const s = boardSizes();
+  if (s.side) host.style.setProperty("--tk-side-w", `${s.side}px`);
+  else host.style.removeProperty("--tk-side-w");
+  // The board's height as a share of the tab, so it fits any window size.
+  if (s.height) { host.style.height = `${(s.height * 100).toFixed(2)}%`; host.classList.add("sized"); }
+  else { host.style.removeProperty("height"); host.classList.remove("sized"); }
+}
+
+/** Drag from pointerdown until the button is released (the document follows it). */
+function dragging(e, host, move, done) {
+  e.preventDefault();
+  host.dataset.dragging = "1";
+  document.querySelector(".app")?.classList.add("resizing");
+  e.target.classList.add("dragging");
+  const handle = e.target;
+  const mv = (ev) => move(ev);
+  const up = (ev) => {
+    window.removeEventListener("pointermove", mv);
+    window.removeEventListener("pointerup", up);
+    window.removeEventListener("pointercancel", up);
+    delete host.dataset.dragging;
+    document.querySelector(".app")?.classList.remove("resizing");
+    handle.classList.remove("dragging");
+    done(ev);
+  };
+  window.addEventListener("pointermove", mv);
+  window.addEventListener("pointerup", up);
+  window.addEventListener("pointercancel", up);
 }
 
 function graphHtml(t) {
@@ -678,7 +725,51 @@ function dependsOn(t, s, id, seen = new Set()) {
 // ---------- the board's controls ----------
 function bindTaskView(P) {
   const host = withPane(P, () => $("task-view"));
+  const split = withPane(P, () => $("task-split"));
   const S = () => sessions.get(P.sid);
+  // Between the graph and the details: the details' width.
+  host.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0 || !e.target.classList?.contains("tk-vsplit")) return;
+    const body = e.target.closest(".tk-body");
+    let w = 0;
+    dragging(e, host, (ev) => {
+      const r = body.getBoundingClientRect();
+      w = Math.round(Math.min(r.width - 240, Math.max(200, r.right - ev.clientX)));
+      host.style.setProperty("--tk-side-w", `${w}px`);
+    }, () => {
+      if (w) saveBoardSizes({ ...boardSizes(), side: w });
+      for (const Q of panes.values()) withPane(Q, renderTaskView);
+    });
+  });
+  host.addEventListener("dblclick", (e) => {
+    if (!e.target.classList?.contains("tk-vsplit")) return;
+    const s = boardSizes();
+    delete s.side;
+    saveBoardSizes(s);
+    for (const Q of panes.values()) withPane(Q, renderTaskView);
+  });
+  // Under the board: its height against the transcript.
+  split?.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    const total = host.parentElement.getBoundingClientRect().height;
+    let frac = 0;
+    dragging(e, host, (ev) => {
+      const top = host.getBoundingClientRect().top;
+      const hpx = Math.min(total - 160, Math.max(120, ev.clientY - top));
+      frac = hpx / total;
+      host.style.height = `${(frac * 100).toFixed(2)}%`;
+      host.classList.add("sized");
+    }, () => {
+      if (frac) saveBoardSizes({ ...boardSizes(), height: frac });
+      for (const Q of panes.values()) withPane(Q, renderTaskView);
+    });
+  });
+  split?.addEventListener("dblclick", () => {
+    const s = boardSizes();
+    delete s.height;
+    saveBoardSizes(s);
+    for (const Q of panes.values()) withPane(Q, renderTaskView);
+  });
   host.addEventListener("click", (e) => {
     const T = S();
     if (!T?.task) return;

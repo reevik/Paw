@@ -63,6 +63,7 @@ fn config(dir: &Path, approval: &str, conversation: &str) -> SessionConfig {
         history_path: Some(dir.join(".hive-history").join(format!("{conversation}.json"))),
         tools: true,
         path_env: None,
+        mcp: Default::default(),
     }
 }
 
@@ -144,6 +145,9 @@ fn fail(msg: &str) -> Vec<E> {
 }
 fn script(turns: Vec<Vec<E>>) -> MockCompletionModel {
     MockCompletionModel::from_stream_turns(turns)
+}
+fn script_model(turns: Vec<Vec<E>>) -> MockCompletionModel {
+    script(turns)
 }
 
 // ---------- policy ----------
@@ -617,4 +621,72 @@ async fn shared_terminal_output_goes_with_the_next_prompt() {
     let saved = std::fs::read_to_string(dir.0.join(".hive-history").join(format!("{conv}.json"))).unwrap();
     let saved: Value = serde_json::from_str(&saved).unwrap();
     assert_eq!(saved["notes"], json!([]));
+}
+
+/// A minimal MCP server over stdio (JSON-RPC lines): `echo` is read-only,
+/// `note` is not.
+const MCP_SERVER_PY: &str = r#"
+import json, sys
+for line in sys.stdin:
+    msg = json.loads(line)
+    if "id" not in msg:
+        continue
+    m, r = msg["method"], None
+    if m == "initialize":
+        r = {"protocolVersion": msg["params"]["protocolVersion"], "capabilities": {"tools": {}}, "serverInfo": {"name": "test", "version": "1"}}
+    elif m == "tools/list":
+        schema = {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}
+        r = {"tools": [
+            {"name": "echo", "description": "Echo text", "inputSchema": schema, "annotations": {"readOnlyHint": True}},
+            {"name": "note", "description": "Save a note", "inputSchema": schema, "annotations": {"readOnlyHint": False}},
+        ]}
+    elif m == "tools/call":
+        r = {"content": [{"type": "text", "text": msg["params"]["name"] + ": " + msg["params"]["arguments"]["text"]}]}
+    if r is None:
+        out = {"jsonrpc": "2.0", "id": msg["id"], "error": {"code": -32601, "message": "no " + m}}
+    else:
+        out = {"jsonrpc": "2.0", "id": msg["id"], "result": r}
+    sys.stdout.write(json.dumps(out) + "\n"); sys.stdout.flush()
+"#;
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mcp_tools_run_through_the_approval_gate() {
+    if std::process::Command::new("python3").arg("-V").output().is_err() {
+        eprintln!("python3 not found; skipped");
+        return;
+    }
+    let dir = Tmp::new("mcp");
+    let script = dir.0.join("server.py");
+    std::fs::write(&script, MCP_SERVER_PY).unwrap();
+    let server = crate::mcp::McpServer {
+        name: "test".into(),
+        transport: "stdio".into(),
+        command: "python3".into(),
+        args: vec![script.display().to_string()],
+        enabled: true,
+        ..Default::default()
+    };
+    let broken = crate::mcp::McpServer { name: "broken".into(), transport: "stdio".into(), command: "/nonexistent/mcp".into(), enabled: true, ..Default::default() };
+    let setup = crate::mcp::connect_all(&[server, broken], &dir.0, None).await;
+    assert_eq!(setup.connected, ["test (2 tools)"], "{setup:?}");
+    assert!(setup.failed[0].starts_with("broken:"), "{setup:?}");
+    assert!(setup.read_only.contains("mcp__test__echo") && !setup.read_only.contains("mcp__test__note"));
+
+    let model = script_model(vec![
+        call("c1", "mcp__test__echo", json!({ "text": "hi" })),
+        call("c2", "mcp__test__note", json!({ "text": "remember" })),
+        say("done"),
+    ]);
+    let mut cfg = config(&dir.0, "ask", &new_conversation_id());
+    cfg.mcp = setup;
+    let mut h = Harness::start(cfg, model.clone());
+    h.send("use the tools");
+    let mut asked = vec![];
+    let evs = h.until_result(|req| { asked.push(req.ask.label.clone()); Some("once") }).await;
+    assert_eq!(asked, ["test › note"], "the read-only tool needed no approval");
+    let results: Vec<String> = tool_results(&evs).iter().map(|r| r["content"].as_str().unwrap().to_string()).collect();
+    assert_eq!(results, ["echo: hi", "note: remember"], "{evs:?}");
+    // The model saw the server's tools under their namespaced names.
+    let offered: Vec<String> = model.requests()[0].tools.iter().map(|t| t.name.to_string()).collect();
+    assert!(offered.contains(&"mcp__test__echo".to_string()) && offered.contains(&"read".to_string()), "{offered:?}");
 }

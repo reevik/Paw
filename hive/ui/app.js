@@ -1754,6 +1754,7 @@ const focusedS = () => sessions.get(focusedPane?.sid);
 function renderSidebar() {
   const cwd = focusedS()?.cwd ?? null;
   if (cwd !== skills.cwd) scanSkills();
+  syncMcp();
 }
 
 function renderHeader() {
@@ -2100,6 +2101,188 @@ window.addEventListener("focus", () => {
   scanSkills();
 });
 
+// ---------- MCP panel ----------
+// The right-hand panel lists the MCP servers of the focused tab's agent:
+// Hive Agent's own list, or the CLI agent's config files (user / project…).
+// Adding, removing or switching a server writes there; running tabs of that
+// agent pick it up (an idle one restarts on the same conversation, a busy
+// one after its turn; one-shot agents read their config on every prompt).
+const mcp = { open: false, key: null, report: null, adding: null, busy: false, seq: 0 };
+try { mcp.open = localStorage.getItem("hive.mcp") === "1"; } catch {}
+const TRANSPORT_TAG = { stdio: "local", http: "HTTP", sse: "SSE" };
+
+function setMcpOpen(open) {
+  mcp.open = open;
+  $("mcp-panel").classList.toggle("hidden", !open);
+  $("mcp-toggle").classList.toggle("on", open);
+  try { localStorage.setItem("hive.mcp", open ? "1" : "0"); } catch {}
+  if (open) { mcp.key = null; syncMcp(); }
+}
+
+/** The focused tab changed (or its folder): show its agent's servers. */
+function syncMcp() {
+  if (!mcp.open) return;
+  const S = focusedS();
+  const key = S ? `${S.agent.id}|${S.cwd}` : "";
+  if (key === mcp.key) return;
+  mcp.key = key;
+  mcp.adding = null;
+  loadMcp();
+}
+
+async function loadMcp() {
+  const S = focusedS();
+  const seq = ++mcp.seq;
+  if (!S) { mcp.report = null; renderMcp(); return; }
+  try {
+    const r = await invoke("mcp_list", { agent: S.agent.id, cwd: S.cwd });
+    if (seq !== mcp.seq) return;
+    mcp.report = r;
+  } catch (e) {
+    mcp.report = null;
+    mcpMsg(`Couldn't read the MCP config: ${e}`, true);
+  }
+  renderMcp();
+}
+
+let mcpMsgTimer;
+function mcpMsg(text, error = false) {
+  const m = $("mcp-msg");
+  m.textContent = text;
+  m.classList.toggle("error", error);
+  m.classList.toggle("hidden", !text);
+  clearTimeout(mcpMsgTimer);
+  if (text) mcpMsgTimer = setTimeout(() => m.classList.add("hidden"), error ? 9000 : 4000);
+}
+
+function mcpServerHtml(sc, s) {
+  const target = s.transport === "stdio" ? [s.command, ...s.args].map(shq).join(" ") : s.url;
+  const keys = [...s.env_keys.map((k) => `<span class="sk-tag" title="Environment variable (value not shown)">${esc(k)}</span>`),
+    ...s.header_keys.map((k) => `<span class="sk-tag" title="Header (value not shown)">${esc(k)}:</span>`)].join("");
+  return `<div class="mcp-srv${s.enabled ? "" : " off"}" data-scope="${esc(sc.id)}" data-name="${esc(s.name)}">
+      <div class="mcp-row"><span class="mcp-name">${esc(s.name)}</span><span class="sk-tag">${TRANSPORT_TAG[s.transport] ?? esc(s.transport)}</span><span class="mcp-grow"></span>
+        ${sc.can_toggle ? `<label class="mcp-toggle" title="${s.enabled ? "On — click to switch off" : "Off — click to switch on"}"><input type="checkbox" data-mcp-toggle ${s.enabled ? "checked" : ""}><span></span></label>` : ""}
+        ${sc.writable ? `<button class="sk-x" data-mcp-remove title="Remove">×</button>` : ""}</div>
+      <div class="mcp-cmd" title="${esc(target)}">${esc(target)}</div>
+      ${keys ? `<div class="mcp-keys">${keys}</div>` : ""}
+    </div>`;
+}
+
+function mcpFormHtml(sc) {
+  return `<form class="mcp-form" data-scope="${esc(sc.id)}" data-t="stdio" autocomplete="off">
+      <input name="name" placeholder="Name, e.g. filesystem" spellcheck="false" />
+      <select name="transport">
+        <option value="stdio">Local command (stdio)</option>
+        <option value="http">Remote — streamable HTTP</option>
+        <option value="sse">Remote — SSE</option>
+      </select>
+      <input name="command_line" class="f-stdio" placeholder="npx -y @modelcontextprotocol/server-filesystem ~/code" spellcheck="false" />
+      <input name="url" class="f-remote" placeholder="https://example.com/mcp" spellcheck="false" />
+      <textarea name="env" class="f-stdio" rows="2" placeholder="Environment, one per line: API_KEY=…" spellcheck="false"></textarea>
+      <textarea name="headers" class="f-remote" rows="2" placeholder="Headers, one per line: Authorization: Bearer …" spellcheck="false"></textarea>
+      <div class="mcp-hint">Values are written to ${esc(tildify(sc.file))} and aren't shown here again.</div>
+      <div class="skills-add-btns"><button type="button" data-mcp-cancel>Cancel</button><button type="submit" class="primary">Add</button></div>
+    </form>`;
+}
+
+function renderMcp() {
+  const body = $("mcp-body");
+  const S = focusedS();
+  $("mcp-sub").textContent = S ? `${S.agent.name} · ${tildify(S.cwd)}` : "";
+  if (!S) { body.innerHTML = `<div class="mcp-note">Open a session to see its agent's MCP servers.</div>`; return; }
+  const r = mcp.report;
+  if (!r) { body.innerHTML = `<div class="mcp-note">Reading…</div>`; return; }
+  if (!r.supported) { body.innerHTML = `<div class="mcp-note">${esc(r.note)}</div>`; return; }
+  const hiveNote = isHive(S.agent) ? `<div class="mcp-note">Hive Agent connects to these when a session starts. Tools a server marks read-only run without asking; the others follow the tab's approval level.</div>` : "";
+  body.innerHTML = hiveNote + r.scopes.map((sc) => `<section class="sk-sec mcp-card">
+      <div class="sk-sec-head"><span class="sk-sec-title" title="${esc(sc.label)}">${esc(sc.label)}</span><span class="sk-count">${sc.servers.length}</span>
+        ${sc.writable ? `<button class="sk-sec-add" data-mcp-add="${esc(sc.id)}" title="Add a server here">+</button>` : ""}</div>
+      <div class="sk-sec-body">
+        ${sc.note ? `<div class="mcp-note">${esc(sc.note)}</div>` : ""}
+        ${sc.servers.map((s) => mcpServerHtml(sc, s)).join("") || (mcp.adding === sc.id ? "" : `<div class="sk-empty">No servers</div>`)}
+        ${mcp.adding === sc.id ? mcpFormHtml(sc) : ""}
+        <div class="mcp-file"><a data-reveal="${esc(sc.file)}" title="Show in Finder">${esc(tildify(sc.file))}</a></div>
+      </div>
+    </section>`).join("");
+  const form = body.querySelector(".mcp-form");
+  if (form) form.querySelector("[name=name]").focus();
+}
+
+/** Running tabs of this agent load the change (see the comment above). */
+function applyMcp(agentId, cwd, scope) {
+  for (const S of sessions.values()) {
+    if (S.agent.id !== agentId || S.mode === "oneshot") continue;
+    if (!(scope === "user" || scope === "hive" || S.cwd === cwd)) continue;
+    S.mcpStale = true;
+    reloadForMcp(S);
+  }
+}
+async function reloadForMcp(S) {
+  if (!S.mcpStale || !isRunning(S) || isBusy(S)) return;
+  S.mcpStale = false;
+  await restart(S, null, { resume: true, quiet: true });
+  sys(S, "MCP servers changed · conversation continues");
+}
+
+async function mcpChange(fn, done) {
+  const S = focusedS();
+  if (!S || mcp.busy) return;
+  mcp.busy = true;
+  const [agent, cwd] = [S.agent.id, S.cwd];
+  try {
+    const scope = await fn({ agent, cwd });
+    mcpMsg(done);
+    applyMcp(agent, cwd, scope);
+  } catch (e) {
+    mcpMsg(String(e), true);
+  } finally {
+    mcp.busy = false;
+  }
+  await loadMcp();
+}
+
+$("mcp-body").addEventListener("click", (e) => {
+  const add = e.target.closest("[data-mcp-add]");
+  if (add) { mcp.adding = add.dataset.mcpAdd; renderMcp(); return; }
+  if (e.target.closest("[data-mcp-cancel]")) { mcp.adding = null; renderMcp(); return; }
+  const rm = e.target.closest("[data-mcp-remove]");
+  if (rm) {
+    const row = rm.closest(".mcp-srv");
+    const sc = mcp.report?.scopes.find((x) => x.id === row.dataset.scope);
+    if (!confirm(`Remove the MCP server “${row.dataset.name}” from ${sc?.label ?? row.dataset.scope}?\n${tildify(sc?.file ?? "")}`)) return;
+    mcpChange(async (c) => { await invoke("mcp_remove", { ...c, scope: row.dataset.scope, name: row.dataset.name }); return row.dataset.scope; },
+      `Removed ${row.dataset.name}`);
+    return;
+  }
+  const reveal = e.target.closest("[data-reveal]");
+  if (reveal) invoke("reveal_path", { path: reveal.dataset.reveal }).catch((err) => mcpMsg(String(err), true));
+});
+$("mcp-body").addEventListener("change", (e) => {
+  if (e.target.name === "transport") { e.target.closest("form").dataset.t = e.target.value === "stdio" ? "stdio" : "remote"; return; }
+  const t = e.target.closest("[data-mcp-toggle]");
+  if (t) {
+    const row = t.closest(".mcp-srv");
+    mcpChange(async (c) => { await invoke("mcp_set_enabled", { ...c, scope: row.dataset.scope, name: row.dataset.name, enabled: t.checked }); return row.dataset.scope; },
+      `${row.dataset.name} ${t.checked ? "on" : "off"}`);
+  }
+});
+$("mcp-body").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const v = (n) => f.elements[n].value;
+  const server = { name: v("name"), transport: v("transport"), command_line: v("command_line"), url: v("url"), env: v("env"), headers: v("headers") };
+  if (server.transport !== "stdio") server.env = "";
+  else server.headers = "";
+  mcpChange(async (c) => { await invoke("mcp_add", { ...c, scope: f.dataset.scope, server }); mcp.adding = null; return f.dataset.scope; },
+    `Added ${server.name.trim()}`);
+});
+$("mcp-toggle").onclick = () => setMcpOpen(!mcp.open);
+$("mcp-close").onclick = () => setMcpOpen(false);
+$("mcp-refresh").onclick = () => loadMcp();
+// At load only the visibility: the first renderSidebar() fills it in.
+$("mcp-panel").classList.toggle("hidden", !mcp.open);
+$("mcp-toggle").classList.toggle("on", mcp.open);
+
 // ---------- rendering: terminal output ----------
 // Bottom-anchored: new lines appear right above the prompt and push older ones up.
 function renderOutput() {
@@ -2405,7 +2588,7 @@ function onAgentOutput(l) {
         S.busy = false;
         if (isHive(S.agent)) { expireHiveCards(S); S.partial = null; inPane(S, () => renderPartial(S)); }
         refresh(S);
-        setTimeout(() => reloadNativeSkills(S), 0);
+        setTimeout(() => { reloadNativeSkills(S); reloadForMcp(S); }, 0);
       }
     } catch {}
   }
@@ -2884,6 +3067,7 @@ $("settings-btn").onclick = () => invoke("open_preferences", {});
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") closeMenu();
   if (!e.metaKey) return;
+  if (e.ctrlKey && (e.key === "m" || e.key === "M")) { e.preventDefault(); setMcpOpen(!mcp.open); return; }
   const S = curS();
   if (e.altKey && e.key.startsWith("Arrow")) { e.preventDefault(); focusNeighbour(e.key); return; }
   if (e.key === ",") { e.preventDefault(); invoke("open_preferences", {}); }

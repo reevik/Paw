@@ -138,7 +138,11 @@ pub fn classify(level: &str, tool: &str, args: &Value, rules: &[String]) -> Gate
             Ask { label: format!("$ {command}"), rule: format!("shell({command})"), detail: command.to_string(), broad: false }
         }
         _ => Ask {
-            label: tool.to_string(),
+            // mcp__server__tool reads "server › tool".
+            label: match tool.strip_prefix("mcp__").and_then(|t| t.split_once("__")) {
+                Some((server, name)) => format!("{server} › {name}"),
+                None => tool.to_string(),
+            },
             rule: tool.to_string(),
             detail: serde_json::to_string_pretty(args).unwrap_or_default(),
             broad: true,
@@ -309,6 +313,8 @@ pub struct SessionConfig {
     pub tools: bool,
     /// PATH for shell commands (the login shell's).
     pub path_env: Option<String>,
+    /// Tools of the MCP servers Hive Agent connected to.
+    pub mcp: crate::mcp::McpSetup,
 }
 
 pub struct Session {
@@ -445,6 +451,11 @@ impl Session {
                 .tool(List { workspace: ws.clone(), base, confine: false })
                 .tool(Shell { workspace: ws, launcher, live: None, spill: None, cut: Some(OutputLimit::default()), confine: false })
                 .add_hook(GateHook { sess: self.clone() });
+            let mcp: Vec<rig_core::tool::DynamicTool> =
+                self.cfg.mcp.tools.iter().cloned().filter_map(|t| rig_core::tool::DynamicTool::try_from(t).ok()).collect();
+            if !mcp.is_empty() {
+                b = b.dynamic_tools(mcp);
+            }
         }
         b.build()
     }
@@ -464,6 +475,10 @@ impl AgentHook for GateHook {
     async fn on_dispatch(&self, _ctx: &HookContext, ev: DispatchEvent<'_>) -> DispatchAction {
         let Some(tool) = ev.tool_name().map(str::to_string) else { return DispatchAction::proceed() };
         let args: Value = ev.tool_args().and_then(|a| serde_json::from_str(a).ok()).unwrap_or(Value::Null);
+        // MCP tools their server marks read-only run like `read`.
+        if self.sess.cfg.mcp.read_only.contains(&tool) {
+            return DispatchAction::proceed();
+        }
         let gate = {
             let level = self.sess.level.lock().unwrap().clone();
             let rules = self.sess.rules.lock().unwrap();
@@ -723,9 +738,16 @@ impl HiveAgents {
                 "model": format!("{} · {}", sess.cfg.model, provider_label(&sess.cfg.provider)),
                 "cwd": sess.cfg.cwd.display().to_string(),
                 "tools": tools,
+                "mcp_servers": sess.cfg.mcp.connected,
                 "messages": sess.history_len(),
             })),
         )];
+        if !sess.cfg.mcp.connected.is_empty() {
+            lines.push(("system", format!("MCP: {}", sess.cfg.mcp.connected.join(" · "))));
+        }
+        for f in &sess.cfg.mcp.failed {
+            lines.push(("stderr", format!("MCP server {f}")));
+        }
         if !sess.cfg.tools {
             lines.push(("stderr", format!("{} can't call tools, so Hive Agent can only talk here (no reading or editing files). Pick a model with tool support (/model).", sess.cfg.model)));
         }
@@ -1047,6 +1069,14 @@ pub async fn hive_agent_start(
         }
     }
     let model_handle = make_model(&provider, &model, &base_url, cred)?;
+    // Hive Agent's MCP servers (Settings-free: the MCP panel keeps the list).
+    let path_env = crate::registry::login_path().to_string();
+    let mcp = if tools {
+        let servers = crate::mcp::hive_servers(crate::paths::config_dir(&app).as_deref());
+        crate::mcp::connect_all(&servers, &cwd, Some(&path_env)).await
+    } else {
+        crate::mcp::McpSetup::default()
+    };
 
     let conversation = opts.session.filter(|s| valid_conversation_id(s)).unwrap_or_else(new_conversation_id);
     let history_path = crate::paths::config_dir(&app).map(|d| d.join("hive-agent").join(format!("{conversation}.json")));
@@ -1061,7 +1091,8 @@ pub async fn hive_agent_start(
         conversation,
         history_path,
         tools,
-        path_env: Some(crate::registry::login_path().to_string()),
+        path_env: Some(path_env),
+        mcp,
     };
     let id = procs.alloc_id();
     let sink: Arc<dyn Sink> = Arc::new(TauriSink { app, seq: Mutex::default() });

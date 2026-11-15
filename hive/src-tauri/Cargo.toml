@@ -11,7 +11,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["macos-private-api"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
 libc = "0.2"
 portable-pty = "0.9"
 tauri-plugin-dialog = "2"
@@ -23,6 +23,10 @@ rig-reqwest = "0.46.0"
 tokio = { version = "1", features = ["sync", "macros", "rt", "time"] }
 futures = "0.3"
 security-framework = "3"
+rmcp = { version = "3.10", features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest"] }
+toml_edit = "0.22"
+http = "1"
+rig-rmcp = "0.46.0"
 
 [dev-dependencies]
 rig-core = { version = "0.46.0", features = ["reqwest", "test-utils"] }

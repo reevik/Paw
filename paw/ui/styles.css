@@ -980,3 +980,14 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
 .share-offer .follow-up:hover { background: color-mix(in srgb, var(--t-accent) 24%, transparent); }
 .share-offer .follow-up.done { color: var(--t-green); background: color-mix(in srgb, var(--t-green) 14%, transparent); }
 .share-offer .follow-up:disabled { color: var(--t-dim); background: transparent; }
+
+/* ---------- Plugins ---------- */
+.sl-plugins { display: inline-flex; gap: 10px; min-width: 0; overflow: hidden; }
+.sl-plugins:empty { display: none; }
+.sl-plugin { white-space: nowrap; color: var(--t-fg); opacity: .85; }
+.plugin-out { position: relative; }
+.plugin-tag {
+  display: inline-block; margin-bottom: 3px; padding: 0 6px; border-radius: 4px; font: 600 10px/16px var(--font);
+  color: var(--t-accent); background: color-mix(in srgb, var(--t-accent) 12%, transparent);
+}
+.tl.info .plugin-out .md { white-space: normal; }

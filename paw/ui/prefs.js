@@ -721,3 +721,146 @@ document.querySelector("#pane-about .about-links").addEventListener("click", (e)
   const b = e.target.closest("[data-about]");
   if (b) invoke("open_about", { view: b.dataset.about }).catch(() => {});
 });
+
+// ---------- plugins ----------
+// The catalog (index.json) from Paw's repository, or another URL or folder
+// (General's plugin_source); installed plugins live in ~/.paw/plugins.
+const PERMISSION_TEXT = {
+  commands: "add slash commands and print in your tabs",
+  statusbar: "show text in the status bar",
+  events: "see your prompts, agent turns (time, tokens) and shell commands",
+  prompt: "put text in your prompt or send it to an agent",
+  shell: "run commands in your tab's shell",
+  network: "connect to the internet",
+};
+const plState = { catalog: null, installed: [], error: "", loading: false, busy: new Set(), appVersion: "" };
+const older = (a, b) => {
+  const p = (v) => String(v ?? "").replace(/^v/, "").split(".").map((x) => parseInt(x, 10) || 0);
+  const [x, y] = [p(a), p(b)];
+  for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) < (y[i] ?? 0);
+  return false;
+};
+const plSource = () => (settings.general.plugin_source ?? "").trim() || null;
+
+async function loadPluginLists() {
+  plState.loading = true;
+  plState.error = "";
+  renderPlugins();
+  try { plState.installed = await invoke("plugins_installed", { withCode: false }); } catch (e) { plState.installed = []; }
+  try {
+    plState.catalog = await invoke("plugins_catalog", { source: plSource() });
+  } catch (e) {
+    plState.catalog = null;
+    plState.error = String(e) + (plSource() ? "" : " — if Paw's repository is private, set the catalog to a folder (its plugins folder in a checkout).");
+  }
+  plState.loading = false;
+  renderPlugins();
+}
+
+function permsHtml(perms) {
+  return (perms ?? []).map((p) => `<span class="pl-perm" title="${esc(PERMISSION_TEXT[p] ?? p)}">${esc(p)}</span>`).join("");
+}
+
+function pluginCard(m, { installed, enabled, update, needs }) {
+  const busy = plState.busy.has(m.id);
+  const meta = [m.version && `v${m.version}`, m.author && `by ${m.author}`, m.license].filter(Boolean).map(esc).join(" · ");
+  const link = m.homepage ? ` · <a href="#" data-url="${esc(m.homepage)}">website</a>` : "";
+  const actions = installed
+    ? `${update ? `<button type="button" class="btn-primary small" data-pl-update="${esc(m.id)}" ${busy ? "disabled" : ""}>Update to v${esc(update)}</button>` : ""}
+       <button type="button" class="btn-ghost small" data-pl-folder="${esc(m.id)}">Show Files</button>
+       <button type="button" class="btn-ghost small danger" data-pl-remove="${esc(m.id)}" ${busy ? "disabled" : ""}>Remove</button>`
+    : needs
+      ? `<span class="hint">Needs Paw ${esc(needs)}</span>`
+      : `<button type="button" class="btn-primary small" data-pl-install="${esc(m.id)}" ${busy ? "disabled" : ""}>${busy ? "Installing…" : "Install"}</button>`;
+  return `<div class="pl-card${installed && !enabled ? " off" : ""}">
+    <div class="pl-top">
+      <div class="pl-title"><b>${esc(m.name)}</b> <span class="hint">${meta}${link}</span></div>
+      ${installed ? `<label class="switch" title="${enabled ? "On" : "Off"}"><input type="checkbox" data-pl-toggle="${esc(m.id)}" ${enabled ? "checked" : ""} /><span></span></label>` : ""}
+    </div>
+    ${m.description ? `<div class="pl-desc">${esc(m.description)}</div>` : ""}
+    <div class="pl-bottom"><div class="pl-perms">${permsHtml(m.permissions)}</div><div class="pl-actions">${actions}</div></div>
+  </div>`;
+}
+
+function renderPlugins() {
+  if (!$("pl-installed")) return;
+  if (document.activeElement !== $("pl-source")) $("pl-source").value = settings?.general?.plugin_source ?? "";
+  const cat = new Map((plState.catalog?.plugins ?? []).map((m) => [m.id, m]));
+  const inst = plState.installed;
+  $("pl-installed").innerHTML = inst.length
+    ? inst.map((p) => {
+      const newer = cat.get(p.manifest.id);
+      return pluginCard(p.manifest, { installed: true, enabled: p.enabled, update: newer && older(p.manifest.version, newer.version) ? newer.version : null });
+    }).join("")
+    : `<div class="pl-empty">No plugins installed yet.</div>`;
+  const ids = new Set(inst.map((p) => p.manifest.id));
+  const avail = [...cat.values()].filter((m) => !ids.has(m.id));
+  $("pl-available").innerHTML = plState.loading
+    ? `<div class="pl-empty">Loading the catalog…</div>`
+    : plState.error
+      ? `<div class="pl-empty err">${esc(plState.error)}</div>`
+      : avail.length
+        ? avail.map((m) => pluginCard(m, { installed: false, needs: m.min_paw && plState.appVersion && older(plState.appVersion, m.min_paw) ? m.min_paw : null })).join("")
+        : `<div class="pl-empty">${cat.size ? "Every plugin in the catalog is installed." : "The catalog has no plugins."}</div>`;
+}
+
+async function installPlugin(id, verb = "Install") {
+  const m = plState.catalog?.plugins.find((x) => x.id === id);
+  if (!m) return;
+  const can = (m.permissions ?? []).map((p) => `• ${PERMISSION_TEXT[p] ?? p}`).join("\n") || "• nothing beyond running in its sandbox";
+  if (!confirm(`${verb} “${m.name}” ${m.version}${m.author ? ` by ${m.author}` : ""}?\n\nIt will be able to:\n${can}\n\nPlugins run in a sandbox and can only do what's listed.`)) return;
+  plState.busy.add(id);
+  renderPlugins();
+  try {
+    await invoke("plugin_install", { source: plSource(), id });
+    $("pl-msg").textContent = `${m.name} ${m.version} is installed and on. Its commands are in /help and /plugins.`;
+  } catch (e) {
+    alert(`Couldn't install ${m.name}: ${e}`);
+  }
+  plState.busy.delete(id);
+  try { plState.installed = await invoke("plugins_installed", { withCode: false }); } catch {}
+  renderPlugins();
+}
+
+document.addEventListener("click", async (e) => {
+  const t = e.target;
+  const inst = t.closest?.("[data-pl-install]");
+  if (inst) return installPlugin(inst.dataset.plInstall);
+  const upd = t.closest?.("[data-pl-update]");
+  if (upd) return installPlugin(upd.dataset.plUpdate, "Update");
+  const rm = t.closest?.("[data-pl-remove]");
+  if (rm) {
+    const p = plState.installed.find((x) => x.manifest.id === rm.dataset.plRemove);
+    if (!p || !confirm(`Remove “${p.manifest.name}”? What it stored is removed too.`)) return;
+    try { await invoke("plugin_remove", { id: p.manifest.id }); } catch (err) { alert(String(err)); }
+    try { plState.installed = await invoke("plugins_installed", { withCode: false }); } catch {}
+    return renderPlugins();
+  }
+  const folder = t.closest?.("[data-pl-folder]");
+  if (folder) {
+    try { await invoke("open_folder", { path: await invoke("plugins_folder", { id: folder.dataset.plFolder }) }); } catch (err) { alert(String(err)); }
+    return;
+  }
+  const link = t.closest?.(".pl-card a[data-url]");
+  if (link) { e.preventDefault(); invoke("open_url", { url: link.dataset.url }).catch(() => {}); }
+});
+document.addEventListener("change", async (e) => {
+  const tg = e.target.closest?.("[data-pl-toggle]");
+  if (!tg) return;
+  try { await invoke("plugin_set_enabled", { id: tg.dataset.plToggle, enabled: tg.checked }); } catch (err) { alert(String(err)); }
+  try { plState.installed = await invoke("plugins_installed", { withCode: false }); } catch {}
+  renderPlugins();
+});
+$("pl-folder").onclick = async () => {
+  try { await invoke("open_folder", { path: await invoke("plugins_folder", {}) }); } catch (err) { alert(String(err)); }
+};
+let plSourceTimer = null;
+$("pl-source").addEventListener("input", (e) => {
+  settings.general.plugin_source = e.target.value.trim();
+  save();
+  clearTimeout(plSourceTimer);
+  plSourceTimer = setTimeout(loadPluginLists, 800);
+});
+$("pl-reload").onclick = () => loadPluginLists();
+document.querySelector('#ptabs button[data-tab="plugins"]').addEventListener("click", () => { if (!plState.catalog && !plState.loading) loadPluginLists(); });
+invoke("about_info").then((i) => { plState.appVersion = i.version; }).catch(() => {});

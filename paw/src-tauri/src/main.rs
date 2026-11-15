@@ -11,6 +11,7 @@ mod shell;
 mod skills;
 mod sessions;
 mod stats;
+mod plugins;
 
 use agents::AgentManager;
 use history::History;
@@ -339,6 +340,14 @@ fn main() {
             session_log,
             open_folder,
             session_launch,
+            plugins::plugins_catalog,
+            plugins::plugins_installed,
+            plugins::plugin_install,
+            plugins::plugin_set_enabled,
+            plugins::plugin_remove,
+            plugins::plugin_storage_get,
+            plugins::plugin_storage_set,
+            plugins::plugins_folder,
             stats::stats_record,
             stats::stats_summary,
             sessions::list_sessions,

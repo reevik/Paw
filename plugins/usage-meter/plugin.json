@@ -1,0 +1,12 @@
+{
+  "id": "usage-meter",
+  "name": "Usage Meter",
+  "version": "1.0.0",
+  "description": "Today's prompts and tokens in the status bar, updated as each agent turn ends.",
+  "author": "Erhan Bağdemir",
+  "license": "MIT",
+  "homepage": "https://github.com/reevik/Paw/tree/main/plugins/usage-meter",
+  "permissions": ["commands", "statusbar", "events"],
+  "main": "main.js",
+  "files": ["main.js"]
+}

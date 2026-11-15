@@ -99,6 +99,8 @@ pub struct General {
     /// Agents working at the same time, across tabs and task steps; more
     /// prompts wait their turn. 0: no limit.
     pub max_agents: usize,
+    /// Where Settings › Plugins finds plugins: a URL or a folder; empty: the official catalog.
+    pub plugin_source: String,
 }
 
 impl Default for General {
@@ -113,6 +115,7 @@ impl Default for General {
             share_shell: true,
             max_sessions: 50,
             max_agents: 3,
+            plugin_source: String::new(),
         }
     }
 }

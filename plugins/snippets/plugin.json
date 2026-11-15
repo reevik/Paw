@@ -1,0 +1,12 @@
+{
+  "id": "snippets",
+  "name": "Snippets",
+  "version": "1.0.0",
+  "description": "Save prompts you use often and put them back in the prompt with /snip <name>.",
+  "author": "Erhan Bağdemir",
+  "license": "MIT",
+  "homepage": "https://github.com/reevik/Paw/tree/main/plugins/snippets",
+  "permissions": ["commands", "prompt"],
+  "main": "main.js",
+  "files": ["main.js"]
+}

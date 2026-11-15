@@ -513,8 +513,10 @@ function helpHtml(S) {
     row("+ · ⌘V", "attach files · paste an image · long pasted text becomes a badge (click it to edit)"),
   ];
   if (settings.general.share_shell !== false) {
-    if (isPaw(S.agent)) out.push(row("$ badge", `long shell output that goes along with your next message (× leaves it out); short output goes to ${name} right away`));
-    else out.push(row("$ badge", `shell output that goes along with your next message (× leaves it out)`));
+    out.push(row("shell output", isPaw(S.agent)
+      ? `short output goes to ${name} right away; long output only if you click “Share with ${name}” under it`
+      : `short output goes to ${name} with your next message; long output only if you click “Share with ${name}” under it`));
+    out.push(row("$ badge", "shared long output waiting for your next message (× leaves it out)"));
   }
   out.push("", head("Agent"),
     row("/model [name]", "show or switch the model (conversation continues)"),
@@ -1506,9 +1508,11 @@ document.addEventListener("click", (e) => {
 });
 
 // ---------- shared shell context ----------
-// Commands run in a tab (and their output) are collected until the next
-// message to the agent, then sent ahead of it — so "why did that fail?" works.
-// A badge in the prompt shows what will be shared; × leaves it out.
+// Commands run in a tab (and their output) reach the agent, so "why did that
+// fail?" works. Small output is shared on its own: straight into a Paw Agent
+// conversation, or along with the next message to other agents (a note under
+// the output says which). Large output isn't: a link under it shares it, and
+// then a $ badge in the prompt shows it will go along (× leaves it out).
 const SHELL_CTX_LINES = 150;     // per command, newest lines kept
 const SHELL_CTX_BUDGET = 12000;  // characters for the whole block
 
@@ -1516,14 +1520,12 @@ const shareShell = () => settings.general.share_shell !== false;
 
 function trackShellContext(S, line) {
   if (line.stream === "cmd") {
-    S.shellContext ??= [];
-    S.shellContext.push({ cmd: line.text, cwd: S.cwd, out: [], code: 0 });
-    if (S.sid === activeId) renderAttachments();
+    S.shellPending = { cmd: line.text, cwd: S.cwd, out: [], code: 0 };
   } else if (line.stream === "shell") {
-    const e = S.shellContext?.at(-1);
-    if (e) { e.out.push(PawThemes.stripAnsi(line.text)); if (e.out.length > 400) e.out.splice(0, e.out.length - 300); }
+    const e = S.shellPending;
+    if (e) { e.out.push(PawThemes.stripAnsi(line.text)); if (e.out.length > 400) { e.cut = (e.cut ?? 0) + e.out.length - 300; e.out.splice(0, e.out.length - 300); } }
   } else if (line.stream === "shellexit") {
-    const e = S.shellContext?.at(-1);
+    const e = S.shellPending;
     if (e) e.code = line.code;
   }
 }
@@ -1544,34 +1546,52 @@ function shellBlock(e, showCwd, budget = SHELL_CTX_BUDGET) {
   return block;
 }
 
-// Short output goes straight into a Paw Agent session when the command
-// ends: the agent has it with its next turn, and it stays in the
-// conversation. Longer output waits in the $ badge, where it can be left out.
+// Small enough to share on its own: up to this many lines and characters.
 const SHELL_DIRECT_CHARS = 4000;
 const SHELL_DIRECT_LINES = 80;
+let nextOffer = 1;
 
+/** A command finished: share small output, offer a link for large output. */
 async function shareShortOutput(S) {
-  if (!isPaw(S.agent) || !shareShell() || !isRunning(S) || S.proc == null) return;
-  // A new folder means a new conversation with the next prompt: the badge carries it there.
-  if (S.agentCwd && S.agentCwd !== S.cwd) return;
-  const e = S.shellContext?.at(-1);
-  if (!e || needsTty(e.cmd) || e.out.length > SHELL_DIRECT_LINES) return;
-  const block = shellBlock(e, true, Infinity);
-  if (block.length > SHELL_DIRECT_CHARS) return;
-  S.shellContext.pop();
-  inPane(S, renderAttachments);
-  try {
-    await invoke("paw_agent_note", { id: S.proc, text: `I ran this in my terminal:\n<terminal>\n${block}\n</terminal>` });
-    pushLine(S, { stream: "shared", ts: Date.now() });
-  } catch {
-    (S.shellContext ??= []).push(e); // the session ended: back to the badge
-    inPane(S, renderAttachments);
+  const e = S.shellPending;
+  S.shellPending = null;
+  if (!e || !shareShell() || needsTty(e.cmd)) return;
+  const lines = e.out.length + (e.cut ?? 0);
+  const small = lines <= SHELL_DIRECT_LINES && shellBlock(e, true, Infinity).length <= SHELL_DIRECT_CHARS;
+  if (!small) {
+    // Large: shared only if asked (the link under the output).
+    const id = nextOffer++;
+    (S.shellOffers ??= new Map()).set(id, e);
+    pushLine(S, { stream: "shareoffer", offer: id, text: `${lines} lines`, ts: Date.now() });
+    return;
   }
+  // A Paw Agent conversation in this folder takes it right away.
+  if (isPaw(S.agent) && isRunning(S) && S.proc != null && !(S.agentCwd && S.agentCwd !== S.cwd)) {
+    try {
+      await invoke("paw_agent_note", { id: S.proc, text: `I ran this in my terminal:\n<terminal>\n${shellBlock(e, true, Infinity)}\n</terminal>` });
+      pushLine(S, { stream: "shared", ts: Date.now() });
+      return;
+    } catch { /* the session ended: it goes with the next message */ }
+  }
+  (S.shellAuto ??= []).push(e);
+  pushLine(S, { stream: "shared", next: true, ts: Date.now() });
+}
+
+/** The link under a large output: share it with the next message (the $ badge). */
+function shareOffer(S, id) {
+  const e = S.shellOffers?.get(id);
+  if (!e) return false;
+  S.shellOffers.delete(id);
+  (S.shellContext ??= []).push(e);
+  inPane(S, renderAttachments);
+  return true;
 }
 
 /** The shell context block for the next message (and forget it). */
 function takeShellContext(S) {
-  const entries = S.shellContext ?? [];
+  // Small output shared on its own, then what was added with the link, in the order run.
+  const entries = [...(S.shellAuto ?? []), ...(S.shellContext ?? [])];
+  S.shellAuto = [];
   S.shellContext = [];
   if (!entries.length || !shareShell()) return { text: "", count: 0 };
   let budget = SHELL_CTX_BUDGET;
@@ -1619,6 +1639,8 @@ function persistableLine(l) {
   if (l.html != null) out.html = l.html;
   if (l.code != null) out.code = l.code;
   if (l.local) out.local = true;
+  if (l.next) out.next = true;
+  if (l.offer) { out.offer = l.offer; out.taken = !!l.taken; }
   if (l.attachments) out.attachments = l.attachments.map((a) => (isPasted(a) ? { kind: "text", name: a.name, path: a.file ?? a.path, size: a.size, lines: a.lines, text: String(a.text).slice(0, 600) } : { name: a.name, path: a.path, size: a.size }));
   if (l.shared) out.shared = l.shared;
   if (l.skills) out.skills = l.skills;
@@ -3107,7 +3129,22 @@ function renderLine(S, l) {
   if (l.stream === "cmd") return div("tl input shcmd", `<span class="sh">$</span> ${esc(l.text)}`);
   if (l.stream === "shell") return div("tl out", ansi(l.text) || "&nbsp;");
   if (l.stream === "shellexit") return div("tl shexit", l.code === 130 ? "^C" : `exit ${l.code}`);
-  if (l.stream === "shared") return div("tl sys shared-note", `↳ output shared with ${esc(S.agent.name)}`);
+  if (l.stream === "shared") return div("tl sys shared-note", l.next ? `↳ output goes to ${esc(S.agent.name)} with your next message` : `↳ output shared with ${esc(S.agent.name)}`);
+  if (l.stream === "shareoffer") {
+    const live = S.shellOffers?.has(l.offer) && !l.taken;
+    const el = div("tl sys shared-note share-offer");
+    if (l.taken) el.innerHTML = `↳ output (${esc(l.text)}) goes to ${esc(S.agent.name)} with your next message`;
+    else if (!live) el.innerHTML = `↳ output (${esc(l.text)}) not shared`;
+    else {
+      el.innerHTML = `↳ large output (${esc(l.text)}) · <a href="#" class="share-link">Share with ${esc(S.agent.name)}</a>`;
+      el.querySelector(".share-link").onclick = (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (shareOffer(S, l.offer)) { l.taken = true; inPane(S, renderOutput); saveWorkspaceSoon(); $("input").focus(); }
+      };
+    }
+    return el;
+  }
   if (l.stream === "stdin") {
     let text = l.text;
     if (text.startsWith("{")) {

@@ -1935,17 +1935,14 @@ function skillItem(s, scope) {
     </div>`;
 }
 
-// Section headers carry a folder: closed while the section is collapsed, open when expanded.
-const FOLDER_ICON = `<svg class="sk-folder" viewBox="0 0 16 16" aria-hidden="true">
-  <path class="shut" d="M1.75 4.25c0-.83.67-1.5 1.5-1.5h2.9l1.5 1.6h5.1c.83 0 1.5.67 1.5 1.5v5.9c0 .83-.67 1.5-1.5 1.5h-9.5c-.83 0-1.5-.67-1.5-1.5Z"/>
-  <path class="open" d="M1.75 11.9V4.25c0-.83.67-1.5 1.5-1.5h2.9l1.5 1.6h4.6c.83 0 1.5.67 1.5 1.5v1"/>
-  <path class="open" d="M1.9 12.6 3.6 7.9c.14-.4.52-.65.94-.65h9.4c.48 0 .8.48.62.92l-1.7 4.2c-.15.38-.52.63-.93.63H2.4c-.33 0-.6-.27-.5-.5Z"/>
-</svg>`;
+// Each section is a card: its header (title, count, tools, a disclosure
+// chevron) folds the card's body away.
+const CARD_CHEVRON = `<svg class="sk-chev" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5"/></svg>`;
 
 function skillSection(id, title, list, empty, extra = "", titleTip = "", tools = "") {
   const closed = skills.closed.has(id);
   return `<section class="sk-sec${closed ? " closed" : ""}" data-sec="${id}">
-      <div class="sk-sec-head" title="${esc(titleTip)}"><span class="sk-chev">›</span>${FOLDER_ICON}<span class="sk-sec-title">${esc(title)}</span><span class="sk-count">${list.length}</span>${tools}</div>
+      <div class="sk-sec-head" title="${esc(titleTip)}"><span class="sk-sec-title">${esc(title)}</span><span class="sk-count">${list.length}</span>${tools}${CARD_CHEVRON}</div>
       <div class="sk-sec-body">${extra}${list.length ? list.join("") : `<div class="sk-empty">${esc(empty)}</div>`}</div>
     </section>`;
 }

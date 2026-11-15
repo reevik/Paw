@@ -627,6 +627,17 @@ impl TurnState {
                 self.model_calls += 1;
                 self.input_tokens += call.usage.input_tokens.unwrap_or(0);
                 self.output_tokens += call.usage.output_tokens.unwrap_or(0);
+                // The running total, for the live count in the tab's working line.
+                sess.sink.line(
+                    sess.id,
+                    "stdout",
+                    event(json!({
+                        "type": "progress",
+                        "subtype": "usage",
+                        "model_calls": self.model_calls,
+                        "usage": { "input_tokens": self.input_tokens, "output_tokens": self.output_tokens },
+                    })),
+                );
             }
             MultiTurnStreamItem::ModelTurnRetried { .. } => {
                 self.text.clear();

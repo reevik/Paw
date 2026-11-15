@@ -245,6 +245,11 @@ async fn text_turn_and_continuity() {
     assert_eq!(r["subtype"], "success");
     assert_eq!(r["session_id"], conv);
     assert_eq!(r["result"], "Hello from the mock.", "the final answer, as Claude Code's result has it");
+    // A running token count after each model call (the tab's working line shows it).
+    let progress = lines_of(&evs, "progress");
+    assert_eq!(progress.len(), 1, "{evs:?}");
+    assert_eq!((progress[0]["subtype"].as_str(), progress[0]["model_calls"].as_u64()), (Some("usage"), Some(1)));
+    assert!(progress[0]["usage"]["input_tokens"].is_u64() && progress[0]["usage"]["output_tokens"].is_u64());
 
     // Saved: a new session on the same conversation sends the earlier turn.
     let sess = h.paw.get(h.id).unwrap();

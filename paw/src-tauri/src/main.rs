@@ -10,6 +10,7 @@ mod registry;
 mod shell;
 mod skills;
 mod sessions;
+mod stats;
 
 use agents::AgentManager;
 use history::History;
@@ -338,6 +339,8 @@ fn main() {
             session_log,
             open_folder,
             session_launch,
+            stats::stats_record,
+            stats::stats_summary,
             sessions::list_sessions,
             sessions::prune_sessions,
             sessions::save_session,

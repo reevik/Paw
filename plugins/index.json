@@ -47,8 +47,8 @@
     {
       "id": "task-graph-3d",
       "name": "Task Graph 3D",
-      "version": "1.0.0",
-      "description": "A task's plan as a 3D graph on its board: steps in layers, colored by state; drag to turn it, click a step for its details.",
+      "version": "2.0.0",
+      "description": "A task's plan as a glowing 3D graph on its board: the task, its steps and agents as dots, colored by state; hover to light up a neighborhood, click a step for its details.",
       "author": "Erhan Bağdemir",
       "license": "MIT",
       "homepage": "https://github.com/reevik/Paw/tree/main/plugins/task-graph-3d",

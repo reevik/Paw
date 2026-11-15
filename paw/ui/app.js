@@ -2096,6 +2096,58 @@ function contextMenu(x, y, items) {
   menu.style.top = `${Math.max(8, Math.min(window.innerHeight - h - 8, y))}px`;
 }
 
+// ---------- selected text ----------
+// Right-click on text selected in a transcript (or a task's board): Copy, or
+// Create a task from it, the way /task does: the tab's agent plans it, in the
+// tab's folder, in a new task tab. Long selections go along as a pasted-text
+// badge, so the task's prompt stays readable.
+
+/** The selection's text, if it's inside a transcript or task board, and that tab. */
+function selectionInTranscript() {
+  const sel = window.getSelection();
+  const text = String(sel ?? "");
+  if (!text.trim() || !sel.rangeCount) return null;
+  let node = sel.getRangeAt(0).commonAncestorContainer;
+  if (node.nodeType !== 1) node = node.parentElement;
+  if (!node?.closest?.(".output, .task-view")) return null;
+  const P = [...panes.values()].find((p) => p.root.contains(node));
+  const S = sessions.get(P?.sid) ?? curS();
+  return S ? { text, S } : null;
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.cssText = "position:fixed;left:-9999px;top:0";
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    ta.remove();
+  }
+}
+
+function taskFromText(S, text) {
+  const goal = text.trim();
+  if (shouldBadge(goal)) return newTask({ agentId: S.agent.id, cwd: S.cwd, goal: "", atts: [pastedAttachment(goal)] });
+  return newTask({ agentId: S.agent.id, cwd: S.cwd, goal });
+}
+
+document.addEventListener("contextmenu", (e) => {
+  if (e.target.closest?.(".tab, .tab-group, textarea, input")) return;
+  const hit = selectionInTranscript();
+  if (!hit) return;
+  e.preventDefault();
+  const { text, S } = hit;
+  const lines = text.trim().split("\n").length;
+  contextMenu(e.clientX, e.clientY, [
+    { label: "Copy", sub: "⌘C", run: () => copyText(text) },
+    { label: "Create a task", sub: lines > 1 ? `${lines} lines` : "", run: () => taskFromText(S, text) },
+  ]);
+});
+
 function tabMenu(S, x, y) {
   const items = [{ label: "Add to new group", run: () => { const g = createGroup([S]); renameGroup(g); } }];
   for (const g of groups.values()) {

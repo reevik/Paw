@@ -15,7 +15,7 @@ const { listen } = window.__TAURI__.event;
 // pane being rendered (activePane). Everything else is a normal page id.
 const PANE_IDS = new Set(["session", "terminal", "output", "xterm-wrap", "xterm-title", "xterm-int", "xterm-back",
   "xterm-hosts", "busy", "busy-spin", "busy-text", "busy-time", "ac", "prompt-line", "att-tray", "input",
-  "attach-btn", "mode-pill", "sl-left", "sl-sessions", "eof", "prompt-glyph", "task-view"]);
+  "attach-btn", "mode-pill", "sl-left", "sl-path", "sl-path-text", "sl-sessions", "eof", "prompt-glyph", "task-view"]);
 let activePane = null;
 const $ = (id) => (PANE_IDS.has(id) ? activePane?.root.querySelector(`[data-id="${id}"]`) : document.getElementById(id));
 /** The session shown in the pane being rendered (the focused one, normally). */
@@ -2408,8 +2408,9 @@ function renderHeader() {
   }[S.mode];
   $("input").placeholder = S.shellBusy ? "Input for the running command…  (Ctrl-C interrupts)" : S.task ? taskPlaceholder(S) : ph;
   updateGlyph();
-  $("sl-left").textContent = [S.agent.name, S.model || "default model", shortPath(S.cwd)].join("  ·  ");
-  $("sl-left").title = tildify(S.cwd);
+  $("sl-left").textContent = [S.agent.name, S.model || "default model"].join("  ·  ") + "  ·";
+  $("sl-path-text").textContent = shortPath(S.cwd);
+  $("sl-path").title = `${tildify(S.cwd)} — click to open in Finder`;
   renderModePill();
   renderBusy();
 }
@@ -3603,6 +3604,10 @@ function bindPane(P) {
   bindTaskView(P);
   renderArchive(P.root);
   withPane(P, () => {
+    $("sl-path").onclick = () => {
+      const S = sessions.get(P.sid);
+      if (S) invoke("open_folder", { path: S.cwd }).catch((e) => sys(S, `✗ ${e}`));
+    };
     $("sl-sessions").onclick = async () => {
       const S = sessions.get(P.sid);
       if (!S) return;

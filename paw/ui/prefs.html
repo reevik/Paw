@@ -22,6 +22,10 @@
         <svg viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4M9 12h.01M15 12h.01M9 16h6"/></svg>
         Agents
       </button>
+      <button data-tab="plugins">
+        <svg viewBox="0 0 24 24"><path d="M9 3v3M15 3v3M7 6h10a1 1 0 0 1 1 1v4a6 6 0 0 1-12 0V7a1 1 0 0 1 1-1ZM12 17v4"/></svg>
+        Plugins
+      </button>
       <button data-tab="about">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/></svg>
         About
@@ -412,6 +416,30 @@
   </section>
 
   <!-- About -->
+  <!-- Plugins -->
+  <section class="pane" id="pane-plugins">
+    <div class="ap-wrap">
+      <div class="ap-section">
+        <div class="ap-head"><h3>Catalog</h3></div>
+        <div class="ap-box">
+          <div class="pl-source">
+            <input id="pl-source" spellcheck="false" autocomplete="off" placeholder="Official: plugins/ in Paw's repository on GitHub" />
+            <button type="button" class="btn-ghost small" id="pl-reload">Reload</button>
+          </div>
+          <p class="hint" id="pl-msg">Plugins extend the terminal with commands, status bar items and more. Each runs in a sandbox and can only do what it asks for when you install it. The catalog can also be another URL, or a folder on this Mac (a checkout's plugins folder, while writing a plugin).</p>
+        </div>
+      </div>
+      <div class="ap-section">
+        <div class="ap-head"><h3>Installed</h3><button type="button" class="btn-ghost small" id="pl-folder">Show Folder</button></div>
+        <div class="pl-list" id="pl-installed"></div>
+      </div>
+      <div class="ap-section">
+        <div class="ap-head"><h3>Available</h3></div>
+        <div class="pl-list" id="pl-available"></div>
+      </div>
+    </div>
+  </section>
+
   <section class="pane" id="pane-about">
     <div class="about">
       <div class="logo"></div>

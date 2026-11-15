@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "plugins": [
+    {
+      "id": "pomodoro",
+      "name": "Pomodoro",
+      "version": "1.0.0",
+      "description": "A focus timer in the status bar: /pomodoro 25 starts it, /pomodoro stop ends it.",
+      "author": "Erhan Bağdemir",
+      "license": "MIT",
+      "homepage": "https://github.com/reevik/Paw/tree/main/plugins/pomodoro",
+      "permissions": ["commands", "statusbar"],
+      "path": "pomodoro"
+    },
+    {
+      "id": "usage-meter",
+      "name": "Usage Meter",
+      "version": "1.0.0",
+      "description": "Today's prompts and tokens in the status bar, updated as each agent turn ends.",
+      "author": "Erhan Bağdemir",
+      "license": "MIT",
+      "homepage": "https://github.com/reevik/Paw/tree/main/plugins/usage-meter",
+      "permissions": ["commands", "statusbar", "events"],
+      "path": "usage-meter"
+    },
+    {
+      "id": "snippets",
+      "name": "Snippets",
+      "version": "1.0.0",
+      "description": "Save prompts you use often and put them back in the prompt with /snip <name>.",
+      "author": "Erhan Bağdemir",
+      "license": "MIT",
+      "homepage": "https://github.com/reevik/Paw/tree/main/plugins/snippets",
+      "permissions": ["commands", "prompt"],
+      "path": "snippets"
+    }
+  ]
+}

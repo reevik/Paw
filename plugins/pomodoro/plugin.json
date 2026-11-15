@@ -1,0 +1,12 @@
+{
+  "id": "pomodoro",
+  "name": "Pomodoro",
+  "version": "1.0.0",
+  "description": "A focus timer in the status bar: /pomodoro 25 starts it, /pomodoro stop ends it.",
+  "author": "Erhan Bağdemir",
+  "license": "MIT",
+  "homepage": "https://github.com/reevik/Paw/tree/main/plugins/pomodoro",
+  "permissions": ["commands", "statusbar"],
+  "main": "main.js",
+  "files": ["main.js"]
+}

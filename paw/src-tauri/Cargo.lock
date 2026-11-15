@@ -2757,6 +2757,7 @@ dependencies = [
  "http",
  "libc",
  "portable-pty",
+ "reqwest",
  "rig-agent",
  "rig-core",
  "rig-reqwest",

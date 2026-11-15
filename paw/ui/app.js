@@ -15,7 +15,7 @@ const { listen } = window.__TAURI__.event;
 // pane being rendered (activePane). Everything else is a normal page id.
 const PANE_IDS = new Set(["session", "terminal", "output", "xterm-wrap", "xterm-title", "xterm-int", "xterm-back",
   "xterm-hosts", "busy", "busy-spin", "busy-text", "busy-time", "ac", "prompt-line", "att-tray", "input",
-  "attach-btn", "mode-pill", "sl-left", "sl-path", "sl-path-text", "sl-sessions", "eof", "prompt-glyph", "task-view"]);
+  "attach-btn", "mode-pill", "sl-left", "sl-path", "sl-path-text", "sl-plugins", "sl-sessions", "eof", "prompt-glyph", "task-view"]);
 let activePane = null;
 const $ = (id) => (PANE_IDS.has(id) ? activePane?.root.querySelector(`[data-id="${id}"]`) : document.getElementById(id));
 /** The session shown in the pane being rendered (the focused one, normally). */
@@ -465,6 +465,7 @@ async function sendToAgent(S, text, atts = [], opts = {}) {
     return;
   }
   S.working = true;
+  pluginEvent("prompt", { tab: pluginTab(S), text });
   // Pasted text badges go along as text after what was typed; files as files.
   const pasted = atts.filter(isPasted);
   atts = atts.filter((a) => !isPasted(a));
@@ -596,6 +597,8 @@ function helpHtml(S) {
     row("/stats [day|week|month]", "tokens, queries, tasks and time per model: today, this week, this month"),
     row("/clear", "clear the screen (⌘K)"),
     row("/session", "open this tab's folder: its conversation, files, scripts and command log"),
+    row("/plugins", "the plugins installed and their commands (Settings › Plugins adds more)"),
+    ...(pluginHost.commands.size ? ["", head("Plugins"), ...pluginHelpRows(row)] : []),
     "", head("Shell"),
     row("/cd <dir>", "change folder; the agent follows with a new conversation"),
     row("history [n | -c]", "show the last n shell commands, or clear the history"),
@@ -728,8 +731,13 @@ async function slashCommand(S, line) {
       await newTask({ agentId: S.agent.id, cwd: S.cwd, goal: arg, atts: pasted });
       return true;
     }
+    case "/plugins":
+      echo();
+      info(S, await pluginsListHtml());
+      return true;
     default:
-      return false; // not ours — send it to the agent unchanged
+      // A plugin's command, else not ours: it goes to the agent unchanged.
+      return runPluginCommand(S, cmd.slice(1).toLowerCase(), arg, echo);
   }
 }
 
@@ -986,6 +994,8 @@ listen("shell:done", ({ payload: d }) => {
   if (S.shellCmd) logCommand(S, "you", `exit ${d.code}`, S.shellCmd);
   if (d.cwd) S.cwd = d.cwd;
   inPane(S, renderAttachments);
+  pluginShellDone(S, d.code);
+  if (S.shellCmd) pluginEvent("command", { tab: pluginTab(S), command: S.shellCmd, code: d.code });
   shareShortOutput(S);
   refreshShellCommands(); // pick up anything just installed (brew install …)
   forgetLookups();
@@ -3379,6 +3389,7 @@ function recordQuery(S, ended, ev = null) {
     ts: Date.now(), kind: "query", agent: S.agent.name, model: modelOf(S), ok: !!ended.ok,
     ms: ev?.duration_ms ?? Date.now() - S.turnStarted, input: u.input, output: u.output, cost: ev?.total_cost_usd ?? 0,
   } }).catch(() => {});
+  pluginEvent("turn", { tab: pluginTab(S), ok: !!ended.ok, ms: ev?.duration_ms ?? Date.now() - S.turnStarted, input: u.input, output: u.output, model: modelOf(S), agent: S.agent.name });
   S.turnStarted = null;
 }
 
@@ -3857,6 +3868,7 @@ $("split-h").onclick = () => splitPane("column");
 function bindPane(P) {
   bindTaskView(P);
   renderArchive(P.root);
+  setTimeout(renderPluginStatus, 0);
   withPane(P, () => {
     $("sl-path").onclick = () => {
       const S = sessions.get(P.sid);
@@ -4216,6 +4228,8 @@ function waitForDetections(timeoutMs) {
   const restored = await restoreWorkspace();
   wsReady = true;
   refreshArchive();
+  loadPlugins();
+  listen("plugins:changed", () => loadPlugins());
   if (restored) { saveWorkspaceSoon(); return; }
 
   // Like a terminal: open a tab with the default agent on launch.

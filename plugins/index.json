@@ -15,7 +15,7 @@
     {
       "id": "usage-meter",
       "name": "Usage Meter",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Today's prompts and tokens in the status bar, updated as each agent turn ends.",
       "author": "Erhan Bağdemir",
       "license": "MIT",

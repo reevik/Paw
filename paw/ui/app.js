@@ -3026,6 +3026,7 @@ function setSidebar(visible, animate = true) {
   app.classList.toggle("no-anim", !animate);
   app.classList.toggle("sidebar-hidden", !visible);
   $("sidebar-toggle").title = visible ? "Hide sidebar (⌃⌘S)" : "Show sidebar (⌃⌘S)";
+  $("sidebar-toggle").classList.toggle("on", visible);
   try { localStorage.setItem("paw.sidebar", visible ? "1" : "0"); } catch {}
 }
 const sidebarVisible = () => !document.querySelector(".app").classList.contains("sidebar-hidden");

@@ -416,6 +416,10 @@ async function sendToAgent(S, text, atts = [], opts = {}) {
   const ctx = takeShellContext(S);
   const full = [skillNote.text, ctx.text, opts.wrap ? opts.wrap(body) : body].filter(Boolean).join("\n\n");
   S.lastAnswer = "";
+  // This prompt's tokens and time (working line, done line, /stats).
+  S.turnUsage = null;
+  S.msgUsage = new Map();
+  S.turnStarted = Date.now();
   renderAttachments();
   if (S.mode === "oneshot") {
     if (isRunning(S)) {
@@ -526,6 +530,7 @@ function helpHtml(S) {
     row("/task [what]", `plan a task with ${name} and run its steps on several agents (pasted text counts too)`),
     row("/tasks", "list the open tasks and how far each one is (click one to open it)"),
     row("/sessions", "list stored sessions, open and closed; click one to reopen it in a new tab"),
+    row("/stats [day|week|month]", "tokens, queries, tasks and time per model: today, this week, this month"),
     row("/clear", "clear the screen (⌘K)"),
     row("/session", "open this tab's folder: its conversation, files, scripts and command log"),
     "", head("Shell"),
@@ -643,6 +648,10 @@ async function slashCommand(S, line) {
     case "/tasks":
       echo();
       info(S, tasksListHtml());
+      return true;
+    case "/stats":
+      echo();
+      info(S, await statsHtml(arg).catch((e) => `<span class="err">✗ ${esc(e)}</span>`));
       return true;
     case "/sessions":
       echo();
@@ -3178,9 +3187,11 @@ function renderClaudeEvent(ev) {
     return frag.childNodes.length ? frag : null;
   }
   if (ev.type === "result") {
+    const u = usageOf(ev.usage);
     const bits = [
       ev.num_turns != null ? `${ev.num_turns} turn${ev.num_turns === 1 ? "" : "s"}` : "",
       ev.duration_ms != null ? `${(ev.duration_ms / 1000).toFixed(1)}s` : "",
+      u && (u.input || u.output) ? `↑ ${fmtTokens(u.input)} ↓ ${fmtTokens(u.output)}` : "",
       ev.total_cost_usd != null ? `$${ev.total_cost_usd.toFixed(4)}` : "",
     ].filter(Boolean).join(" · ");
     const head = ev.stopped ? "■ Stopped" : ev.is_error ? "✗ Failed" : "✓ Done";
@@ -3195,6 +3206,100 @@ function renderClaudeEvent(ev) {
 // ---------- busy indicator ----------
 const SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
 let spinFrame = 0;
+// ---------- tokens and usage stats ----------
+// Live tokens come from Claude Code (each reply's usage) and Paw Agent (a
+// running total after each model call); other agents only have the time.
+// Every finished prompt and task goes into ~/.paw/stats.jsonl (/stats).
+
+/** Input (with cached input) and output tokens from a usage object. */
+function usageOf(u) {
+  if (!u) return null;
+  const input = (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0);
+  return { input, output: u.output_tokens ?? 0 };
+}
+const fmtTokens = (n) => (n < 1000 ? String(n) : n < 999_500 ? `${(n / 1000).toFixed(n < 9_950 ? 1 : 0)}k` : `${(n / 1e6).toFixed(n < 9_950_000 ? 1 : 0)}M`);
+
+/** Follow a turn's tokens as its events arrive. */
+function trackUsage(S, text) {
+  if (!S.turnStarted) return;
+  if (text.startsWith('{"type":"progress"') && text.includes('"usage"')) {
+    try { S.turnUsage = usageOf(JSON.parse(text).usage); } catch {}
+    return;
+  }
+  if (text.startsWith('{"type":"assistant"') && text.includes('"usage"')) {
+    try {
+      const m = JSON.parse(text).message;
+      const u = usageOf(m?.usage);
+      if (!u) return;
+      // One reply comes as several events with the same id and usage: count it once.
+      (S.msgUsage ??= new Map()).set(m.id ?? S.msgUsage.size, u);
+      let input = 0, output = 0;
+      for (const v of S.msgUsage.values()) { input += v.input; output += v.output; }
+      S.turnUsage = { input, output };
+    } catch {}
+  }
+}
+
+/** The model a tab runs, as its agent reported it (init), else as set. */
+const modelOf = (S) => String(S.actualModel || S.model || "default").replace(/ · (Ollama|Anthropic)$/, "");
+
+function recordQuery(S, ended, ev = null) {
+  if (!S.turnStarted) return;
+  const u = usageOf(ev?.usage) ?? S.turnUsage ?? { input: 0, output: 0 };
+  invoke("stats_record", { entry: {
+    ts: Date.now(), kind: "query", agent: S.agent.name, model: modelOf(S), ok: !!ended.ok,
+    ms: ev?.duration_ms ?? Date.now() - S.turnStarted, input: u.input, output: u.output, cost: ev?.total_cost_usd ?? 0,
+  } }).catch(() => {});
+  S.turnStarted = null;
+}
+
+function recordTask(T) {
+  invoke("stats_record", { entry: {
+    ts: Date.now(), kind: "task", agent: T.agent.name, model: modelOf(T), ok: true,
+    ms: (T.task.endedAt ?? Date.now()) - (T.task.startedAt ?? Date.now()), input: 0, output: 0, cost: 0,
+  } }).catch(() => {});
+}
+
+/** /stats [day|week|month]: today, this week, this month; per model for one of them. */
+async function statsHtml(arg) {
+  const d = new Date();
+  const day = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const week = day - ((d.getDay() + 6) % 7) * 86_400_000; // Monday
+  const month = new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+  const period = ["day", "today", "week", "month"].includes(arg) ? (arg === "today" ? "day" : arg) : "month";
+  const since = { day, week, month }[period];
+  const s = await invoke("stats_summary", { day, week, month, modelsSince: since });
+  const cols = [s.day, s.week, s.month];
+  if (!s.month.queries && !s.month.tasks && !s.week.queries) {
+    return `<span class="dim">No usage recorded yet. Every prompt and task that finishes from now on is counted.</span>`;
+  }
+  const row = (label, f, cls = "") => `${esc(label.padEnd(18))}${cols.map((c) => `<span class="${cls}">${esc(String(f(c)).padStart(11))}</span>`).join("")}`;
+  const anyCost = cols.some((c) => c.cost > 0);
+  const lines = [
+    `<span class="help-h">Usage</span>${" ".repeat(13)}${["Today", "This week", "This month"].map((h) => `<span class="dim">${h.padStart(11)}</span>`).join("")}`,
+    row("Queries", (c) => c.queries),
+    row("  failed", (c) => c.failed || "–", "dim"),
+    row("Tasks completed", (c) => c.tasks),
+    row("Tokens ↑ in", (c) => (c.input ? fmtTokens(c.input) : "–")),
+    row("Tokens ↓ out", (c) => (c.output ? fmtTokens(c.output) : "–")),
+    row("Avg. query time", (c) => (c.queries ? fmtElapsed(c.ms / c.queries) : "–")),
+  ];
+  if (anyCost) lines.push(row("Cost", (c) => (c.cost ? `$${c.cost.toFixed(2)}` : "–")));
+  const name = { day: "today", week: "this week", month: "this month" }[period];
+  lines.push("", `<span class="help-h">By model</span> <span class="dim">· ${name} (/stats day · week · month)</span>`);
+  if (!s.models.length) lines.push(`<span class="dim">No queries ${name}.</span>`);
+  else {
+    lines.push(`<span class="dim">${"Model".padEnd(36)}${"Queries".padStart(8)}${"Avg. time".padStart(11)}${"↑ in".padStart(9)}${"↓ out".padStart(9)}${anyCost ? "Cost".padStart(9) : ""}</span>`);
+    for (const m of s.models) {
+      const label = `${m.model} · ${m.agent}`;
+      lines.push(`${esc((label.length > 35 ? label.slice(0, 34) + "…" : label).padEnd(36))}${String(m.queries).padStart(8)}${fmtElapsed(m.avg_ms).padStart(11)}` +
+        `${(m.input ? fmtTokens(m.input) : "–").padStart(9)}${(m.output ? fmtTokens(m.output) : "–").padStart(9)}${anyCost ? (m.cost ? `$${m.cost.toFixed(2)}` : "–").padStart(9) : ""}`);
+    }
+  }
+  lines.push(`<span class="dim">Tokens are counted for Claude Code and Paw Agent; other agents report time only.</span>`);
+  return lines.join("\n");
+}
+
 function renderBusy() {
   const S = curS();
   const busy = !!S && isBusy(S) && !S.raw;
@@ -3203,7 +3308,9 @@ function renderBusy() {
   $("busy-spin").textContent = SPIN[spinFrame % SPIN.length];
   $("busy-text").textContent = S.shellBusy ? `Running ${S.shellCmd}…` : S.waitingApproval ? "Waiting for your approval…"
     : S.mode === "claude" ? "Working…" : "Running…";
-  $("busy-time").textContent = fmtElapsed(Date.now() - ((S.shellBusy ? S.shellSince : S.busySince) ?? Date.now()));
+  const u = !S.shellBusy && S.turnUsage;
+  $("busy-time").textContent = fmtElapsed(Date.now() - ((S.shellBusy ? S.shellSince : S.busySince) ?? Date.now())) +
+    (u && (u.input || u.output) ? ` · ↑ ${fmtTokens(u.input)} ↓ ${fmtTokens(u.output)}` : "");
 }
 setInterval(() => { spinFrame++; for (const P of panes.values()) withPane(P, renderBusy); }, 90);
 
@@ -3300,7 +3407,13 @@ function onAgentOutput(l) {
   if (S.mode === "oneshot" && l.stream === "system" && l.text === "Process exited with code 0") return;
   captureSession(S, l);
   if (S.agent.id === "copilot" && S.mode === "oneshot" && l.stream === "stderr" && foldCopilotStats(S, l)) return;
-  if (S.mode === "claude" && l.stream === "stdout") logAgentCommands(S, l.text);
+  if (S.mode === "claude" && l.stream === "stdout") {
+    logAgentCommands(S, l.text);
+    trackUsage(S, l.text);
+    if (l.text.startsWith('{"type":"system"') && l.text.includes('"init"')) {
+      try { const ev = JSON.parse(l.text); if (ev.subtype === "init" && ev.model) S.actualModel = ev.model; } catch {}
+    }
+  }
   if (S.mode === "claude" && l.stream === "stdout" && l.text.startsWith('{"type":"assistant"')) noteAnswer(S, l.text);
   let ended = null; // a finished turn, for tasks
   if (S.mode === "claude" && l.stream === "stdout" && l.text.includes('"type":"result"')) {
@@ -3310,6 +3423,7 @@ function onAgentOutput(l) {
         const text = typeof ev.result === "string" && ev.result ? ev.result : S.lastAnswer ?? "";
         ended = { ok: !ev.is_error, stopped: !!ev.stopped, text,
           error: ev.is_error ? text || `${S.agent.name} reported an error (${ev.subtype ?? "unknown"}). Its tab has the details.` : null };
+        recordQuery(S, ended, ev);
         S.busy = false;
         if (isPaw(S.agent)) { expirePawCards(S); S.partial = null; inPane(S, () => renderPartial(S)); }
         refresh(S);
@@ -3364,6 +3478,7 @@ listen("agent:status", ({ payload: pinfo }) => {
     return;
   }
   refresh(S);
+  if (ended) recordQuery(S, ended);
   if (ended) taskTurnEnded(S, ended);
 });
 

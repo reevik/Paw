@@ -341,6 +341,7 @@ function taskPump(T) {
       t.state = "done";
       t.endedAt = Date.now();
       t.selected = null;
+      recordTask(T);
     } else if (!t.steps.some(activeStep) && !t.steps.some((s) => s.state === "waiting" && ready(s))) {
       t.state = t.steps.some((s) => s.state === "failed") ? "failed" : "stopped";
       t.note = t.state === "failed" ? "A step failed. Retry it, skip it, or change it and run again." : "";

@@ -2135,8 +2135,27 @@ function taskFromText(S, text) {
   return newTask({ agentId: S.agent.id, cwd: S.cwd, goal });
 }
 
+// A right-click (or ⌃-click) inside the selection keeps it: WebKit would
+// otherwise move the caret there, or select the word under the pointer.
+let heldSelection = null;
+const inRange = (range, x, y) => [...range.getClientRects()].some((r) => x >= r.left - 2 && x <= r.right + 2 && y >= r.top - 2 && y <= r.bottom + 2);
+document.addEventListener("mousedown", (e) => {
+  if (e.button !== 2 && !(e.button === 0 && e.ctrlKey)) { heldSelection = null; return; }
+  const sel = window.getSelection();
+  const range = sel.rangeCount && String(sel).trim() ? sel.getRangeAt(0).cloneRange() : null;
+  heldSelection = range && inRange(range, e.clientX, e.clientY) ? range : null;
+  if (heldSelection && selectionInTranscript()) e.preventDefault();
+}, true);
+
 document.addEventListener("contextmenu", (e) => {
   if (e.target.closest?.(".tab, .tab-group, textarea, input")) return;
+  // Lost on the way here anyway: put it back.
+  if (heldSelection && (!String(window.getSelection()).trim() || !inRange(window.getSelection().getRangeAt(0), e.clientX, e.clientY))) {
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(heldSelection);
+  }
+  heldSelection = null;
   const hit = selectionInTranscript();
   if (!hit) return;
   e.preventDefault();
@@ -3417,6 +3436,7 @@ function bindPane(P) {
       }
     });
     $("terminal").addEventListener("mouseup", (e) => {
+      if (e.button !== 0 || e.ctrlKey) return; // a right-click keeps the selection and focus
       if (e.target.closest("summary, button, a, textarea")) return;
       if (!String(window.getSelection())) $("input").focus();
     });
@@ -3472,6 +3492,8 @@ function openMenu() {
 function closeMenu() { $("menu").classList.add("hidden"); }
 $("tab-menu").onclick = (e) => { e.stopPropagation(); $("menu").classList.contains("hidden") ? openMenu() : closeMenu(); };
 document.addEventListener("mousedown", (e) => { if (!e.target.closest("#menu, #tab-menu")) closeMenu(); });
+// Clicking a menu item doesn't take the selection away (Copy, Create a task).
+$("menu").addEventListener("mousedown", (e) => e.preventDefault());
 
 function renderWelcome() {
   const box = $("welcome-agents");

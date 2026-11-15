@@ -54,7 +54,7 @@ function replayEvents(events) {
 // pane being rendered (activePane). Everything else is a normal page id.
 const PANE_IDS = new Set(["session", "terminal", "output", "xterm-wrap", "xterm-title", "xterm-int", "xterm-back",
   "xterm-hosts", "busy", "busy-spin", "busy-text", "busy-time", "ac", "prompt-line", "att-tray", "input",
-  "attach-btn", "mode-pill", "sl-left", "sl-path", "sl-path-text", "sl-plugins", "sl-sessions", "eof", "prompt-glyph", "task-view"]);
+  "attach-btn", "mode-pill", "task-split", "sl-left", "sl-path", "sl-path-text", "sl-plugins", "sl-sessions", "eof", "prompt-glyph", "task-view"]);
 let activePane = null;
 const $ = (id) => (PANE_IDS.has(id) ? activePane?.root.querySelector(`[data-id="${id}"]`) : document.getElementById(id));
 /** The session shown in the pane being rendered (the focused one, normally). */
@@ -1980,6 +1980,15 @@ document.addEventListener("click", (e) => {
   reopenSession(a.dataset.openSession);
 });
 
+/** Restarts add a note each; the last one is enough (it says the same). */
+function dropRestoreNotes(S) {
+  while (S.lines.length) {
+    const l = S.lines[S.lines.length - 1];
+    if (l.stream === "system" && /^— (restored after restart|re-attached|reopened)/.test(String(l.text ?? ""))) S.lines.pop();
+    else break;
+  }
+}
+
 /** Open a tab from its saved state (a restart, or a closed session reopened). */
 async function restoreTab(t, note = null) {
   // The Ollama agent is gone; Paw Agent runs Ollama models now.
@@ -2036,6 +2045,7 @@ async function restoreTab(t, note = null) {
     S.shellSince = live.shellSince;
   }
   if (procAlive || S.shell != null) {
+    dropRestoreNotes(S);
     S.lines.push({ stream: "system", ts: Date.now(),
       text: procAlive?.info.status === "running" ? `— re-attached · ${S.agent.name} kept running while Paw's window was closed —` : "— re-attached —" });
     // What happened meanwhile, once every tab is back (restoreWorkspace).
@@ -2048,6 +2058,7 @@ async function restoreTab(t, note = null) {
   const resumable = S.agent.continuity === "session" && S.session;
   const replay = S.agent.continuity === "replay" && S.turns.length;
   const how = note ?? "restored after restart";
+  dropRestoreNotes(S);
   S.lines.push({ stream: "system", ts: Date.now(),
     text: resumable ? `— ${how} · attached to ${S.agent.name} session ${String(S.session).slice(0, 8)} (conversation continues) —`
       : replay ? `— ${how} · ${S.agent.name} gets the ${S.turns.length} earlier turn${S.turns.length > 1 ? "s" : ""} with your next prompt (conversation continues) —`

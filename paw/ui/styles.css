@@ -241,6 +241,10 @@ button:disabled { opacity: .4; pointer-events: none; }
   padding: 14px 22px 6px;
 }
 .terminal .output::before { content: ""; flex: 1 0 0; }
+/* The transcript can be selected and copied (⌘C); its controls can't. */
+.terminal .output { user-select: text; -webkit-user-select: text; }
+.terminal .output summary, .terminal .output button, .terminal .output .ap-actions,
+.terminal .output .g { user-select: none; -webkit-user-select: none; }
 .terminal .output > * { flex-shrink: 0; }
 
 .tl { white-space: pre-wrap; word-break: break-word; padding-left: 2ch; text-indent: -2ch; }

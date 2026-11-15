@@ -312,8 +312,8 @@ async function submit(text) {
   }
   let route = routeFor(S, text);
   if (!route.shell && S.inputMode === "auto" && (await lookupFirstWord(S, text))) route = routeFor(S, text);
-  // Attachments only, no text: that's for the agent.
-  if (!text.trim()) route = { shell: false };
+  // Attachments only, no text, or pasted text: that's for the agent.
+  if (!text.trim() || S.attachments?.some(isPasted)) route = { shell: false };
   const atts = takeAttachments(S);
   if (route.shell) {
     // Like dropping files into a terminal: quoted paths become arguments.
@@ -326,9 +326,14 @@ async function submit(text) {
 
 /** opts.wrap(text): what the agent gets around the text you see (tasks add their context). */
 async function sendToAgent(S, text, atts = [], opts = {}) {
+  // Pasted text badges go along as text after what was typed; files as files.
+  const pasted = atts.filter(isPasted);
+  atts = atts.filter((a) => !isPasted(a));
+  const body = withPasted(text, pasted);
+  const echoed = [...atts, ...pasted];
   const skillNote = await syncExternalSkills(S);
   const ctx = takeShellContext(S);
-  const full = [skillNote.text, ctx.text, opts.wrap ? opts.wrap(text) : text].filter(Boolean).join("\n\n");
+  const full = [skillNote.text, ctx.text, opts.wrap ? opts.wrap(body) : body].filter(Boolean).join("\n\n");
   S.lastAnswer = "";
   renderAttachments();
   if (S.mode === "oneshot") {
@@ -342,9 +347,9 @@ async function sendToAgent(S, text, atts = [], opts = {}) {
       S.turns = [];
       sys(S, `folder changed to ${tildify(S.cwd)} · new conversation`);
     }
-    pushLine(S, { stream: "stdin", text, attachments: atts, shared: ctx.count, skills: skillNote.count, ts: Date.now() });
+    pushLine(S, { stream: "stdin", text, attachments: echoed, shared: ctx.count, skills: skillNote.count, ts: Date.now() });
     const prompt = S.agent.continuity === "replay" ? withReplay(S, full) : full;
-    if (S.agent.continuity === "replay") (S.turns ??= []).push({ user: text, assistant: "", open: true });
+    if (S.agent.continuity === "replay") (S.turns ??= []).push({ user: body, assistant: "", open: true });
     S.lastPrompt = withPaths(full, atts);
     await startProc(S, withPaths(prompt, atts));
     skillNote.sent();
@@ -363,7 +368,7 @@ async function sendToAgent(S, text, atts = [], opts = {}) {
   }
   // Echo the prompt (with its attachments) ourselves; the backend's copy of
   // the stdin line would carry the raw JSON / image data.
-  pushLine(S, { stream: "stdin", text, attachments: atts, shared: ctx.count, skills: skillNote.count, ts: Date.now() });
+  pushLine(S, { stream: "stdin", text, attachments: echoed, shared: ctx.count, skills: skillNote.count, ts: Date.now() });
   if (isPaw(S.agent)) {
     S.busy = true;
     S.busySince = Date.now();
@@ -420,7 +425,7 @@ function helpHtml(S) {
     row("⇧Tab", "switch input mode: Auto → Shell → Agent"),
     row("⌃R", "search earlier prompts and commands"),
     row("Tab · ↑↓", "complete commands and paths · previous prompts"),
-    row("+ · ⌘V", "attach files · paste an image"),
+    row("+ · ⌘V", "attach files · paste an image · long pasted text becomes a badge (click it to edit)"),
   ];
   if (settings.general.share_shell !== false) {
     if (isPaw(S.agent)) out.push(row("$ badge", `long shell output that goes along with your next message (× leaves it out); short output goes to ${name} right away`));
@@ -437,7 +442,7 @@ function helpHtml(S) {
     row("/restart", "restart the agent (conversation continues)"),
     row("/stop", "stop the agent or running command (⌘. · Ctrl-C)"),
     row("/new [agent]", "open a new tab with a new conversation"),
-    row("/task [what]", `plan a task with ${name} and run its steps on several agents`),
+    row("/task [what]", `plan a task with ${name} and run its steps on several agents (pasted text counts too)`),
     row("/clear", "clear the screen (⌘K)"),
     "", head("Shell"),
     row("/cd <dir>", "change folder; the agent follows with a new conversation"),
@@ -542,10 +547,14 @@ async function slashCommand(S, line) {
     case "/new":
       await newSession(arg || undefined);
       return true;
-    case "/task":
-      // Plan it with this tab's agent, in this tab's folder.
-      await newTask({ agentId: S.agent.id, cwd: S.cwd, goal: arg });
+    case "/task": {
+      // Plan it with this tab's agent, in this tab's folder. Pasted text
+      // badges are part of the goal ("/task" alone: the pasted text is it).
+      const pasted = (S.attachments ?? []).filter(isPasted);
+      if (pasted.length) { S.attachments = S.attachments.filter((a) => !isPasted(a)); renderAttachments(); }
+      await newTask({ agentId: S.agent.id, cwd: S.cwd, goal: arg, atts: pasted });
       return true;
+    }
     default:
       return false; // not ours — send it to the agent unchanged
   }
@@ -1261,6 +1270,22 @@ function addAttachments(S, list) {
   updateGlyph();
 }
 
+// Long pasted text becomes a badge ("Pasted text · 12 lines") so the prompt
+// stays readable; the text goes along with the message, after what you type.
+// Clicking the badge puts the text back into the prompt.
+const PASTE_BADGE_LINES = 4;
+const PASTE_BADGE_CHARS = 600;
+const isPasted = (a) => a?.kind === "text";
+let nextPaste = 1;
+function pastedAttachment(text) {
+  const n = nextPaste++;
+  return { kind: "text", text, name: `Pasted text #${n}`, path: `pasted:${Date.now()}:${n}`, size: new Blob([text]).size, lines: text.split("\n").length };
+}
+const shouldBadge = (text) => text.split("\n").length >= PASTE_BADGE_LINES || text.length > PASTE_BADGE_CHARS;
+/** The message: what was typed, then each pasted text. */
+const withPasted = (text, atts = []) => [text, ...atts.filter(isPasted).map((a) => a.text)].filter((t) => t?.trim()).join("\n\n");
+const pastedLabel = (a) => `Pasted text · ${a.lines} line${a.lines === 1 ? "" : "s"}`;
+
 /** Hand over the tab's attachments to whatever is sending them. */
 function takeAttachments(S) {
   const list = S.attachments ?? [];
@@ -1270,6 +1295,10 @@ function takeAttachments(S) {
 }
 
 function chipHtml(a, removable) {
+  if (isPasted(a)) {
+    return `<span class="att-icon">TXT</span><span class="att-name" title="${esc(String(a.text ?? "").slice(0, 600))}">${esc(pastedLabel(a))}</span>` +
+      (removable ? `<button class="att-x" title="Remove">×</button>` : "");
+  }
   const ext = (a.name.split(".").pop() || "file").slice(0, 4).toUpperCase();
   const icon = a.thumb ? `<img class="att-thumb" src="${a.thumb}" alt="">`
     : `<span class="att-icon">${isInlineImage(a) ? "IMG" : esc(ext)}</span>`;
@@ -1292,6 +1321,24 @@ function renderAttachments() {
     tray.appendChild(el);
   }
   list.forEach((a, i) => {
+    if (isPasted(a)) {
+      const el = div("att-badge paste-badge", `<span class="att-badge-icon">TXT</span><span class="att-badge-name">${esc(pastedLabel(a))}</span><button class="att-x" title="Remove">×</button>`);
+      el.title = a.text.length > 600 ? a.text.slice(0, 600) + "…" : a.text;
+      el.title += "\n\nClick to edit it in the prompt.";
+      el.querySelector(".att-x").onclick = (e) => { e.stopPropagation(); S.attachments.splice(i, 1); renderAttachments(); $("input").focus(); };
+      // Back into the prompt, at the cursor.
+      el.onclick = () => {
+        const ta = $("input");
+        S.attachments.splice(i, 1);
+        ta.setRangeText(a.text, ta.selectionStart, ta.selectionEnd, "end");
+        renderAttachments();
+        autosize();
+        updateGlyph();
+        ta.focus();
+      };
+      tray.appendChild(el);
+      return;
+    }
     // One-line badge: thumbnail or type icon, name, ×.
     const ext = (a.name.split(".").pop() || "file").slice(0, 4).toUpperCase();
     const icon = a.thumb ? `<img class="att-badge-img" src="${a.thumb}" alt="">`
@@ -1459,7 +1506,7 @@ function persistableLine(l) {
   }
   if (l.html != null) out.html = l.html;
   if (l.code != null) out.code = l.code;
-  if (l.attachments) out.attachments = l.attachments.map((a) => ({ name: a.name, path: a.path, size: a.size }));
+  if (l.attachments) out.attachments = l.attachments.map((a) => (isPasted(a) ? { kind: "text", name: a.name, path: a.path, size: a.size, lines: a.lines, text: String(a.text).slice(0, 600) } : { name: a.name, path: a.path, size: a.size }));
   if (l.shared) out.shared = l.shared;
   if (l.skills) out.skills = l.skills;
   if (l.stream === "approval") Object.assign(out, { id: l.id, kind: l.kind, items: l.items, state: l.state === "pending" && l.kind === "paw" ? "expired" : l.state,
@@ -2977,7 +3024,15 @@ function bindPane(P) {
     $("input").addEventListener("paste", (e) => {
       const S = curS();
       const items = [...(e.clipboardData?.items ?? [])].filter((it) => it.kind === "file" && it.type.startsWith("image/"));
-      if (!S || !items.length) return;
+      if (!S) return;
+      if (!items.length) {
+        const text = (e.clipboardData?.getData("text/plain") ?? "").replace(/\r\n?/g, "\n");
+        if (!S.shellBusy && !S.raw && text.trim() && shouldBadge(text)) {
+          e.preventDefault();
+          addAttachments(S, [pastedAttachment(text.replace(/^\n+|\s+$/g, ""))]);
+        }
+        return;
+      }
       e.preventDefault();
       for (const it of items) {
         const file = it.getAsFile();

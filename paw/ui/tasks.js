@@ -215,7 +215,7 @@ function stepPrompt(T, st, text) {
 }
 
 // ---------- starting a task ----------
-async function newTask({ agentId, cwd, goal } = {}) {
+async function newTask({ agentId, cwd, goal, atts = [] } = {}) {
   const usable = taskAgents();
   const agent = usable.find((a) => a.id === agentId) ?? usable.find((a) => a.id === defaultAgent()?.id) ?? usable[0];
   if (!agent) { invoke("open_preferences", { tab: "agents" }); return null; }
@@ -227,7 +227,7 @@ async function newTask({ agentId, cwd, goal } = {}) {
     title: "", goal: "", state: "new", steps: [], selected: null, note: "", createdAt: Date.now(),
   };
   const T = await newSession(agent.id, { cwd, approval, task });
-  if (T && goal?.trim()) await taskSubmit(T, goal.trim(), []);
+  if (T && (goal?.trim() || atts.length)) await taskSubmit(T, (goal ?? "").trim(), atts);
   return T;
 }
 
@@ -240,8 +240,10 @@ function taskBanner(S) {
 async function taskSubmit(S, text, atts) {
   const t = S.task;
   if (t.state === "new") {
-    t.goal = text;
-    t.title = text.length > 60 ? text.slice(0, 57) + "…" : text;
+    // Pasted text badges are part of the goal.
+    t.goal = withPasted(text, atts);
+    const first = t.goal.split("\n").find((l) => l.trim())?.trim() ?? "";
+    t.title = first.length > 60 ? first.slice(0, 57) + "…" : first;
     t.state = "planning";
     t.note = "";
     taskChanged(S);

@@ -1239,8 +1239,8 @@ function ensureTerm(S) {
   host.className = "xterm-host";
   $("xterm-park").appendChild(host);
   const term = new Terminal({
-    fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
-    fontSize: 12.5,
+    fontFamily: fontFamilyCss(),
+    fontSize: fontSize(),
     lineHeight: 1.2,
     cursorBlink: true,
     macOptionIsMeta: true,
@@ -2056,6 +2056,48 @@ function applyCurrentTheme() {
   }
 }
 window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyCurrentTheme);
+
+// ---------- font ----------
+// Settings › Appearance › Font: family, size and line spacing for the
+// transcript, prompt and terminal view. ⌘+ / ⌘− / ⌘0 change the size.
+const FONT_DEFAULT = 12.5;
+const FONT_MIN = 9, FONT_MAX = 28;
+const MONO_FALLBACK = 'ui-monospace, "SF Mono", Menlo, monospace';
+function fontFamilyCss() {
+  const f = String(settings.appearance?.font_family ?? "").trim().replace(/["\\]/g, "");
+  return f ? `"${f}", ${MONO_FALLBACK}` : MONO_FALLBACK;
+}
+const fontSize = () => Math.min(FONT_MAX, Math.max(FONT_MIN, Number(settings.appearance?.font_size) || FONT_DEFAULT));
+const lineHeight = () => Math.min(2.4, Math.max(1, Number(settings.appearance?.line_height) || 1.6));
+function applyFonts() {
+  const root = document.documentElement.style;
+  root.setProperty("--term-family", fontFamilyCss());
+  root.setProperty("--term-size", `${fontSize()}px`);
+  root.setProperty("--term-lh", String(lineHeight()));
+  for (const S of sessions.values()) {
+    if (!S.term) continue;
+    S.term.term.options.fontFamily = fontFamilyCss();
+    S.term.term.options.fontSize = fontSize();
+    if (S.raw) requestAnimationFrame(() => fitTerm(S));
+  }
+}
+
+let fontSaveTimer = null, toastTimer = null;
+/** ⌘+ / ⌘− / ⌘0: a bigger, smaller or the default size, saved like the setting. */
+function stepFontSize(dir) {
+  const now = fontSize();
+  const next = dir === 0 ? FONT_DEFAULT : Math.min(FONT_MAX, Math.max(FONT_MIN, Math.round((now + dir) * 2) / 2));
+  settings.appearance = { ...(settings.appearance ?? {}), font_size: next };
+  applyFonts();
+  for (const P of panes.values()) { const out = P.root.querySelector('[data-id="output"]'); if (out) out.scrollTop = out.scrollHeight; }
+  let toast = document.querySelector(".font-toast");
+  if (!toast) { toast = div("font-toast"); document.body.appendChild(toast); }
+  toast.textContent = `${next} px${next === FONT_DEFAULT ? " · default" : ""}`;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.remove(), 900);
+  clearTimeout(fontSaveTimer);
+  fontSaveTimer = setTimeout(() => invoke("save_settings", { settings }).catch(() => {}), 400);
+}
 
 // ---------- rendering: tabs, sidebar, header ----------
 function tabLabel(S) {
@@ -3328,6 +3370,7 @@ listen("settings:changed", ({ payload }) => {
   const limit = settings?.general?.max_sessions;
   settings = payload;
   applyCurrentTheme();
+  applyFonts();
   if (payload.general?.max_sessions !== limit) refreshArchive();
   if (activeId == null) renderWelcome();
 });
@@ -3833,6 +3876,12 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") closeMenu();
   if (!e.metaKey) return;
   if (e.ctrlKey && (e.key === "m" || e.key === "M")) { e.preventDefault(); setMcpOpen(!mcp.open); return; }
+  // ⌘+ (also ⌘= without shift) / ⌘− / ⌘0: the transcript's font size.
+  if (!e.ctrlKey && !e.altKey && ["=", "+", "-", "_", "0"].includes(e.key)) {
+    e.preventDefault();
+    stepFontSize(e.key === "0" ? 0 : e.key === "-" || e.key === "_" ? -1 : 1);
+    return;
+  }
   const S = curS();
   if (e.altKey && e.key.startsWith("Arrow")) { e.preventDefault(); focusNeighbour(e.key); return; }
   if (e.key === ",") { e.preventDefault(); invoke("open_preferences", {}); }
@@ -3875,6 +3924,7 @@ function waitForDetections(timeoutMs) {
   first.root.classList.add("focused");
   renderLayout();
   applyCurrentTheme();
+  applyFonts();
   detections = await invoke("get_detections", { rescan: false });
   detectionsReady = Object.keys(detections).length > 0;
   invoke("history_list").then((list) => { shellHistory = list; });

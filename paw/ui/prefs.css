@@ -284,3 +284,17 @@ body.prefs { display: flex; flex-direction: column; height: 100vh; }
 
 /* Nothing in a form row may widen the page (long rules, commands, paths). */
 .form-grid > * { min-width: 0; }
+
+/* Font */
+.ap-font-pick input { width: 210px; }
+.ap-font-preview {
+  margin: 8px 0 4px; padding: 12px 14px; border-radius: 9px; white-space: pre-wrap; overflow-x: auto;
+  background: var(--pv-bg, #15151a); color: var(--pv-fg, #e6e6ea);
+  font-family: var(--pv-family, ui-monospace, "SF Mono", Menlo, monospace); font-size: var(--pv-size, 12.5px); line-height: var(--pv-lh, 1.6);
+  user-select: text; -webkit-user-select: text;
+}
+.ap-font-preview code { font: inherit; background: rgba(255,255,255,.08); padding: 0 4px; border-radius: 4px; }
+.ap-font-preview .pv-g { color: #7dcfff; }
+.ap-font-preview .pv-b { color: #9ece6a; }
+.ap-font-actions { display: flex; justify-content: flex-end; padding-top: 6px; }
+#ap-font-hint.warn { color: var(--orange, #e8823a); }

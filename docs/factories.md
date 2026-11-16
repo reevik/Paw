@@ -83,13 +83,39 @@ Nodes run without a window, so pick approval levels that let them work on their 
 
 ## Triggers
 
-A factory's `trigger` (a schedule, a watched command, a webhook or a file change) is read and shown, but doesn't start runs yet; that comes next. For now, use **Run now**.
+A `trigger` starts runs on its own. Paw's background process watches it, so it works while the window is closed. Combine kinds as you like:
 
 ```yaml
 trigger:
-  watch: "./check-errors.sh"   # starts a run when this succeeds…
-  every: 2m                    # …checked this often
+  every: 15m                     # a run every 15 minutes (the first one 15m after Paw starts)
+  at: "09:00, 17:30"             # and at these times of day
+  webhook: s3cret                # and when something POSTs here (true: no secret)
+  file: ./inbox                  # and when this file or folder changes
 ```
+
+```yaml
+trigger:
+  watch: "./check-errors.sh"     # a run when this command starts succeeding…
+  every: 2m                      # …checked this often (with watch, every is the check interval)
+```
+
+| Kind | Starts a run |
+|---|---|
+| `every` | every so often |
+| `at` | at these times of day (local time) |
+| `watch` + `every` | when the command **starts** succeeding: it has to fail before it fires again, so a long error spike starts one run, not one per check. Its output goes to the nodes as the trigger's payload. |
+| `webhook` | when something posts to `http://127.0.0.1:4747/factories/<id>`. The request's body goes to the nodes as the trigger's payload, so an alert's JSON reaches them. With a secret, the caller sends it as an `X-Paw-Token` header or `?token=`. |
+| `file` | when the file, or anything in the folder, changes and then stays quiet for 2 seconds |
+
+For example, Alertmanager or Grafana can post their alerts straight to a factory:
+
+```bash
+curl -X POST -H "X-Paw-Token: s3cret" -d @alert.json http://127.0.0.1:4747/factories/error-spike
+```
+
+A trigger never starts a run while one of the same factory is still going. **Pause trigger** in the factory view stops it from starting runs (Run now still works), and **Resume trigger** turns it back on. The view shows the next scheduled run, the last check and what the trigger did last.
+
+The webhook listens only on this Mac (127.0.0.1). Port 4747 can be changed in `~/.paw/settings.json`: `"factories": { "webhook_port": 4800 }`.
 
 ## Runs
 

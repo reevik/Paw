@@ -37,7 +37,7 @@ pub const COMMANDS: &[&str] = &[
     "shell_open", "shell_run", "shell_write", "shell_interrupt", "shell_close", "shell_write_raw", "shell_resize", "shell_raw_exit",
     "paw_agent_start", "paw_agent_send", "paw_agent_note", "paw_agent_cancel", "paw_agent_close", "paw_agent_approve",
     "tray_update", "daemon_attach",
-    "factory_list", "factory_get", "factory_run", "factory_stop", "factory_retry", "factory_skip", "factory_new",
+    "factory_list", "factory_get", "factory_run", "factory_stop", "factory_retry", "factory_skip", "factory_new", "factory_pause",
 ];
 
 /// Events kept per process for windows that come back.
@@ -493,7 +493,15 @@ async fn dispatch(app: AppHandle, cmd: String, a: Value) -> Result<Value, String
         "paw_agent_close" => ok(paw_agent::paw_agent_close(app.state(), arg(&a, "id")?).await?),
         "paw_agent_approve" => ok(paw_agent::paw_agent_approve(app.state(), arg(&a, "id")?, arg(&a, "request")?, arg(&a, "decision")?, arg(&a, "rule")?).await?),
         // Factories (factories::runner): they run here, in the background.
-        "factory_list" => ok(factory_runner(&app).list()),
+        "factory_list" => {
+            let mut v = factory_runner(&app).list();
+            v["triggers"] = app.state::<Arc<crate::factories::triggers::Triggers>>().status();
+            Ok(v)
+        }
+        "factory_pause" => {
+            app.state::<Arc<crate::factories::triggers::Triggers>>().set_paused(&arg::<String>(&a, "factory")?, arg(&a, "paused")?);
+            Ok(Value::Null)
+        }
         "factory_get" => ok(factory_runner(&app).get(&arg::<String>(&a, "run")?)),
         "factory_run" => ok(factory_runner(&app).start(&arg::<String>(&a, "factory")?, "manual", arg(&a, "payload")?)?),
         "factory_stop" => ok(factory_runner(&app).stop(&arg::<String>(&a, "run")?)?),

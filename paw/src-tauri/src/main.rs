@@ -334,8 +334,11 @@ fn main() {
                 app.set_activation_policy(tauri::ActivationPolicy::Accessory);
                 menubar::setup(app.handle())?;
                 daemon::start_daemon(app.handle());
-                // Factories run here, whether a window is open or not.
-                app.manage(factories::runner::Runner::new(app.handle()));
+                // Factories run here, whether a window is open or not, and
+                // their triggers (schedules, watches, webhooks, files) start them.
+                let runner = factories::runner::Runner::new(app.handle());
+                app.manage(factories::triggers::Triggers::new(app.handle(), runner.clone()));
+                app.manage(runner);
                 return Ok(());
             }
             // First start after the rename: bring Hive's settings along.

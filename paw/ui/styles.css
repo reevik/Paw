@@ -1228,3 +1228,6 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
 .fa-broken { text-align: left; max-width: 640px; margin: 18px auto; }
 .fa-broken .tk-err { margin: 8px 0; white-space: pre-wrap; }
 .fa-path { margin-top: 14px; word-break: break-all; }
+.fa-paused { margin-left: 6px; padding: 0 6px; border-radius: 8px; background: color-mix(in srgb, var(--t-yellow) 18%, transparent); color: var(--t-yellow); font-size: 10.5px; text-transform: none; letter-spacing: 0; }
+.fa-hook { margin-top: 8px; }
+.fa-hook .tk-pre { margin: 2px 0 6px; user-select: text; -webkit-user-select: text; }

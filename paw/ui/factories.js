@@ -9,7 +9,7 @@
 //
 // Loaded before app.js; everything here only runs when app.js calls it.
 
-const factoryState = { dir: "", list: [], runs: new Map(), loaded: false, loading: null };
+const factoryState = { dir: "", list: [], runs: new Map(), loaded: false, loading: null, triggers: { factories: {} } };
 
 const RUN_STATE_TEXT = { running: "running", done: "done", failed: "failed", stopped: "stopped" };
 
@@ -19,6 +19,7 @@ function loadFactories() {
     .then((r) => {
       factoryState.dir = r.dir ?? "";
       factoryState.list = r.factories ?? [];
+      if (r.triggers) factoryState.triggers = r.triggers;
       for (const run of r.runs ?? []) {
         // Lists come without the nodes' logs: keep the ones we have.
         const old = factoryState.runs.get(run.id);
@@ -39,6 +40,13 @@ function initFactories() {
     factoryState.runs.set(run.id, run);
     renderFactoryTabs();
   });
+  listen("factory:triggers", ({ payload }) => {
+    if (!payload?.triggers) return;
+    factoryState.triggers = payload.triggers;
+    renderFactoryTabs();
+  });
+  // Countdowns to the next scheduled run.
+  setInterval(() => { if (curS()?.factory && Object.keys(factoryState.triggers.factories ?? {}).length) renderFactoryTabs(); }, 15000);
   // Factory files change outside Paw too (an editor, an agent): look again.
   window.addEventListener("focus", () => loadFactories());
   $("factories-add")?.addEventListener("click", (e) => { e.stopPropagation(); askFactoryName(); });
@@ -46,13 +54,54 @@ function initFactories() {
 }
 
 // ---------- the sidebar's Factories section ----------
+const triggerOf = (id) => factoryState.triggers.factories?.[id] ?? null;
+const TRIGGER_WORD = { watch: "Watching", every: "Scheduled", at: "Scheduled", webhook: "Webhook", file: "Watching files" };
+
 function factoryStatus(id) {
   const f = factoryById(id);
   const run = runsOf(id)[0];
+  const t = triggerOf(id);
   if (f?.error) return "Can't be read · fix the file";
   if (run?.state === "running") return `Running · ${runProgress(run)}`;
-  if (run) return `${RUN_STATE_TEXT[run.state] ?? run.state} · ${fmtWhen(run.started_at)}`;
-  return f ? `${f.factory.nodes.length} nodes · never run` : "";
+  const trig = t ? (t.paused ? "Paused" : TRIGGER_WORD[t.kinds[0]] ?? "Armed") : "";
+  const last = run ? `${RUN_STATE_TEXT[run.state] ?? run.state} ${fmtWhen(run.started_at)}` : f ? "never run" : "";
+  return [trig, last].filter(Boolean).join(" · ");
+}
+
+/** "in 12m", "in 3h 5m". */
+function fmtIn(ms) {
+  const m = Math.max(0, Math.round((ms - Date.now()) / 60000));
+  return m < 1 ? "in under a minute" : m < 60 ? `in ${m}m` : `in ${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` : ""}`;
+}
+
+/** The trigger part of a factory's summary: what starts it, and how it's doing. */
+function triggerHtml(id, def) {
+  const t = def.trigger;
+  if (!t) return `<label class="tk-lbl">Trigger</label><div class="tk-dim">Manual: Run now. Add a trigger to the file (every, at, watch, webhook or file) to start runs on their own.</div>`;
+  const st = triggerOf(id);
+  const rows = [];
+  if (t.watch) rows.push(`When <code>${esc(t.watch)}</code> starts succeeding (checked every ${esc(t.every)})`);
+  else if (t.every) rows.push(`Every ${esc(t.every)}`);
+  if (t.at) rows.push(`At ${esc(t.at)}`);
+  if (t.file) rows.push(`When ${esc(st?.watching_file ? tildify(st.watching_file) : t.file)} changes`);
+  if (t.webhook !== undefined && t.webhook !== false && t.webhook !== null) rows.push("When its webhook is called");
+  const parts = [`<label class="tk-lbl">Trigger${st?.paused ? ` <span class="fa-paused">paused</span>` : ""}</label><div>${rows.join("<br>")}</div>`];
+  if (!st) {
+    parts.push(`<div class="tk-dim">Paw's background process hasn't picked this up yet.</div>`);
+    return parts.join("");
+  }
+  const bits = [];
+  if (st.next && !st.paused && !t.watch) bits.push(`Next run ${fmtIn(st.next)} (${fmtWhen(st.next)})`);
+  if (st.last_check) bits.push(`Last check ${fmtWhen(st.last_check.at)}: ${st.last_check.ok ? "succeeded" : "not yet"}`);
+  if (st.last_fired) bits.push(`${fmtWhen(st.last_fired)}: ${st.last_note}`);
+  if (bits.length) parts.push(`<div class="tk-dim">${bits.map(esc).join("<br>")}</div>`);
+  if (st.last_check?.output?.trim() && !st.last_check.ok) parts.push(`<details class="tk-fold"><summary>Check output</summary><div class="tk-pre">${esc(st.last_check.output.trim())}</div></details>`);
+  if (st.webhook) {
+    const token = st.webhook_secret ? ` -H "X-Paw-Token: <secret>"` : "";
+    parts.push(`<div class="fa-hook"><div class="tk-dim">POST to</div><div class="tk-pre">${esc(st.webhook)}</div><div class="tk-dim">for example</div><div class="tk-pre">curl -X POST${esc(token)} -d @alert.json ${esc(st.webhook)}</div><div class="tk-dim">The body goes to the nodes as the trigger's payload.${st.webhook_secret ? " The secret from the file has to come along (X-Paw-Token, or ?token=)." : " Anything on this Mac can call it; give the webhook a secret to require one."}</div></div>`);
+    if (factoryState.triggers.server_error) parts.push(`<div class="tk-warn">${esc(factoryState.triggers.server_error)}</div>`);
+  }
+  return parts.join("");
 }
 
 function renderFactoryNav() {
@@ -243,6 +292,7 @@ function renderFactoryView(S, host) {
   const buttons = [
     f?.factory && !running && `<button class="tk-btn primary" data-fact="run">Run now</button>`,
     running && `<button class="tk-btn" data-fact="stop">Stop</button>`,
+    f?.factory?.trigger && triggerOf(S.factory.id) && `<button class="tk-btn" data-fact="pause" title="${triggerOf(S.factory.id).paused ? "Let the trigger start runs again" : "Stop the trigger from starting runs (Run now still works)"}">${triggerOf(S.factory.id).paused ? "Resume trigger" : "Pause trigger"}</button>`,
     f && `<button class="tk-btn" data-fact="edit" title="${esc(tildify(f.path))}">Edit file</button>`,
   ].filter(Boolean).join("");
   const picker = runs.length ? `<select class="tk-in fa-runs" data-fact="pick" title="Show a run">${
@@ -349,9 +399,8 @@ function factorySummaryHtml(S, plan, f) {
   const parts = [`<div class="tk-side-title">${esc(def.name)}</div>`];
   if (def.description?.trim()) parts.push(`<div class="tk-goal">${esc(def.description.trim())}</div>`);
   parts.push(`<div class="tk-dim">${def.nodes.length} node${def.nodes.length === 1 ? "" : "s"} · works in ${esc(def.folder?.trim() || "~")}${def.model ? ` · ${esc(modelShort(def.model))}` : ""}</div>`);
-  const t = def.trigger;
-  const trig = t && [t.every && `every ${t.every}`, t.at && `at ${t.at}`, t.watch && `when “${t.watch}” succeeds`, t.webhook && "when its webhook is called", t.file && `when ${t.file} changes`].filter(Boolean);
-  parts.push(`<label class="tk-lbl">Trigger</label><div>${trig?.length ? esc(trig.join(", ")) + ` <span class="tk-dim">(triggers come in the next part; use Run now for now)</span>` : `<span class="tk-dim">Manual: Run now</span>`}</div>`);
+  // The trigger as the file has it now (the run may be of an older version).
+  parts.push(triggerHtml(S.factory.id, f?.factory ?? def));
   if (f && f.factory && f.factory !== def && JSON.stringify(f.factory) !== JSON.stringify(def)) {
     parts.push(`<div class="tk-hint">The file changed since this run started; the graph shows the run's version.</div>`);
   }
@@ -398,6 +447,11 @@ async function factoryClick(S, e, P) {
         break;
       }
       case "stop": if (run) await invoke("factory_stop", { run: run.id }); break;
+      case "pause": {
+        const t = triggerOf(S.factory.id);
+        if (t) { await invoke("factory_pause", { factory: S.factory.id, paused: !t.paused }); await loadFactories(); }
+        break;
+      }
       case "retry": if (run) await invoke("factory_retry", { run: run.id, node: S.factory.selected }); break;
       case "skip": if (run) await invoke("factory_skip", { run: run.id, node: S.factory.selected }); break;
       case "edit": {

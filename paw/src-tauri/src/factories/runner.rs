@@ -234,6 +234,11 @@ impl Runner {
         json!({ "dir": dir, "factories": found, "runs": runs })
     }
 
+    /// Is a run of this factory going?
+    pub fn running(&self, factory: &str) -> bool {
+        self.state.lock().unwrap().runs.iter().any(|r| r.factory == factory && active_run(r))
+    }
+
     pub fn get(&self, run: &str) -> Option<Run> {
         self.state.lock().unwrap().runs.iter().find(|r| r.id == run).cloned()
     }
@@ -805,7 +810,7 @@ fn node_prompt(r: &Run, def: &Node) -> String {
 }
 
 /// Run a wait node's command once: (it succeeded, its output).
-fn check(command: &str, folder: &Path) -> (bool, String) {
+pub(super) fn check(command: &str, folder: &Path) -> (bool, String) {
     use std::process::{Command, Stdio};
     let mut child = match Command::new("/bin/sh")
         .arg("-c")

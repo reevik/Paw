@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub mod runner;
+pub mod triggers;
 
 /// The tools Paw Agent has built in; a node may name a subset.
 pub const BUILTIN_TOOLS: &[&str] = &["read", "edit", "write", "search", "list", "shell"];
@@ -321,16 +322,59 @@ pub fn check(f: &Factory) -> Result<(), String> {
         return Err("The nodes need each other in a circle.".into());
     }
     if let Some(t) = &f.trigger {
+        if t.every.is_none() && t.at.is_none() && t.watch.is_none() && t.file.is_none() && webhook_secret(t).is_none() {
+            return Err("The trigger is empty: give it every, at, watch, webhook or file (or remove it).".into());
+        }
         if let Some(v) = &t.every {
-            if parse_duration(v).is_none() {
-                return Err(format!("Trigger every: “{v}” isn't a duration (like 15m, 1h)."));
+            match parse_duration(v) {
+                None => return Err(format!("Trigger every: “{v}” isn't a duration (like 15m, 1h).")),
+                Some(d) if d < Duration::from_secs(5) => return Err("Trigger every: at least 5s.".into()),
+                _ => {}
             }
+        }
+        if t.watch.as_deref().is_some_and(|w| w.trim().is_empty()) {
+            return Err("The trigger's watch command is empty.".into());
         }
         if t.watch.is_some() && t.every.is_none() {
             return Err("A watch trigger also needs every: how often to check.".into());
         }
+        if let Some(at) = &t.at {
+            if at_times(at).is_none() {
+                return Err(format!("Trigger at: “{at}” should be times of day like 09:00, or \"09:00, 17:30\"."));
+            }
+        }
+        if t.file.as_deref().is_some_and(|f| f.trim().is_empty()) {
+            return Err("The trigger's file is empty.".into());
+        }
+        if let Some(w) = &t.webhook {
+            if !matches!(w, serde_yaml::Value::Bool(_) | serde_yaml::Value::String(_)) {
+                return Err("Trigger webhook: true, or a secret the caller must send (a string).".into());
+            }
+        }
     }
     Ok(())
+}
+
+/// "09:00, 17:30" → [(9, 0), (17, 30)].
+pub fn at_times(s: &str) -> Option<Vec<(u32, u32)>> {
+    let times: Option<Vec<(u32, u32)>> = s
+        .split(',')
+        .map(|t| {
+            let (h, m) = t.trim().split_once(':')?;
+            let (h, m): (u32, u32) = (h.trim().parse().ok()?, m.trim().parse().ok()?);
+            (h < 24 && m < 60).then_some((h, m))
+        })
+        .collect();
+    times.filter(|t| !t.is_empty())
+}
+
+/// A webhook trigger: None (off), Some("") (on, no secret) or Some(secret).
+pub fn webhook_secret(t: &Trigger) -> Option<String> {
+    match t.webhook.as_ref()? {
+        serde_yaml::Value::Bool(true) => Some(String::new()),
+        serde_yaml::Value::String(s) if !s.trim().is_empty() => Some(s.trim().to_string()),
+        _ => None,
+    }
 }
 
 /// A factory file as found on disk: checked, or with what's wrong with it.
@@ -511,6 +555,21 @@ nodes:
         assert_eq!(parse_duration("1h30m"), Some(Duration::from_secs(5400)));
         assert_eq!(parse_duration("45"), Some(Duration::from_secs(45)));
         assert_eq!(parse_duration("2x"), None);
+    }
+
+    #[test]
+    fn triggers_are_checked() {
+        let with = |t: &str| parse(&format!("name: x\ntrigger:\n{t}\nnodes:\n  - {{ id: a, prompt: hi }}\n"));
+        assert!(with("  every: 15m").is_ok());
+        assert!(with("  at: \"09:00, 17:30\"").is_ok());
+        assert!(with("  webhook: true").is_ok());
+        assert!(with("  webhook: s3cret").is_ok());
+        assert!(with("  file: ./inbox").is_ok());
+        assert!(with("  at: \"25:00\"").unwrap_err().contains("times of day"));
+        assert!(with("  every: 1s").unwrap_err().contains("at least 5s"));
+        assert!(with("  watch: ./x.sh").unwrap_err().contains("needs every"));
+        assert!(with("  webhook: false").unwrap_err().contains("empty"));
+        assert_eq!(at_times("9:05,17:30"), Some(vec![(9, 5), (17, 30)]));
     }
 
     #[test]

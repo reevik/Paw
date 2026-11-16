@@ -2906,6 +2906,7 @@ function tabMenu(S, x, y) {
     items.push({ label: `Add to “${groupName(g) || "unnamed group"}”`, dot: GROUP_COLORS[g.color], run: () => addToGroup(S, g.id) });
   }
   if (S.group) items.push({ label: "Remove from group", run: () => removeFromGroup(S) });
+  items.push({ label: isPinned("sessions", S.pawId) ? "Unpin in the sidebar" : "Pin in the sidebar", run: () => togglePin("sessions", S.pawId) });
   // A task tab is named by its plan.
   if (!S.task) items.unshift({ label: "Rename…", run: () => renameSession(S) }, "-");
   items.push("-", { label: "Close tab", sub: "⌘W", run: () => closeSession(S.sid) });
@@ -2934,7 +2935,47 @@ function renderSidebar() {
 }
 
 // ---------- sidebar: Specs, Factories, Sessions ----------
-// Each section folds; which are folded is remembered.
+// Each section folds; which are folded is remembered. Each has a filter, and
+// its items can be pinned: pinned ones come first, under "Pinned" (kept per
+// section: specs by path, factories by id, sessions by their session folder).
+const PIN_KINDS = ["specs", "factories", "sessions"];
+const pins = Object.fromEntries(PIN_KINDS.map((k) => {
+  try { return [k, new Set(JSON.parse(localStorage.getItem(`paw.pins.${k}`) || "[]"))]; } catch { return [k, new Set()]; }
+}));
+function togglePin(kind, key) {
+  const set = pins[kind];
+  set.has(key) ? set.delete(key) : set.add(key);
+  try { localStorage.setItem(`paw.pins.${kind}`, JSON.stringify([...set])); } catch {}
+  renderNav(kind);
+}
+const isPinned = (kind, key) => pins[kind]?.has(key) ?? false;
+function renderNav(kind) {
+  if (kind === "specs") renderSpecs();
+  else if (kind === "factories") renderFactoryNav();
+  else renderSessionList();
+}
+/** The section's filter, lower-cased ("" when empty). */
+const navFilter = (kind) => ($(`${kind}-filter`)?.value ?? "").trim().toLowerCase();
+const navMatches = (q, ...texts) => !q || texts.some((t) => String(t ?? "").toLowerCase().includes(q));
+const PIN_SVG = `<svg viewBox="0 0 12 12"><path d="M4.5 1.5h3l-.5 3 2 1.5v1h-6v-1l2-1.5z"/><path d="M6 7v3.5"/></svg>`;
+const pinButton = (kind, key) =>
+  `<button class="nav-pin${isPinned(kind, key) ? " on" : ""}" data-pin="${kind}" data-key="${esc(key)}" title="${isPinned(kind, key) ? "Unpin" : "Pin to the top"}">${PIN_SVG}</button>`;
+const pinnedHead = () => `<div class="nav-sub nav-pinned-head"><span class="sk-sec-title">Pinned</span></div>`;
+// Pin buttons: before the row's own click (capture), so pinning doesn't also open it.
+document.addEventListener("click", (e) => {
+  const b = e.target.closest?.(".nav-pin");
+  if (!b) return;
+  e.stopPropagation();
+  e.preventDefault();
+  togglePin(b.dataset.pin, b.dataset.key);
+}, true);
+document.addEventListener("input", (e) => {
+  const kind = e.target.dataset?.navFilter;
+  if (kind) renderNav(kind);
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && e.target.dataset?.navFilter) { e.target.value = ""; renderNav(e.target.dataset.navFilter); }
+});
 const navClosed = new Set((() => { try { return JSON.parse(localStorage.getItem("paw.nav.closed") || "[]"); } catch { return []; } })());
 function applyNavClosed() {
   document.querySelectorAll(".nav-sec").forEach((s) => s.classList.toggle("closed", navClosed.has(s.dataset.sec)));
@@ -3014,7 +3055,8 @@ function sessionRow(S) {
   const needs = S.task ? taskNeedsYou(S) : 0;
   row.innerHTML = `<span class="dot ${S.task ? taskDotState(S) : S.factory ? factoryDotState(S) : sessionState(S)}"></span>` +
     `<span class="nav-text"><span class="nav-name">${esc(tabLabel(S))}</span><span class="nav-status">${esc(sessionStatus(S))}</span></span>` +
-    (needs ? `<span class="tab-badge">${needs}</span>` : "") + (S.unread ? `<span class="tab-unread"></span>` : "");
+    (needs ? `<span class="tab-badge">${needs}</span>` : "") + (S.unread ? `<span class="tab-unread"></span>` : "") +
+    pinButton("sessions", S.pawId);
   row.onclick = () => select(S.sid);
   row.oncontextmenu = (e) => { e.preventDefault(); tabMenu(S, e.clientX, e.clientY); };
   return row;
@@ -3023,9 +3065,19 @@ function renderSessionList() {
   const body = $("sessions-body");
   const open = openTabs.map((sid) => sessions.get(sid)).filter(Boolean);
   $("sessions-count").textContent = open.length || "";
-  body.innerHTML = open.length ? "" : `<div class="sk-empty">No open sessions.</div>`;
+  const q = navFilter("sessions");
+  const shown = open.filter((S) => navMatches(q, tabLabel(S), sessionStatus(S), S.cwd));
+  body.innerHTML = shown.length ? "" : `<div class="sk-empty">${q ? "No sessions match." : "No open sessions."}</div>`;
+  const pinned = shown.filter((S) => isPinned("sessions", S.pawId));
+  if (pinned.length) {
+    const wrap = document.createElement("div");
+    wrap.className = "nav-group nav-pinned";
+    wrap.innerHTML = pinnedHead();
+    for (const S of pinned) wrap.appendChild(sessionRow(S));
+    body.appendChild(wrap);
+  }
   const byGroup = new Map(); // tab group id ("" for none) → its tabs, where its first tab is
-  for (const S of open) {
+  for (const S of shown.filter((S) => !pinned.includes(S))) {
     const gid = S.group && groups.has(S.group) ? S.group : "";
     if (!byGroup.has(gid)) byGroup.set(gid, []);
     byGroup.get(gid).push(S);
@@ -3076,16 +3128,27 @@ function renderSpecs() {
   $("specs-groups").innerHTML = specs.groups.map((g) => `<option value="${esc(g.name)}">`).join("");
   const body = $("specs-body");
   if (!specs.groups.length) { body.innerHTML = `<div class="sk-empty">Import Markdown specs with +.</div>`; return; }
+  const q = navFilter("specs");
   const item = (s, si) => `<div class="nav-item${s.missing ? " missing" : ""}" data-spec="${si}" title="${esc(tildify(s.path))}${s.missing ? " — not there any more" : " — click to attach it to the session"}">
       <svg class="nav-ico" viewBox="0 0 12 12"><path d="M3 1.5h4l2.5 2.5v6.5h-6.5z"/><path d="M7 1.5v2.5h2.5"/></svg>
       <span class="nav-text"><span class="nav-name">${esc(s.title)}</span></span>
+      ${pinButton("specs", s.path)}
       <button class="sk-x" data-spec-remove title="Remove from the group (the file stays)">×</button></div>`;
-  body.innerHTML = specs.groups.map((g, gi) => `<div class="nav-group" data-group="${gi}">
+  const hit = (g, s) => navMatches(q, s.title, s.path, g.name);
+  // Pinned specs: on top, each in a wrapper that still names its group (clicks and drags work as below).
+  const pinned = specs.groups.flatMap((g, gi) => g.specs.map((s, si) => ({ g, s, gi, si }))).filter(({ g, s }) => isPinned("specs", s.path) && hit(g, s));
+  const top = pinned.length ? `<div class="nav-pinned">${pinnedHead()}${pinned.map(({ s, gi, si }) => `<div class="nav-group" data-group="${gi}">${item(s, si)}</div>`).join("")}</div>` : "";
+  const groups = specs.groups.map((g, gi) => {
+    const list = g.specs.map((s, si) => [s, si]).filter(([s]) => !isPinned("specs", s.path) && hit(g, s));
+    if (q && !list.length) return "";
+    return `<div class="nav-group" data-group="${gi}">
       <div class="nav-sub" title="Double-click to rename"><span class="sk-sec-title">${esc(g.name)}</span>
         <button class="sk-sec-add" data-spec-import title="Import specs into ${esc(g.name)}">+</button>
         <button class="sk-x" data-group-remove title="Remove the group (the files stay)">×</button></div>
-      ${g.specs.length ? g.specs.map(item).join("") : `<div class="sk-empty">Drag specs here, or import with +.</div>`}
-    </div>`).join("");
+      ${list.length ? list.map(([s, si]) => item(s, si)).join("") : g.specs.length ? "" : `<div class="sk-empty">Drag specs here, or import with +.</div>`}
+    </div>`;
+  }).join("");
+  body.innerHTML = top + groups || `<div class="sk-empty">No specs match.</div>`;
 }
 
 async function attachSpec(spec) {

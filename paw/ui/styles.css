@@ -1251,3 +1251,19 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
 .tk-edges .fa-loop-head { fill: none; stroke: color-mix(in srgb, var(--t-accent) 70%, var(--tk-line)); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .tk-edges .fa-loop-label { fill: var(--t-dim); font-size: 10.5px; }
 .tl-tag.v-checking { color: var(--wait-glow); background: color-mix(in srgb, var(--wait-glow) 14%, transparent); }
+
+/* Sidebar filters and pins (app.js › sidebar: Specs, Factories, Sessions). */
+.nav-filter { margin: 2px 0 6px; }
+.nav-pin {
+  flex-shrink: 0; width: 18px; height: 18px; border: 0; border-radius: 4px; padding: 0; background: transparent;
+  color: var(--text-3); display: grid; place-items: center; visibility: hidden;
+}
+.nav-pin svg { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
+.nav-item:hover .nav-pin { visibility: visible; }
+.nav-pin:hover { background: var(--selected); color: var(--text); }
+.nav-pin.on { visibility: visible; color: var(--accent); }
+.nav-pin.on svg { fill: color-mix(in srgb, var(--accent) 35%, transparent); }
+.nav-pinned { margin-bottom: 4px; padding-bottom: 4px; border-bottom: 0.5px solid var(--hair); }
+.nav-pinned .nav-group { margin: 0; }
+.nav-pinned-head .sk-sec-title { color: var(--accent); }
+.nav-pinned > .nav-item, .nav-pinned .nav-group > .nav-item { margin-left: 0; }

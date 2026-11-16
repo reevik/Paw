@@ -22,6 +22,7 @@
             <button id="specs-add" class="sk-sec-add" title="Import specs (Markdown files) into a group">+</button>
           </div>
           <div class="sk-sec-body">
+            <input id="specs-filter" class="skills-filter nav-filter" data-nav-filter="specs" placeholder="Filter specs" spellcheck="false" autocomplete="off" />
             <form id="specs-add-row" class="skills-add hidden" autocomplete="off">
               <input id="specs-group" list="specs-groups" placeholder="Group (new or existing)" spellcheck="false" />
               <datalist id="specs-groups"></datalist>
@@ -41,7 +42,10 @@
             <span class="sk-count" id="factories-count"></span>
             <button id="factories-add" class="sk-sec-add" title="New factory">+</button>
           </div>
-          <div class="sk-sec-body" id="factories-body"><div class="sk-empty">No factories yet.</div></div>
+          <div class="sk-sec-body">
+            <input id="factories-filter" class="skills-filter nav-filter" data-nav-filter="factories" placeholder="Filter factories" spellcheck="false" autocomplete="off" />
+            <div id="factories-body"><div class="sk-empty">No factories yet.</div></div>
+          </div>
         </section>
         <section class="sk-sec nav-sec" data-sec="sessions">
           <div class="sk-sec-head" data-sec-toggle>
@@ -49,7 +53,10 @@
             <span class="sk-sec-title">Sessions</span>
             <span class="sk-count" id="sessions-count"></span>
           </div>
-          <div class="sk-sec-body" id="sessions-body"></div>
+          <div class="sk-sec-body">
+            <input id="sessions-filter" class="skills-filter nav-filter" data-nav-filter="sessions" placeholder="Filter sessions" spellcheck="false" autocomplete="off" />
+            <div id="sessions-body"></div>
+          </div>
         </section>
       </div>
       <div class="sidebar-footer">

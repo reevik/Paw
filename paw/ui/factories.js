@@ -123,15 +123,22 @@ function renderFactoryNav() {
     return;
   }
   const open = new Set([...sessions.values()].filter((S) => S.factory && S.sid === activeId).map((S) => S.factory.id));
-  body.innerHTML = list.map((f) => {
+  // The filter, and pinned ones first.
+  const q = navFilter("factories");
+  const shown = list.filter((f) => navMatches(q, f.factory?.name, f.id, f.factory?.description, factoryStatus(f.id)));
+  if (!shown.length) { body.innerHTML = `<div class="sk-empty">No factories match.</div>`; return; }
+  const pinned = shown.filter((f) => isPinned("factories", f.id));
+  const rest = shown.filter((f) => !isPinned("factories", f.id));
+  const row = (f) => {
     const run = runsOf(f.id)[0];
     const dot = f.error ? "failed" : run?.state === "running" ? "running" : run?.state === "failed" ? "failed" : "idle";
     const needs = run?.state === "running" ? run.nodes.filter((n) => n.state === "needs").length : 0;
     return `<div class="nav-item${open.has(f.id) ? " active" : ""}" data-factory="${esc(f.id)}" title="${esc(f.factory?.description || tildify(f.path))}">
       <span class="dot ${dot}"></span>
       <span class="nav-text"><span class="nav-name">${esc(f.factory?.name || f.id)}</span><span class="nav-status">${esc(factoryStatus(f.id))}</span></span>
-      ${needs ? `<span class="tab-badge">${needs}</span>` : ""}</div>`;
-  }).join("");
+      ${needs ? `<span class="tab-badge">${needs}</span>` : ""}${pinButton("factories", f.id)}</div>`;
+  };
+  body.innerHTML = (pinned.length ? `<div class="nav-pinned">${pinnedHead()}${pinned.map(row).join("")}</div>` : "") + rest.map(row).join("");
 }
 
 document.addEventListener("click", (e) => {

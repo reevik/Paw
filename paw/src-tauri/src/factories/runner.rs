@@ -23,6 +23,7 @@ const RESULT_CHARS: usize = 20_000;
 const INPUT_BUDGET: usize = 8_000;
 const RUNS_KEPT: usize = 30; // per factory
 const CHECK_LIMIT: Duration = Duration::from_secs(120); // one wait-node check
+const INTERRUPTED: &str = "Paw stopped while this ran.";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogLine {
@@ -237,6 +238,29 @@ fn folder_of(def: &Factory) -> PathBuf {
 impl Runner {
     pub fn new(app: &AppHandle) -> Arc<Runner> {
         let runner = Arc::new(Runner { app: app.clone(), state: Mutex::new(State { runs: load_runs(), ..Default::default() }), paused: Mutex::default() });
+        // Loops go on after Paw starts again: a repeating factory whose last run
+        // finished, or was cut off when Paw stopped, starts again (not one that
+        // failed or that you stopped). A moment later, once pauses are known.
+        let resume: Vec<String> = {
+            let st = runner.state.lock().unwrap();
+            let mut latest: HashMap<&str, &Run> = HashMap::new();
+            for r in &st.runs {
+                if latest.get(r.factory.as_str()).is_none_or(|l| l.started_at < r.started_at) {
+                    latest.insert(&r.factory, r);
+                }
+            }
+            latest.values().filter(|r| r.state == "done" || r.note == INTERRUPTED).map(|r| r.factory.clone()).collect()
+        };
+        let r = runner.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            for f in resume {
+                let repeats = factories_dir().and_then(|d| ["yaml", "yml"].iter().map(|e| d.join(format!("{f}.{e}"))).find(|p| p.is_file())).and_then(|p| load(&f, &p).factory).is_some_and(|d| repeat_of(&d).is_some());
+                if repeats && !r.is_paused(&f) && !r.running(&f) {
+                    let _ = r.start(&f, "repeat", None);
+                }
+            }
+        });
         let r = runner.clone();
         app.listen_any("agent:output", move |e| {
             if let Ok(v) = serde_json::from_str::<Value>(e.payload()) {
@@ -675,12 +699,13 @@ impl Runner {
             let dirty: Vec<String> = st.dirty.drain().collect();
             st.runs.iter().filter(|r| dirty.contains(&r.id)).cloned().collect()
         };
-        let Some(daemon) = self.app.try_state::<crate::daemon::DaemonState>() else { return };
+        let daemon = self.app.try_state::<crate::daemon::DaemonState>();
         for r in runs {
-            if !active_run(&r) {
-                save_run(&r);
+            // Kept while it runs too, so a crash or restart doesn't lose it.
+            save_run(&r);
+            if let Some(d) = &daemon {
+                d.server.publish("factory:run", json!({ "run": r }));
             }
-            daemon.server.publish("factory:run", json!({ "run": r }));
         }
     }
 }
@@ -953,7 +978,7 @@ fn load_runs() -> Vec<Run> {
     for r in &mut runs {
         if active_run(r) {
             r.state = "stopped".into();
-            r.note = "Paw stopped while this ran.".into();
+            r.note = INTERRUPTED.into();
             r.ended_at.get_or_insert(now_ms());
             for n in &mut r.nodes {
                 if active(&n.state) {

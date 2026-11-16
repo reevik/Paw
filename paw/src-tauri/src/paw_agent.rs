@@ -453,11 +453,14 @@ impl Session {
         let request = self.request.lock().unwrap().clone();
         let preamble = auto::REVIEWER.replace("{cwd}", &self.cfg.cwd.display().to_string());
         let mut b = AgentBuilder::new(self.model.clone()).name("Paw auto review").preamble(preamble);
-        if self.cfg.provider == "anthropic" {
-            b = b.max_tokens(400);
-        } else {
-            use rig_core::providers::ollama::extension::{KeepAlive, OllamaOptions};
-            b = b.provider_option(OllamaOptions::default().num_ctx(OLLAMA_NUM_CTX).keep_alive(KeepAlive::duration("30m")));
+        // Copilot takes each model's own reply budget.
+        match self.cfg.provider.as_str() {
+            "anthropic" => b = b.max_tokens(400),
+            copilot::PROVIDER => {}
+            _ => {
+                use rig_core::providers::ollama::extension::{KeepAlive, OllamaOptions};
+                b = b.provider_option(OllamaOptions::default().num_ctx(OLLAMA_NUM_CTX).keep_alive(KeepAlive::duration("30m")));
+            }
         }
         let agent = b.build();
         let question = auto::review_prompt(&request, &ask.label, &ask.detail);
@@ -480,11 +483,13 @@ impl Session {
 
     fn tools_agent(self: &Arc<Self>) -> rig_agent::Agent {
         let mut b = AgentBuilder::new(self.model.clone()).name("Paw Agent").preamble(self.cfg.preamble.clone());
-        if self.cfg.provider == "anthropic" {
-            b = b.max_tokens(16_000);
-        } else {
-            use rig_core::providers::ollama::extension::{KeepAlive, OllamaOptions};
-            b = b.provider_option(OllamaOptions::default().num_ctx(OLLAMA_NUM_CTX).keep_alive(KeepAlive::duration("30m")));
+        match self.cfg.provider.as_str() {
+            "anthropic" => b = b.max_tokens(16_000),
+            copilot::PROVIDER => {}
+            _ => {
+                use rig_core::providers::ollama::extension::{KeepAlive, OllamaOptions};
+                b = b.provider_option(OllamaOptions::default().num_ctx(OLLAMA_NUM_CTX).keep_alive(KeepAlive::duration("30m")));
+            }
         }
         if self.cfg.tools {
             let ws: Arc<dyn Workspace> = Arc::new(Local);
@@ -735,6 +740,9 @@ fn friendly_error(cfg: &SessionConfig, e: &str) -> String {
     if cfg.provider == "anthropic" && (lower.contains("401") || lower.contains("authentication") || lower.contains("invalid x-api-key")) {
         return format!("Anthropic didn't accept the API key — check it in Settings › Agents › Paw Agent.\n{e}");
     }
+    if cfg.provider == copilot::PROVIDER && (lower.contains("model_not_supported") || lower.contains("model is not supported")) {
+        return format!("GitHub Copilot doesn't offer {} to this account — pick another with /model.\n{e}", cfg.model);
+    }
     e.to_string()
 }
 
@@ -919,6 +927,7 @@ impl PawAgents {
 fn provider_label(p: &str) -> &'static str {
     match p {
         "anthropic" => "Anthropic",
+        copilot::PROVIDER => "GitHub Copilot",
         _ => "Ollama",
     }
 }
@@ -930,15 +939,16 @@ fn provider_label(p: &str) -> &'static str {
 pub const ANTHROPIC_MODELS: &[&str] = &["claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5", "claude-fable-5-2"];
 pub const DEFAULT_OLLAMA_URL: &str = "http://localhost:11434";
 
-/// The model for a provider. A model written `anthropic/<name>` or
-/// `ollama/<name>` picks that provider whatever the agent's setting.
+/// The model for a provider. A model written `anthropic/<name>`,
+/// `copilot/<name>` or `ollama/<name>` picks that provider whatever the
+/// agent's setting.
 pub fn split_provider<'a>(provider: &'a str, model: &'a str) -> (&'a str, &'a str) {
-    for p in ["anthropic", "ollama"] {
+    for p in ["anthropic", copilot::PROVIDER, "ollama"] {
         if let Some(rest) = model.strip_prefix(p).and_then(|r| r.strip_prefix('/')) {
             return (p, rest);
         }
     }
-    (if provider == "anthropic" { "anthropic" } else { "ollama" }, model)
+    (if provider == "anthropic" || provider == copilot::PROVIDER { provider } else { "ollama" }, model)
 }
 
 /// The Anthropic configuration for a credential: `x-api-key`, or a
@@ -1059,14 +1069,15 @@ write (a whole file), shell (a command line, `sh -c`).\n\
 }
 
 pub mod keychain {
+    //! Paw's Keychain items: one service, an account per item.
     use security_framework::passwords::{delete_generic_password, get_generic_password, set_generic_password};
 
     fn account(provider: &str) -> String {
         format!("{provider}-api-key")
     }
 
-    fn read(service: &str, provider: &str) -> Option<String> {
-        get_generic_password(service, &account(provider))
+    fn read(service: &str, account: &str) -> Option<String> {
+        get_generic_password(service, account)
             .ok()
             .and_then(|b| String::from_utf8(b).ok())
             .filter(|s| !s.is_empty())
@@ -1074,10 +1085,10 @@ pub mod keychain {
 
     /// The saved key; one saved before the rename (Hive → Paw) is moved over.
     pub fn get(provider: &str) -> Option<String> {
-        if let Some(k) = read(crate::paths::keychain_service(), provider) {
+        if let Some(k) = item(&account(provider)) {
             return Some(k);
         }
-        let old = read(crate::paths::legacy_keychain_service(), provider)?;
+        let old = read(crate::paths::legacy_keychain_service(), &account(provider))?;
         if set(provider, &old).is_ok() {
             let _ = delete_generic_password(crate::paths::legacy_keychain_service(), &account(provider));
         }
@@ -1085,12 +1096,26 @@ pub mod keychain {
     }
 
     pub fn set(provider: &str, key: &str) -> Result<(), String> {
-        set_generic_password(crate::paths::keychain_service(), &account(provider), key.as_bytes()).map_err(|e| e.to_string())
+        set_item(&account(provider), key)
     }
 
     pub fn delete(provider: &str) -> Result<(), String> {
         let _ = delete_generic_password(crate::paths::legacy_keychain_service(), &account(provider));
-        match delete_generic_password(crate::paths::keychain_service(), &account(provider)) {
+        delete_item(&account(provider))
+    }
+
+    /// The item `account` of Paw's service.
+    pub fn item(account: &str) -> Option<String> {
+        read(crate::paths::keychain_service(), account)
+    }
+
+    pub fn set_item(account: &str, value: &str) -> Result<(), String> {
+        set_generic_password(crate::paths::keychain_service(), account, value.as_bytes()).map_err(|e| e.to_string())
+    }
+
+    /// Removing an item that isn't there succeeds.
+    pub fn delete_item(account: &str) -> Result<(), String> {
+        match delete_generic_password(crate::paths::keychain_service(), account) {
             Ok(()) => Ok(()),
             Err(e) if e.code() == -25300 => Ok(()), // errSecItemNotFound
             Err(e) => Err(e.to_string()),
@@ -1161,7 +1186,12 @@ pub async fn paw_agent_start(
     }
     let (provider, model) = split_provider(&opts.provider, &opts.model);
     let (provider, model) = (provider.to_string(), model.trim().to_string());
-    let model = if model.is_empty() && provider == "anthropic" { ANTHROPIC_MODELS[0].to_string() } else { model };
+    let model = match provider.as_str() {
+        _ if !model.is_empty() => model,
+        "anthropic" => ANTHROPIC_MODELS[0].to_string(),
+        copilot::PROVIDER => copilot::MODELS[0].to_string(),
+        _ => model,
+    };
     if model.is_empty() {
         return Err("Paw Agent needs a model — pick one with /model (Ollama models with tool support are listed).".into());
     }
@@ -1176,12 +1206,13 @@ pub async fn paw_agent_start(
     let scripts2 = scripts.clone();
     let (cwd2, provider2, model2, base2, approval2, source2) =
         (cwd.clone(), provider.clone(), model.clone(), base_url.clone(), approval.clone(), opts.key_source.clone());
-    // Keys, `ollama show` and the skill folders: off the async threads.
-    let (cred, tools, preamble) = tauri::async_runtime::spawn_blocking(move || {
+    // Keys, Copilot's sign-in, `ollama show` and the skill folders: off the async threads.
+    let (cred, copilot_source, tools, preamble) = tauri::async_runtime::spawn_blocking(move || {
         let cred = (provider2 == "anthropic").then(|| keys::resolve(&keys::System, &source2)).transpose()?;
-        let tools = provider2 == "anthropic" || ollama_supports_tools(&base2, &model2).unwrap_or(true);
+        let copilot_source = (provider2 == copilot::PROVIDER).then(|| copilot::source(&copilot::user_home())).transpose()?;
+        let tools = provider2 != "ollama" || ollama_supports_tools(&base2, &model2).unwrap_or(true);
         let skills = crate::skills::agent_skills_index(&app2, &cwd2);
-        Ok::<_, String>((cred, tools, build_preamble(&cwd2, &approval2, tools, &skills, scripts2.as_deref())))
+        Ok::<_, String>((cred, copilot_source, tools, build_preamble(&cwd2, &approval2, tools, &skills, scripts2.as_deref())))
     })
     .await
     .map_err(|e| e.to_string())??;
@@ -1191,7 +1222,10 @@ pub async fn paw_agent_start(
             base_url = b;
         }
     }
-    let model_handle = make_model(&provider, &model, &base_url, cred)?;
+    let model_handle = match copilot_source {
+        Some(source) => copilot::model(source, &model).await?,
+        None => make_model(&provider, &model, &base_url, cred)?,
+    };
     // Paw Agent's MCP servers (Settings-free: the MCP panel keeps the list).
     let path_env = crate::registry::login_path().to_string();
     let mcp = if tools {
@@ -1311,7 +1345,47 @@ pub async fn paw_key_delete(provider: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || keychain::delete(&provider)).await.map_err(|e| e.to_string())?
 }
 
+/// Paw's Copilot sign-in and Copilot CLI's (never a token).
+#[tauri::command]
+pub async fn paw_copilot_status() -> Result<copilot::Status, String> {
+    tauri::async_runtime::spawn_blocking(|| copilot::status(&copilot::user_home())).await.map_err(|e| e.to_string())
+}
+
+/// Stops the sign-in that's waiting for the browser.
+static CANCEL_SIGN_IN: Mutex<Option<oneshot::Sender<()>>> = Mutex::new(None);
+
+/// Sign in to GitHub Copilot: the browser opens GitHub's device page and
+/// `copilot:device` tells Settings the code to enter there. Answers the
+/// GitHub login once the user has approved Paw.
+#[tauri::command]
+pub async fn paw_copilot_sign_in(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri::Emitter;
+    let (tx, rx) = oneshot::channel();
+    // A sign-in already waiting ends (its sender is dropped).
+    *CANCEL_SIGN_IN.lock().unwrap() = Some(tx);
+    let show = move |device: copilot::DeviceCode| {
+        let _ = std::process::Command::new("/usr/bin/open").arg(&device.uri).spawn();
+        let _ = app.emit("copilot:device", device);
+    };
+    tokio::select! {
+        r = copilot::sign_in(show) => r,
+        _ = rx => Err("Sign-in cancelled.".into()),
+    }
+}
+
+#[tauri::command]
+pub async fn paw_copilot_cancel_sign_in() -> Result<(), String> {
+    CANCEL_SIGN_IN.lock().unwrap().take();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn paw_copilot_sign_out() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(copilot::sign_out).await.map_err(|e| e.to_string())?
+}
+
 pub mod auto;
+pub mod copilot;
 pub mod keys;
 
 #[cfg(test)]

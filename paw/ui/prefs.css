@@ -129,6 +129,8 @@ body.prefs { display: flex; flex-direction: column; height: 100vh; }
 .key-sources .ks-text { min-width: 0; }
 .key-sources .ks-note { color: var(--text-3); display: block; }
 .key-row input { flex: 1; min-width: 0; }
+.cp-device { margin-top: 8px; }
+.cp-device .cp-code { display: inline-block; margin-top: 6px; font: 600 18px/1.2 var(--mono); letter-spacing: 2px; padding: 6px 12px; border-radius: 7px; background: var(--card-2); user-select: all; }
 .cmd-preview {
   font: 11px/1.5 var(--mono); padding: 7px 9px; border-radius: 7px; background: var(--card-2);
   white-space: pre-wrap; word-break: break-all; color: var(--text-2);

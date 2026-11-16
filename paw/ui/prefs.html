@@ -307,12 +307,29 @@
           <select id="d-provider">
             <option value="ollama">Ollama — local models on this Mac</option>
             <option value="anthropic">Anthropic — Claude models with your API key</option>
+            <option value="copilot">GitHub Copilot — models from your Copilot subscription</option>
           </select>
 
-          <label for="d-baseurl">Address</label>
-          <div>
+          <label for="d-baseurl" class="d-addr">Address</label>
+          <div class="d-addr">
             <input id="d-baseurl" spellcheck="false" />
             <p class="hint" id="d-baseurl-hint"></p>
+          </div>
+
+          <span class="d-copilot-only">Sign-in</span>
+          <div class="d-copilot-only">
+            <div class="key-row">
+              <button class="btn-ghost small" type="button" id="d-cp-signin">Sign in with GitHub</button>
+              <button class="btn-ghost small hidden" type="button" id="d-cp-cancel">Cancel</button>
+              <button class="btn-ghost small" type="button" id="d-cp-signout">Sign Out</button>
+            </div>
+            <div class="cp-device hidden" id="d-cp-device">
+              <p class="hint">Enter this code on the GitHub page that opened (it's copied):</p>
+              <code class="cp-code" id="d-cp-code"></code>
+              <p class="hint"><a href="#" id="d-cp-open">Open the GitHub page again</a></p>
+            </div>
+            <p class="hint" id="d-cp-status"></p>
+            <p class="hint">Without Paw's own sign-in, Paw Agent uses Copilot CLI's (macOS asks once whether Paw may read it). The sign-in identifies as VS Code's Copilot, as other third-party clients do; GitHub doesn't offer it to other apps and may stop accepting it.</p>
           </div>
 
           <label for="d-keysource" class="d-anthropic-only">Key from</label>
@@ -333,7 +350,7 @@
           </div>
 
           <span>How it works</span>
-          <p class="hint">Paw Agent runs inside Paw: it reads, searches and edits files in the tab's folder and runs commands there, asking first as the tab's approval level says (<code>/approval</code>). Ollama models need tool support (<code>ollama show &lt;model&gt;</code> lists “tools”); the list above only shows those. A model written <code>anthropic/…</code> or <code>ollama/…</code> uses that provider.</p>
+          <p class="hint">Paw Agent runs inside Paw: it reads, searches and edits files in the tab's folder and runs commands there, asking first as the tab's approval level says (<code>/approval</code>). Ollama models need tool support (<code>ollama show &lt;model&gt;</code> lists “tools”); the list above only shows those. A model written <code>anthropic/…</code>, <code>copilot/…</code> or <code>ollama/…</code> uses that provider.</p>
         </div>
       </div>
 

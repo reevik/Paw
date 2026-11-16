@@ -191,6 +191,8 @@ fn ask_labels_and_rules() {
 fn provider_prefix() {
     assert_eq!(split_provider("ollama", "anthropic/claude-sonnet-5-5"), ("anthropic", "claude-sonnet-5-5"));
     assert_eq!(split_provider("anthropic", "ollama/qwen3:8b"), ("ollama", "qwen3:8b"));
+    assert_eq!(split_provider("ollama", "copilot/claude-sonnet-5.5"), ("copilot", "claude-sonnet-5.5"));
+    assert_eq!(split_provider("copilot", "gpt-5.5"), ("copilot", "gpt-5.5"));
     assert_eq!(split_provider("ollama", "qwen3:8b"), ("ollama", "qwen3:8b"));
     assert_eq!(split_provider("", "x"), ("ollama", "x"));
 }

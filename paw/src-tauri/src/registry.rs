@@ -603,8 +603,10 @@ pub fn run_with_env(binary: &str, args: &[&str], env: &[(&str, &str)], timeout: 
 }
 
 /// Paw Agent: built in, so always available. Its models are the
-/// provider's: Ollama's that can call tools, or Anthropic's.
+/// provider's: Ollama's that can call tools, Anthropic's, or the ones
+/// GitHub Copilot offers the signed-in account.
 fn detect_paw(cfg: &AgentConfig) -> Detection {
+    use crate::paw_agent::copilot;
     let mut d = Detection { installed: true, version: Some("built-in".into()), ..Default::default() };
     if cfg.provider == "anthropic" {
         d.models = crate::paw_agent::ANTHROPIC_MODELS.iter().map(|m| m.to_string()).collect();
@@ -614,6 +616,22 @@ fn detect_paw(cfg: &AgentConfig) -> Detection {
             Some(s) => format!("Anthropic API · key from {} ({})", s.label, s.detail),
             None => "Anthropic API · no usable API key found yet".into(),
         };
+        return d;
+    }
+    if cfg.provider == copilot::PROVIDER {
+        // Detection runs on its own thread, outside the async runtime.
+        let listed = tauri::async_runtime::block_on(copilot::list_models());
+        let st = copilot::status(&copilot::user_home());
+        let who = match (&st.login, &st.cli) {
+            _ if st.signed_in => format!("signed in as {}", st.login.as_deref().filter(|l| !l.is_empty()).unwrap_or("you")),
+            (_, Some(cli)) => format!("Copilot CLI's sign-in ({cli})"),
+            _ => "not signed in yet".into(),
+        };
+        d.models_source = match &listed {
+            Some(_) => format!("GitHub Copilot · {who} · the account's chat models"),
+            None => format!("GitHub Copilot · {who} · suggested models (sign in with GitHub to list the account's)"),
+        };
+        d.models = listed.unwrap_or_else(|| copilot::MODELS.iter().map(|m| m.to_string()).collect());
         return d;
     }
     let host = if cfg.base_url.trim().is_empty() { crate::paw_agent::DEFAULT_OLLAMA_URL } else { cfg.base_url.trim() };

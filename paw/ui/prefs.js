@@ -3,6 +3,7 @@ const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const PROVIDER_NAMES = { anthropic: "Anthropic", copilot: "GitHub Copilot", ollama: "Ollama" }; // Paw Agent's providers
 
 let settings = null;
 let detections = {};
@@ -176,7 +177,7 @@ function renderDetail() {
   $("d-name").readOnly = a.builtin;
   $("d-enabled").checked = a.enabled;
 
-  if (a.io === "paw") $("d-status").innerHTML = `<span class="ok">● Built into Paw</span><span>· ${esc(a.provider === "anthropic" ? "Anthropic" : "Ollama")}</span>`;
+  if (a.io === "paw") $("d-status").innerHTML = `<span class="ok">● Built into Paw</span><span>· ${esc(PROVIDER_NAMES[a.provider] ?? "Ollama")}</span>`;
   else if (!d) $("d-status").innerHTML = `<span class="missing">Checking…</span>`;
   else if (!d.installed) $("d-status").innerHTML = `<span class="missing">Not found on your PATH</span> <span>· looked for <code>${esc(a.binary)}</code></span>`;
   else $("d-status").innerHTML = `<span class="ok">● Installed</span>${d.version ? `<span>· ${esc(d.version)}</span>` : ""}<span>· <code>${esc(d.path)}</code></span>`;
@@ -271,26 +272,84 @@ $("d-skills-delivery").addEventListener("change", (e) => { current().skills_deli
 // The API key goes straight to the Keychain; Settings never reads it back.
 let keyStatus = null;
 let keySources = null; // where an Anthropic key was found (never the key)
+let copilotStatus = null; // Paw's Copilot sign-in and Copilot CLI's (never a token)
 async function refreshKeyStatus() {
   try { keyStatus = await invoke("paw_key_status"); } catch { keyStatus = {}; }
   try { keySources = await invoke("paw_key_sources"); } catch { keySources = []; }
+  try { copilotStatus = await invoke("paw_copilot_status"); } catch { copilotStatus = {}; }
   const a = current();
   if (a?.io === "paw") renderPaw(a);
 }
 function renderPaw(a) {
-  const anthropic = a.provider === "anthropic";
-  $("d-provider").value = anthropic ? "anthropic" : "ollama";
+  const provider = PROVIDER_NAMES[a.provider] ? a.provider : "ollama";
+  const anthropic = provider === "anthropic";
+  $("d-provider").value = provider;
   $("d-baseurl").value = a.base_url || "";
   $("d-baseurl").placeholder = anthropic ? "https://api.anthropic.com" : "http://localhost:11434";
   $("d-baseurl-hint").textContent = anthropic ? "Leave empty for Anthropic's API." : "Leave empty for the Ollama on this Mac.";
   document.querySelectorAll(".d-anthropic-only").forEach((el) => el.classList.toggle("hidden", !anthropic));
+  document.querySelectorAll(".d-copilot-only").forEach((el) => el.classList.toggle("hidden", provider !== "copilot"));
+  // Copilot's address comes with the account (individual, business, enterprise).
+  document.querySelectorAll(".d-addr").forEach((el) => el.classList.toggle("hidden", provider === "copilot"));
   const has = keyStatus?.anthropic;
   $("d-keystatus").textContent = keyStatus == null ? "Checking the Keychain…"
     : has ? "A key is saved in your Keychain. Enter a new one to replace it." : "No key yet. It's stored in your macOS Keychain, never in Paw's settings.";
   $("d-keydel").disabled = !has;
   renderKeySources(a);
+  renderCopilot();
   renderAllowed(a);
 }
+
+// ---------- Paw Agent: GitHub Copilot sign-in ----------
+let copilotSigningIn = false;
+let copilotError = "";
+function renderCopilot() {
+  const st = copilotStatus;
+  const who = st?.login ? ` as ${st.login}` : "";
+  $("d-cp-status").textContent = copilotError ? copilotError
+    : st == null ? "Checking…"
+    : copilotSigningIn ? "Waiting for you to approve Paw on GitHub…"
+    : st.signed_in ? `Signed in to GitHub${who}. Paw Agent uses this sign-in.`
+    : st.cli ? `Not signed in. Paw Agent uses Copilot CLI's sign-in (${st.cli}) for now.`
+    : "Not signed in, and Copilot CLI isn't signed in either.";
+  $("d-cp-signin").textContent = st?.signed_in ? "Sign In Again" : "Sign in with GitHub";
+  $("d-cp-signin").disabled = copilotSigningIn;
+  $("d-cp-cancel").classList.toggle("hidden", !copilotSigningIn);
+  $("d-cp-signout").classList.toggle("hidden", !st?.signed_in || copilotSigningIn);
+  if (!copilotSigningIn) $("d-cp-device").classList.add("hidden");
+}
+listen("copilot:device", ({ payload }) => {
+  if (!copilotSigningIn) return;
+  $("d-cp-code").textContent = payload.code;
+  $("d-cp-open").dataset.url = payload.uri;
+  $("d-cp-device").classList.remove("hidden");
+  navigator.clipboard?.writeText(payload.code).catch(() => {});
+});
+$("d-cp-signin").onclick = async () => {
+  copilotSigningIn = true;
+  copilotError = "";
+  renderCopilot();
+  try {
+    await invoke("paw_copilot_sign_in");
+  } catch (err) {
+    copilotError = String(err) === "Sign-in cancelled." ? "" : `Couldn't sign in: ${err}`;
+  }
+  copilotSigningIn = false;
+  await refreshKeyStatus();
+  rescan(); // the account's models
+};
+$("d-cp-cancel").onclick = () => invoke("paw_copilot_cancel_sign_in").catch(() => {});
+$("d-cp-open").onclick = (e) => {
+  e.preventDefault();
+  if (e.target.dataset.url) invoke("open_url", { url: e.target.dataset.url }).catch(() => {});
+};
+$("d-cp-signout").onclick = async () => {
+  if (!confirm("Sign Paw out of GitHub Copilot? Paw Agent then uses Copilot CLI's sign-in, if there is one.")) return;
+  copilotError = "";
+  try { await invoke("paw_copilot_sign_out"); } catch (err) { copilotError = String(err); }
+  await refreshKeyStatus();
+  rescan();
+};
 
 function renderKeySources(a) {
   const sel = $("d-keysource");
@@ -809,12 +868,16 @@ function renderPlugins() {
 async function installPlugin(id, verb = "Install") {
   const m = plState.catalog?.plugins.find((x) => x.id === id);
   if (!m) return;
-  const can = (m.permissions ?? []).map((p) => `• ${PERMISSION_TEXT[p] ?? p}`).join("\n") || "• nothing beyond running in its sandbox";
+  // An update marks what the installed version couldn't do yet.
+  const had = plState.installed?.find((p) => p.manifest.id === id)?.manifest.permissions;
+  const perms = m.permissions ?? [];
+  const can = perms.map((p) => `• ${PERMISSION_TEXT[p] ?? p}${had && !had.includes(p) ? "  (new)" : ""}`).join("\n") || "• nothing beyond running in its sandbox";
   if (!confirm(`${verb} “${m.name}” ${m.version}${m.author ? ` by ${m.author}` : ""}?\n\nIt will be able to:\n${can}\n\nPlugins run in a sandbox and can only do what's listed.`)) return;
   plState.busy.add(id);
   renderPlugins();
   try {
-    await invoke("plugin_install", { source: plSource(), id });
+    // Paw refuses the plugin if its own manifest asks for more than this.
+    await invoke("plugin_install", { source: plSource(), id, permissions: perms });
     $("pl-msg").textContent = `${m.name} ${m.version} is installed and on. Its commands are in /help and /plugins.`;
   } catch (e) {
     alert(`Couldn't install ${m.name}: ${e}`);

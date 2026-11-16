@@ -252,7 +252,7 @@ async function newSession(agentId, opts = {}) {
 function banner(S) {
   if (S.task) return taskBanner(S);
   const d = detections[S.agent.id];
-  const ver = isPaw(S.agent) ? ` <span class="dim">built-in · ${esc(S.agent.provider === "anthropic" ? "Anthropic" : "Ollama")}</span>`
+  const ver = isPaw(S.agent) ? ` <span class="dim">built-in · ${esc({ anthropic: "Anthropic", copilot: "GitHub Copilot" }[S.agent.provider] ?? "Ollama")}</span>`
     : d?.version ? ` <span class="dim">${esc(d.version)}</span>` : "";
   info(S,
     `<b>${esc(S.agent.name)}</b>${ver}\n` +
@@ -422,13 +422,16 @@ async function closeSession(sid) {
 async function submit(text) {
   const S = curS();
   if (!S || (!text.trim() && !S.attachments?.length)) return;
-  if (text.trim() && S.history[S.history.length - 1] !== text) S.history.push(text);
+  // A line typed while a shell command runs is input for it (y/N, a
+  // password…): it stays out of history, which is saved and shown by ⌃R.
+  const forRunning = S.shellBusy && !text.startsWith("/");
+  if (!forRunning && text.trim() && S.history[S.history.length - 1] !== text) S.history.push(text);
   S.histIdx = S.history.length;
   S.draft = "";
 
   if (text.startsWith("/") && (await slashCommand(S, text.trim()))) return;
 
-  // A shell command is still running: the line is input for it (y/N, passwords…).
+  // A shell command is still running: the line is input for it.
   if (S.shellBusy) {
     await invoke("shell_write", { id: S.shell, text }).catch((e) => sys(S, `✗ ${e}`));
     return;
@@ -1615,9 +1618,13 @@ marked.setOptions({ gfm: true, breaks: false });
 function renderMarkdown(md, breaks = false) {
   try {
     const html = marked.parse(md, { async: false, breaks });
+    // HTML only: no SVG or MathML, whose <image href> would load a URL. No
+    // tag or attribute that fetches anything (img, background, srcset…):
+    // a reply could otherwise send data to any server just by being shown.
     return DOMPurify.sanitize(html, {
-      FORBID_TAGS: ["style", "form", "input", "button", "textarea", "select", "iframe", "img", "video", "audio"],
-      FORBID_ATTR: ["style"],
+      USE_PROFILES: { html: true },
+      FORBID_TAGS: ["style", "form", "input", "button", "textarea", "select", "iframe", "img", "video", "audio", "picture", "source", "track"],
+      FORBID_ATTR: ["style", "background", "srcset", "poster", "ping"],
     });
   } catch {
     return esc(md);
@@ -3343,7 +3350,7 @@ function openGroup(out) {
 
 function summarizeGroup(g) {
   const steps = [...g.querySelectorAll(":scope > .tg-body > .t-tool")];
-  const failed = g.querySelectorAll(":scope > .tg-body > .t-result.bad").length;
+  const failed = g.querySelectorAll(":scope > .tg-body > .bad").length;
   const counts = new Map();
   for (const st of steps) counts.set(st.dataset.tool, (counts.get(st.dataset.tool) ?? 0) + 1);
   const kinds = [...counts].map(([t, n]) => (n > 1 ? `${t} ×${n}` : t)).join(" · ");
@@ -3411,7 +3418,9 @@ const turnBlock = (out, turn) => out.querySelector(`:scope > .turn-block[data-tu
 function place(out, el) {
   if (!el) return;
   const nodes = el.nodeType === 11 ? [...el.childNodes] : [el];
-  for (const node of nodes) {
+  for (let node of nodes) {
+    if (node.cli) node = cliStep(out, node);
+    if (!node) continue;
     if (isStep(node)) {
       const g = openGroup(out);
       g.querySelector(":scope > .tg-body").appendChild(node);
@@ -3471,16 +3480,72 @@ function fold(cls, summaryHtml, body) {
   const d = document.createElement("details");
   d.className = "tl fold " + cls;
   d.innerHTML = `<summary>${summaryHtml}</summary><pre></pre>`;
-  const text = body || "";
-  d.addEventListener("toggle", () => { d.lastElementChild.textContent = d.open ? text : ""; });
+  d.body = body || "";
+  d.addEventListener("toggle", () => { d.lastElementChild.textContent = d.open ? redactSecrets(d.body) : ""; });
   return d;
+}
+
+// ---------- secrets on screen ----------
+// Credentials that steps print (a config file the agent read, a header in a
+// script it wrote) are masked wherever the transcript shows step text.
+// Copilot wraps long lines, so a token may run on over the next lines: a
+// whole line of token characters, or a last piece that ends at a quote.
+const MASK = "••••••";
+const TOK = "[A-Za-z0-9+/=._~-]";
+const SECRETS = [
+  [new RegExp(`(\\b(?:Bearer|Basic)\\s+)${TOK}{16,}(?:\\n[ \\t]*(?:${TOK}{16,}(?=\\n|$)|${TOK}+(?=['"\\],}])))*`, "g"), `$1${MASK}`],
+  [/\b(?:sk-(?:ant-|proj-)?[\w-]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_\w{30,}|xox[abprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|AIza[\w-]{35}|eyJ[\w-]{10,}\.[\w-]{10,}\.[\w-]{10,})/g, MASK],
+  [new RegExp(`((?:secret|token|passw(?:or)?d|api[_-]?key|access[_-]?key|private[_-]?key|credential)[\\w-]*["']?\\s*[:=]\\s*["']?)(?![/~.])${TOK}{12,}`, "gi"), `$1${MASK}`],
+  [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, `-----BEGIN PRIVATE KEY----- ${MASK} -----END PRIVATE KEY-----`],
+];
+function redactSecrets(text) {
+  for (const [re, to] of SECRETS) text = text.replace(re, to);
+  return text;
+}
+
+// ---------- Copilot CLI steps ----------
+// Copilot prints each tool call as a block after a blank line: a header
+// (" $ Shell List the tools 40 lines…", " ✗ Shell … Failed", " MD Read …")
+// then the command, script or output indented three spaces. Each block
+// becomes a step like a Claude Code tool call: grouped, its body shown on
+// click. Anything else stays markdown.
+const CLI_STEP = /^ (?![-*+>#|\d])(\S{1,3}) +(\S+)(?: +(.*?))?\s*$/;
+
+/** The node to place for Copilot stdout line `node` (null: it went into the open step). */
+function cliStep(out, node) {
+  const text = node.mdSrc[0];
+  const last = out.lastElementChild;
+  const open = last?.classList.contains("tool-group") && !last.classList.contains("closed")
+    ? last.querySelector(":scope > .tg-body > .t-tool:last-child") : null;
+  if (open?.cliGap != null) {
+    if (!text.trim()) { open.cliGap++; return null; }
+    if (text.startsWith("   ")) {
+      open.body += (open.body ? "\n".repeat(open.cliGap + 1) : "") + text.slice(3);
+      open.cliGap = 0;
+      if (open.open) open.lastElementChild.textContent = redactSecrets(open.body);
+      return null;
+    }
+  }
+  const afterBlank = open ? open.cliGap > 0 : !last?.mdSrc || !last.mdSrc.at(-1).trim();
+  const m = afterBlank && text.match(CLI_STEP);
+  if (!m) return node;
+  const [, icon, word, rest = ""] = m;
+  const plain = icon === "●"; // a tool shown by what it does, not its name
+  const arg = redactSecrets((plain ? `${word} ${rest}` : rest).trim().replace(/\s{2,}/g, " · "));
+  const failed = icon === "✗";
+  const step = fold("t-tool" + (failed ? " bad" : ""), `<span class="b${failed ? "" : " ok"}">⏺</span> ` +
+    (plain ? `<b>${esc(arg)}</b>` : `<b>${esc(word)}</b> <span class="arg">${esc(arg)}</span>`), "");
+  step.dataset.tool = plain ? "Tool" : word;
+  step.dataset.arg = arg;
+  step.cliGap = 0;
+  return step;
 }
 
 function summarizeToolInput(input) {
   if (!input || typeof input !== "object") return "";
   const v = input.command || input.file_path || input.path || input.pattern || input.url ||
     input.description || input.prompt || JSON.stringify(input);
-  return String(v).split("\n")[0].slice(0, 120);
+  return redactSecrets(String(v).split("\n")[0].slice(0, 120));
 }
 
 function renderLine(S, l) {
@@ -3532,7 +3597,11 @@ function renderLine(S, l) {
     }
     return el;
   }
-  if (l.stream === "stdout" && S.mode === "oneshot") return mdRun(l.text);
+  if (l.stream === "stdout" && S.mode === "oneshot") {
+    const d = mdRun(l.text);
+    d.cli = S.agent.id === "copilot";
+    return d;
+  }
   if (l.stream === "stdout" && l.text.startsWith("{")) {
     let ev;
     try { ev = JSON.parse(l.text); } catch { ev = null; }
@@ -3581,7 +3650,7 @@ function renderClaudeEvent(ev) {
       const lines = body.split("\n").filter((s) => s.trim());
       const more = lines.length > 1 ? ` <span class="dim">(+${lines.length - 1} lines)</span>` : "";
       frag.appendChild(fold("t-result" + (c.is_error ? " bad" : ""),
-        `<span class="elbow">⎿</span> ${esc((lines[0] ?? "(no output)").slice(0, 160))}${more}`, body));
+        `<span class="elbow">⎿</span> ${esc(redactSecrets((lines[0] ?? "(no output)").slice(0, 160)))}${more}`, body));
     }
     return frag.childNodes.length ? frag : null;
   }
@@ -3640,7 +3709,7 @@ function trackUsage(S, text) {
 }
 
 /** The model a tab runs, as its agent reported it (init), else as set. */
-const modelOf = (S) => String(S.actualModel || S.model || "default").replace(/ · (Ollama|Anthropic)$/, "");
+const modelOf = (S) => String(S.actualModel || S.model || "default").replace(/ · (Ollama|Anthropic|GitHub Copilot)$/, "");
 
 function recordQuery(S, ended, ev = null) {
   if (!S.turnStarted) return;

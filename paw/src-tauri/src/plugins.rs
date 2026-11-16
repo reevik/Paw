@@ -146,8 +146,10 @@ pub async fn catalog_from(source: &str) -> Result<Catalog, String> {
 }
 
 /// Download (or copy) a plugin from a catalog into `dir/<id>`, replacing an
-/// older copy only once everything arrived.
-pub async fn install_from(source: &str, id: &str, dir: &Path) -> Result<Manifest, String> {
+/// older copy only once everything arrived. `approved` is what the user
+/// agreed to (the catalog's list, shown before installing): a plugin.json
+/// that asks for anything more is refused, since that's what it would run with.
+pub async fn install_from(source: &str, id: &str, dir: &Path, approved: &[String]) -> Result<Manifest, String> {
     let catalog = catalog_from(source).await?;
     let entry = catalog.plugins.iter().find(|m| m.id == id).ok_or_else(|| format!("The catalog has no plugin “{id}”"))?;
     let folder = if entry.path.is_empty() { id.to_string() } else { entry.path.clone() };
@@ -159,6 +161,12 @@ pub async fn install_from(source: &str, id: &str, dir: &Path) -> Result<Manifest
     check(&m)?;
     if m.id != id {
         return Err(format!("{id}: its plugin.json says it's “{}”", m.id));
+    }
+    if let Some(p) = m.permissions.iter().find(|p| !approved.contains(p)) {
+        return Err(format!(
+            "{id}: its plugin.json asks for “{p}”, which isn't among the permissions you approved. It wasn't installed; \
+the catalog may be out of date or tampered with."
+        ));
     }
     if m.main.is_empty() {
         m.main = "main.js".into();
@@ -271,9 +279,10 @@ pub fn plugins_installed(with_code: Option<bool>) -> Result<Vec<Installed>, Stri
     Ok(installed_in(&plugins_dir()?, with_code.unwrap_or(false)))
 }
 
+/// `permissions`: the ones the user approved before installing.
 #[tauri::command]
-pub async fn plugin_install(app: AppHandle, source: Option<String>, id: String) -> Result<Manifest, String> {
-    let m = install_from(&source_or_official(source), &id, &plugins_dir()?).await?;
+pub async fn plugin_install(app: AppHandle, source: Option<String>, id: String, permissions: Vec<String>) -> Result<Manifest, String> {
+    let m = install_from(&source_or_official(source), &id, &plugins_dir()?, &permissions).await?;
     changed(&app);
     Ok(m)
 }
@@ -373,12 +382,13 @@ mod tests {
         let c = catalog_from(src.to_str().unwrap()).await.unwrap();
         assert_eq!((c.plugins.len(), c.plugins[0].author.as_str()), (1, "Paw"));
 
-        let m = install_from(src.to_str().unwrap(), "hello", &home).await.unwrap();
+        let ok = vec!["commands".to_string()];
+        let m = install_from(src.to_str().unwrap(), "hello", &home, &ok).await.unwrap();
         assert_eq!(m.version, "1.2.0");
         assert!(home.join("hello/main.js").is_file() && home.join("hello/notes.md").is_file());
         // Its data survives an update.
         write(&home.join("hello/data.json"), r#"{"n":1}"#);
-        install_from(src.to_str().unwrap(), "hello", &home).await.unwrap();
+        install_from(src.to_str().unwrap(), "hello", &home, &ok).await.unwrap();
         assert_eq!(std::fs::read_to_string(home.join("hello/data.json")).unwrap(), r#"{"n":1}"#);
 
         let list = installed_in(&home, true);
@@ -389,7 +399,23 @@ mod tests {
         assert!(!list[0].enabled && list[0].code.is_none(), "a plugin that's off doesn't run");
         remove_in(&home, "hello").unwrap();
         assert!(installed_in(&home, false).is_empty() && !home.join("hello").exists());
-        assert!(install_from(src.to_str().unwrap(), "nope", &home).await.is_err());
+        assert!(install_from(src.to_str().unwrap(), "nope", &home, &ok).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn refuses_permissions_the_user_did_not_approve() {
+        let (src, home) = (tmp("grab"), tmp("grabhome"));
+        // The catalog shows "statusbar"; the plugin itself asks for shell and network too.
+        write(&src.join("index.json"), r#"{"plugins":[{"id":"clock","name":"Clock","version":"1","permissions":["statusbar"],"path":"clock"}]}"#);
+        write(&src.join("clock/plugin.json"), r#"{"id":"clock","name":"Clock","version":"1","permissions":["statusbar","shell","network"]}"#);
+        write(&src.join("clock/main.js"), "");
+        let approved = vec!["statusbar".to_string()];
+        let err = install_from(src.to_str().unwrap(), "clock", &home, &approved).await.unwrap_err();
+        assert!(err.contains("“shell”") && err.contains("approved"), "{err}");
+        assert!(!home.join("clock").exists(), "nothing installed");
+        // Asking for less than approved is fine.
+        write(&src.join("clock/plugin.json"), r#"{"id":"clock","name":"Clock","version":"1","permissions":[]}"#);
+        assert!(install_from(src.to_str().unwrap(), "clock", &home, &approved).await.is_ok());
     }
 
     #[tokio::test]
@@ -399,11 +425,11 @@ mod tests {
         assert!(catalog_from(src.to_str().unwrap()).await.unwrap_err().contains("unknown permission"));
         write(&src.join("index.json"), r#"{"plugins":[{"id":"evil","name":"Evil","version":"1","path":"evil"}]}"#);
         write(&src.join("evil/plugin.json"), r#"{"id":"evil","name":"Evil","version":"1","files":["../../.zshrc"]}"#);
-        assert!(install_from(src.to_str().unwrap(), "evil", &home).await.unwrap_err().contains("allowed file name"));
+        assert!(install_from(src.to_str().unwrap(), "evil", &home, &[]).await.unwrap_err().contains("allowed file name"));
         write(&src.join("evil/plugin.json"), r#"{"id":"other","name":"Evil","version":"1"}"#);
-        assert!(install_from(src.to_str().unwrap(), "evil", &home).await.is_err());
+        assert!(install_from(src.to_str().unwrap(), "evil", &home, &[]).await.is_err());
         write(&src.join("index.json"), r#"{"plugins":[{"id":"evil","name":"Evil","version":"1","path":"../outside"}]}"#);
-        assert!(install_from(src.to_str().unwrap(), "evil", &home).await.unwrap_err().contains("path"));
+        assert!(install_from(src.to_str().unwrap(), "evil", &home, &[]).await.unwrap_err().contains("path"));
         assert!(!home.join("evil").exists());
         assert!(!valid_id("../x") && !valid_id("A") && valid_id("pomodoro"));
     }
@@ -418,7 +444,7 @@ mod tests {
         let home = tmp("official");
         for m in &c.plugins {
             assert!(!m.author.is_empty() && !m.description.is_empty(), "{}: author and description", m.id);
-            let got = install_from(src, &m.id, &home).await.unwrap_or_else(|e| panic!("{}: {e}", m.id));
+            let got = install_from(src, &m.id, &home, &m.permissions).await.unwrap_or_else(|e| panic!("{}: {e}", m.id));
             assert_eq!(got.version, m.version, "{}: index.json and plugin.json agree", m.id);
             assert_eq!(got.permissions, m.permissions, "{}: same permissions in both", m.id);
         }

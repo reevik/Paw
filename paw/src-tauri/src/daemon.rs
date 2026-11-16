@@ -494,6 +494,7 @@ async fn dispatch(app: AppHandle, cmd: String, a: Value) -> Result<Value, String
         "paw_agent_approve" => ok(paw_agent::paw_agent_approve(app.state(), arg(&a, "id")?, arg(&a, "request")?, arg(&a, "decision")?, arg(&a, "rule")?).await?),
         // Factories (factories::runner): they run here, in the background.
         "factory_list" => {
+            crate::factories::runner::remember_window_model(arg(&a, "model")?);
             let mut v = factory_runner(&app).list();
             v["triggers"] = app.state::<Arc<crate::factories::triggers::Triggers>>().status();
             Ok(v)
@@ -503,7 +504,10 @@ async fn dispatch(app: AppHandle, cmd: String, a: Value) -> Result<Value, String
             Ok(Value::Null)
         }
         "factory_get" => ok(factory_runner(&app).get(&arg::<String>(&a, "run")?)),
-        "factory_run" => ok(factory_runner(&app).start(&arg::<String>(&a, "factory")?, "manual", arg(&a, "payload")?)?),
+        "factory_run" => {
+            crate::factories::runner::remember_window_model(arg(&a, "model")?);
+            ok(factory_runner(&app).start(&arg::<String>(&a, "factory")?, "manual", arg(&a, "payload")?)?)
+        }
         "factory_stop" => ok(factory_runner(&app).stop(&arg::<String>(&a, "run")?)?),
         "factory_retry" => ok(factory_runner(&app).retry(&arg::<String>(&a, "run")?, &arg::<String>(&a, "node")?)?),
         "factory_skip" => ok(factory_runner(&app).skip(&arg::<String>(&a, "run")?, &arg::<String>(&a, "node")?)?),

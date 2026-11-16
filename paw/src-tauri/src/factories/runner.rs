@@ -180,15 +180,44 @@ pub struct Runner {
     paused: Mutex<HashSet<String>>,
 }
 
-/// Settings the runner reads: (agents at once, the default model).
+/// Settings the runner reads: (agents at once, the default model). The
+/// default model is Settings' one, else the one the window falls back to (its
+/// first model), which the window passes along and is kept here for runs that
+/// start with no window open.
 fn settings() -> (usize, String) {
     let v: Value = crate::paths::home()
         .and_then(|h| std::fs::read_to_string(h.join("settings.json")).ok())
         .and_then(|t| serde_json::from_str(&t).ok())
         .unwrap_or(Value::Null);
     let n = v.pointer("/general/max_agents").and_then(Value::as_u64).unwrap_or(3);
-    let model = v.pointer("/models/default").and_then(Value::as_str).unwrap_or("").to_string();
+    let model = v
+        .pointer("/models/default")
+        .and_then(Value::as_str)
+        .filter(|m| m.contains('/'))
+        .map(str::to_string)
+        .or_else(window_model)
+        .unwrap_or_default();
     (if n == 0 { usize::MAX } else { n as usize }, model)
+}
+
+fn window_model_path() -> Option<PathBuf> {
+    factories_dir().map(|d| d.join(".runs").join("default-model"))
+}
+
+fn window_model() -> Option<String> {
+    window_model_path().and_then(|p| std::fs::read_to_string(p).ok()).map(|s| s.trim().to_string()).filter(|m| m.contains('/'))
+}
+
+/// The model the window falls back to ("provider/model"), kept for later runs.
+pub fn remember_window_model(model: Option<String>) {
+    let Some(m) = model.map(|m| m.trim().to_string()).filter(|m| m.contains('/')) else { return };
+    if window_model().as_deref() == Some(m.as_str()) {
+        return;
+    }
+    if let Some(p) = window_model_path() {
+        let _ = std::fs::create_dir_all(p.parent().unwrap());
+        let _ = std::fs::write(p, m);
+    }
 }
 
 fn runs_dir() -> Option<PathBuf> {

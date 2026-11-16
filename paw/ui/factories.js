@@ -15,7 +15,7 @@ const RUN_STATE_TEXT = { running: "running", done: "done", failed: "failed", sto
 
 /** The factory files and their runs, from the background process. */
 function loadFactories() {
-  factoryState.loading ??= invoke("factory_list")
+  factoryState.loading ??= invoke("factory_list", { model: defaultPawModel() || null })
     .then((r) => {
       factoryState.dir = r.dir ?? "";
       factoryState.list = r.factories ?? [];
@@ -174,6 +174,10 @@ function shownRun(S) {
   return (S.factory.run && runs.find((r) => r.id === S.factory.run)) || runs[0] || null;
 }
 
+/** Do two versions of a factory have the same nodes, wired the same way? */
+const sameShape = (a, b) => !!a && !!b &&
+  JSON.stringify(a.nodes.map((n) => [n.id, n.needs ?? []])) === JSON.stringify(b.nodes.map((n) => [n.id, n.needs ?? []]));
+
 // ---------- opening ----------
 /** Open a factory's tab (or go to it), or make a new factory first. */
 async function openFactory(id) {
@@ -265,11 +269,20 @@ function factorySubmit(S, text, atts) {
 }
 
 // ---------- the board ----------
-/** The factory (or a run of it) as the task board draws plans. */
+/** What the board draws: a run picked from the list, or the run going, as it
+ *  was when it started; otherwise the file as it is now, with the last run's
+ *  states on its nodes when that run had the same nodes. */
 function factoryPlan(S) {
   const f = factoryById(S.factory.id);
-  const run = shownRun(S);
-  const def = run?.def ?? f?.factory;
+  const latest = runsOf(S.factory.id)[0] ?? null;
+  const picked = S.factory.run ? runsOf(S.factory.id).find((r) => r.id === S.factory.run) : null;
+  let run, def;
+  if (picked) { run = picked; def = picked.def; }
+  else if (latest?.state === "running") { run = latest; def = latest.def; }
+  else {
+    def = f?.factory ?? latest?.def;
+    run = latest && (!f?.factory || sameShape(latest.def, f.factory)) ? latest : null;
+  }
   if (!def) return null;
   const steps = def.nodes.map((n) => {
     const r = run?.nodes.find((x) => x.id === n.id);
@@ -285,7 +298,7 @@ function factoryPlan(S) {
       endedAt: r?.ended_at ?? null,
     };
   });
-  return { def, run, steps, selected: S.factory.selected };
+  return { def, run, latest, steps, selected: S.factory.selected };
 }
 
 function renderFactoryView(S, host) {
@@ -300,7 +313,7 @@ function renderFactoryView(S, host) {
   }
   const f = factoryById(S.factory.id);
   const plan = factoryPlan(S);
-  const run = plan?.run;
+  const run = plan?.run ?? (S.factory.run ? null : plan?.latest);
   const runs = runsOf(S.factory.id);
   const running = runs.some((r) => r.state === "running");
   const state = run ? run.state : f?.error ? "failed" : "draft";
@@ -417,8 +430,10 @@ function factorySummaryHtml(S, plan, f) {
   parts.push(`<div class="tk-dim">${def.nodes.length} node${def.nodes.length === 1 ? "" : "s"} · works in ${esc(def.folder?.trim() || "~")}${def.model ? ` · ${esc(modelShort(def.model))}` : ""}</div>`);
   // The trigger as the file has it now (the run may be of an older version).
   parts.push(triggerHtml(S.factory.id, f?.factory ?? def));
-  if (f && f.factory && f.factory !== def && JSON.stringify(f.factory) !== JSON.stringify(def)) {
-    parts.push(`<div class="tk-hint">The file changed since this run started; the graph shows the run's version.</div>`);
+  if (run && f?.factory && JSON.stringify(f.factory) !== JSON.stringify(def)) {
+    parts.push(`<div class="tk-hint">The graph shows this run as it was when it started; the file has changed since.</div>`);
+  } else if (!run && plan.latest) {
+    parts.push(`<div class="tk-hint">The last run (${esc(fmtWhen(plan.latest.started_at))}, ${esc(plan.latest.state)}) used an earlier version of the file; pick it in the run list to see it.</div>`);
   }
   if (f?.error && run) parts.push(`<div class="tk-warn">The file has a problem now: ${esc(f.error)}</div>`);
   if (run) {
@@ -448,12 +463,13 @@ async function factoryClick(S, e, P) {
   }
   const b = e.target.closest("[data-fact]");
   if (!b || b.tagName === "SELECT") return;
-  const run = shownRun(S);
+  // Stop acts on the run going; Retry, Skip and approvals on the run shown.
+  const run = b.dataset.fact === "stop" ? runsOf(S.factory.id).find((r) => r.state === "running") : factoryPlan(S)?.run;
   const fail = (err) => sys(S, `✗ ${err}`);
   try {
     switch (b.dataset.fact) {
       case "run": {
-        const id = await invoke("factory_run", { factory: S.factory.id, payload: null });
+        const id = await invoke("factory_run", { factory: S.factory.id, payload: null, model: defaultPawModel() || null });
         S.factory.run = null; // follow it (the latest)
         await loadFactories();
         if (!factoryState.runs.has(id)) {

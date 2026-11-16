@@ -291,7 +291,8 @@ function factoryPlan(S) {
       title: n.title?.trim() || n.id,
       needs: n.needs ?? [],
       condFrom: n.when?.from ?? null,
-      state: r?.state ?? "waiting",
+      // A wait node at work is waiting on its check, not running an agent.
+      state: n.wait && r?.state === "running" ? "checking" : r?.state ?? "waiting",
       model: n.wait ? "waits" : (n.model || def.model || ""),
       edits: n.wait ? true : n.edits !== false,
       startedAt: r?.started_at ?? null,
@@ -339,7 +340,8 @@ function renderFactoryView(S, host) {
     body = `<div class="tk-empty fa-broken"><b>${esc(f.id)}.yaml can't be read.</b><div class="tk-err">${esc(f.error ?? "")}</div><div class="tk-dim">Fix the file (Edit file), or ask ${esc(S.agent.name)} below to fix it.</div></div>`;
   } else {
     const vsplit = `<div class="tk-vsplit" title="Drag to resize · double-click to reset"></div>`;
-    body = `<div class="tk-body"><div class="tk-graph">${graphHtml(plan)}</div>${vsplit}<aside class="tk-side">${factorySideHtml(S, plan, f)}</aside></div>`;
+    const loop = repeats(plan.def) ? " fa-loop" : "";
+    body = `<div class="tk-body"><div class="tk-graph${loop}">${graphHtml(plan)}</div>${vsplit}<aside class="tk-side">${factorySideHtml(S, plan, f)}</aside></div>`;
   }
   // Not under the user's typing; keep where the graph was scrolled.
   if (host.contains(document.activeElement) && document.activeElement.matches("input, textarea")) return;
@@ -349,10 +351,83 @@ function renderFactoryView(S, host) {
   const g = host.querySelector(".tk-graph");
   if (g) {
     g.scrollLeft = scroll;
-    requestAnimationFrame(() => drawEdges(g, plan));
+    requestAnimationFrame(() => drawFactoryEdges(g, S, plan));
   }
   const side = host.querySelector(".tk-side");
   if (side) side.scrollTop = sideScroll;
+}
+
+const repeats = (def) => !!def?.repeat && def.repeat !== false;
+
+/** The lines between nodes, and for a factory that repeats, a line from its
+ *  last nodes back under the graph to its first ones. */
+function drawFactoryEdges(g, S, plan = factoryPlan(S)) {
+  if (!plan) return;
+  drawEdges(g, plan);
+  if (!repeats(plan.def)) return;
+  const svg = g.querySelector(".tk-edges");
+  const box = g.getBoundingClientRect();
+  const at = (id) => g.querySelector(`.tk-node[data-step="${CSS.escape(id)}"]`)?.getBoundingClientRect();
+  const needed = new Set(plan.steps.flatMap((s) => s.needs));
+  const ends = plan.steps.filter((s) => !needed.has(s.id)).map((s) => at(s.id)).filter(Boolean);
+  const starts = plan.steps.filter((s) => !s.needs.length).map((s) => at(s.id)).filter(Boolean);
+  if (!ends.length || !starts.length) return;
+  const x = (r) => r.left + r.width / 2 - box.left + g.scrollLeft;
+  const bottom = (r) => r.bottom - box.top + g.scrollTop;
+  const y = Math.max(...[...ends, ...starts].map(bottom)) + 22; // the line runs back below every node
+  const r = 10;
+  let d = "";
+  // Down from each last node, along the bottom, up into each first node.
+  for (const e of ends) d += `M${x(e)},${bottom(e)} V${y - r} Q${x(e)},${y} ${x(e) - r},${y} `;
+  const left = Math.min(...starts.map(x)), right = Math.max(...ends.map(x));
+  d += `M${right - r},${y} H${left + r} `;
+  for (const st of starts) d += `M${x(st) + r},${y} Q${x(st)},${y} ${x(st)},${y - r} V${bottom(st) + 6} `;
+  const arrows = starts.map((st) => `<path class="fa-loop-head" d="M${x(st) - 4},${bottom(st) + 11} L${x(st)},${bottom(st) + 4} L${x(st) + 4},${bottom(st) + 11}"/>`).join("");
+  const o = typeof plan.def.repeat === "object" ? plan.def.repeat : {};
+  const label = `repeat${o.after ? ` after ${o.after}` : ""}`;
+  const live = plan.run?.state === "running" ? " live" : "";
+  svg.insertAdjacentHTML("beforeend", `<path class="fa-loop-line${live}" d="${d}"/>${arrows}<text class="fa-loop-label" x="${(left + right) / 2}" y="${y - 5}" text-anchor="middle">${esc(label)}</text>`);
+}
+
+/** A factory's run on the time line: each node's span, tokens and state. */
+function factoryTimelineHtml(S) {
+  const plan = factoryPlan(S);
+  const run = plan?.run ?? null;
+  const now = Date.now();
+  const level = plan ? stepLevels(plan.steps) : new Map();
+  const rows = (plan?.steps ?? []).map((st) => {
+    const r = run?.nodes.find((n) => n.id === st.id);
+    const spans = r?.started_at ? [{ at: r.started_at, end: r.ended_at ?? (st.state === "running" || st.state === "needs" || st.state === "checking" ? null : r.started_at), view: st.state }] : [];
+    return {
+      id: st.id, name: st.title, agent: stepModelName(st), level: level.get(st.id) ?? 0, view: st.state, spans,
+      tokens: { known: !!(r?.input_tokens || r?.output_tokens), input: r?.input_tokens ?? 0, output: r?.output_tokens ?? 0 },
+    };
+  });
+  const tokIn = rows.reduce((n, r) => n + r.tokens.input, 0), tokOut = rows.reduce((n, r) => n + r.tokens.output, 0);
+  const done = run ? run.nodes.filter((n) => n.state === "done" || n.state === "skipped").length : 0;
+  const elapsed = run ? (run.ended_at ?? now) - run.started_at : 0;
+  const side = `<aside class="tl-side">
+      <div class="tl-k">Tokens</div>
+      <div class="tl-big">${fmtCount(tokIn + tokOut)} <span class="tl-of">tokens</span></div>
+      <div class="tl-sub">${tokIn || tokOut ? `${fmtCount(tokIn)} in · ${fmtCount(tokOut)} out` : "No tokens yet."}</div>
+      <div class="tl-grid2">
+        <div><div class="tl-k">Elapsed</div><div class="tl-v">${elapsed ? esc(fmtElapsed(elapsed)) : "–"}</div></div>
+        <div><div class="tl-k">Nodes</div><div class="tl-v">${done} of ${rows.length}</div></div>
+        <div><div class="tl-k">Started by</div><div class="tl-v">${esc(run?.trigger ?? "–")}</div></div>
+        <div><div class="tl-k">Started</div><div class="tl-v">${run ? esc(fmtWhen(run.started_at)) : "–"}</div></div>
+      </div>
+      <div class="tl-k">Outcome</div>
+      <div class="tk-state st-${esc(run?.state ?? "draft")}">${esc(run ? RUN_STATE_TEXT[run.state] ?? run.state : "not run yet")}</div>
+    </aside>`;
+  return timelineCore({
+    rows, selected: S.factory.selected, side, label: "node", legend: [["checking", "checking"]],
+    empty: run ? "This run hasn't started any node yet." : "Nothing has run yet. Each node shows here as it runs, on one time line.",
+    foot: (total) => {
+      const failed = run?.nodes.filter((n) => n.state === "failed").length ?? 0;
+      const head = run?.state === "done" ? `Done in ${fmtElapsed(total)}` : `${RUN_STATE_TEXT[run?.state] ?? "Not run"} · ${fmtElapsed(total)}`;
+      return `${head}: ${done} of ${rows.length} nodes${failed ? `, ${failed} failed` : ""}.`;
+    },
+  });
 }
 
 function runProgress(run) {

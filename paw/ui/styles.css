@@ -994,11 +994,12 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
   width: 164px; text-align: left; padding: 8px 10px; border: 0; border-radius: 9px; cursor: default;
   /* Opaque, and above the lines (.tk-edges), so they never cross the text. */
   background: color-mix(in srgb, var(--t-fg) 6%, var(--t-bg-solid, #101014)); color: var(--t-fg);
-  box-shadow: inset 0 0 0 0.5px var(--tk-line); display: flex; flex-direction: column; gap: 3px; font: inherit;
+  --ring: inset 0 0 0 0.5px var(--tk-line);
+  box-shadow: var(--ring); display: flex; flex-direction: column; gap: 3px; font: inherit;
   position: relative; z-index: 1; overflow: hidden; min-width: 0;
 }
-.tk-node:hover { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--t-fg) 30%, transparent); }
-.tk-node.sel { box-shadow: inset 0 0 0 1.5px var(--accent); }
+.tk-node:hover { --ring: inset 0 0 0 1px color-mix(in srgb, var(--t-fg) 30%, transparent); }
+.tk-node.sel, .tk-node.sel:hover { --ring: inset 0 0 0 1.5px var(--accent); }
 .tk-node.v-done .tk-node-title, .tk-node.v-skipped .tk-node-title { color: color-mix(in srgb, var(--t-fg) 75%, transparent); }
 .tk-node.v-skipped { opacity: .6; }
 .tk-node-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
@@ -1011,8 +1012,17 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
 .tk-dot.v-done { background: var(--t-green); opacity: 1; }
 .tk-dot.v-failed { background: var(--t-red); opacity: 1; }
 .tk-dot.v-stopped { background: var(--t-yellow); opacity: 1; }
-.tk-node.v-needs { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--orange) 70%, transparent); }
-.tk-node.v-failed { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--t-red) 55%, transparent); }
+/* Failed glows red; waiting on something (approval, a wait node's check) glows amber. */
+.tk-node.v-failed:not(.sel) { --ring: inset 0 0 0 1px color-mix(in srgb, var(--t-red) 75%, transparent); }
+.tk-node.v-failed { filter: drop-shadow(0 0 7px color-mix(in srgb, var(--t-red) 55%, transparent)); }
+.tk-node.v-needs:not(.sel), .tk-node.v-checking:not(.sel) { --ring: inset 0 0 0 1px color-mix(in srgb, var(--wait-glow) 80%, transparent); }
+.tk-node.v-needs, .tk-node.v-checking { animation: tk-wait-glow 2.4s ease-in-out infinite; }
+@keyframes tk-wait-glow {
+  0%, 100% { filter: drop-shadow(0 0 8px color-mix(in srgb, var(--wait-glow) 60%, transparent)); }
+  50% { filter: drop-shadow(0 0 3px color-mix(in srgb, var(--wait-glow) 35%, transparent)); }
+}
+:root { --wait-glow: #f2a33a; }
+.tk-dot.v-checking { background: var(--wait-glow); opacity: 1; animation: pulse 1.6s ease-in-out infinite; }
 
 .tk-side { min-height: 0; overflow-y: auto; padding: 2px 4px 6px 14px; border-left: 0.5px solid var(--hair); display: flex; flex-direction: column; gap: 6px; }
 .tk-side-title { font-weight: 600; font-size: 13px; }
@@ -1168,6 +1178,7 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
 .tl-bar.v-failed, .tl-swatch.v-failed { background: var(--t-red); opacity: 1; }
 .tl-bar.v-stopped, .tl-swatch.v-stopped { background: var(--t-yellow); opacity: 1; }
 .tl-bar.v-needs, .tl-swatch.v-needs { background: var(--orange); opacity: 1; }
+.tl-bar.v-checking, .tl-swatch.v-checking { background: var(--wait-glow); opacity: 1; }
 .tl-bar.v-skipped, .tl-swatch.v-skipped { background: var(--t-dim); opacity: .35; }
 .tl-tag.v-running { color: var(--t-accent); background: color-mix(in srgb, var(--t-accent) 14%, transparent); }
 .tl-tag.v-done { color: var(--t-green); background: color-mix(in srgb, var(--t-green) 14%, transparent); }
@@ -1231,3 +1242,12 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
 .fa-paused { margin-left: 6px; padding: 0 6px; border-radius: 8px; background: color-mix(in srgb, var(--t-yellow) 18%, transparent); color: var(--t-yellow); font-size: 10.5px; text-transform: none; letter-spacing: 0; }
 .fa-hook { margin-top: 8px; }
 .fa-hook .tk-pre { margin: 2px 0 6px; user-select: text; -webkit-user-select: text; }
+
+/* A factory that repeats: a line from its last nodes back to its first (factories.js › drawFactoryEdges). */
+.tk-graph.fa-loop { padding-bottom: 40px; }
+.tk-edges .fa-loop-line { fill: none; stroke: color-mix(in srgb, var(--t-accent) 55%, var(--tk-line)); stroke-width: 1.5; stroke-dasharray: 6 4; }
+.tk-edges .fa-loop-line.live { animation: fa-loop-flow 1.2s linear infinite; }
+@keyframes fa-loop-flow { to { stroke-dashoffset: -20; } }
+.tk-edges .fa-loop-head { fill: none; stroke: color-mix(in srgb, var(--t-accent) 70%, var(--tk-line)); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.tk-edges .fa-loop-label { fill: var(--t-dim); font-size: 10.5px; }
+.tl-tag.v-checking { color: var(--wait-glow); background: color-mix(in srgb, var(--wait-glow) 14%, transparent); }

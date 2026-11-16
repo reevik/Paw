@@ -16,6 +16,7 @@ const TASK_MAX_STEPS = 12;
 const STEP_STATE_TEXT = {
   waiting: "waiting", running: "running", needs: "needs you", done: "done",
   failed: "failed", stopped: "stopped", skipped: "skipped",
+  checking: "checking", // a factory's wait node, checking its command
 };
 
 // ---------- lookups ----------
@@ -641,7 +642,7 @@ function renderTaskView() {
 function renderTaskLower(S) {
   const lower = $("task-lower"), tl = $("task-timeline"), term = $("terminal");
   if (!lower || !tl) return;
-  const t = S?.task;
+  const t = S?.task ?? S?.factory;
   const timeline = !!t && S.lowerView === "timeline";
   lower.classList.toggle("hidden", !t);
   for (const b of lower.querySelectorAll("[data-lower]")) b.classList.toggle("on", b.dataset.lower === (timeline ? "timeline" : "stream"));
@@ -652,7 +653,7 @@ function renderTaskLower(S) {
   if (tl.contains(document.activeElement) && document.activeElement.matches("input")) return;
   const rows = tl.querySelector(".tl-rows");
   const scroll = rows?.scrollTop ?? 0;
-  tl.innerHTML = timelineHtml(S);
+  tl.innerHTML = S.task ? timelineHtml(S) : factoryTimelineHtml(S);
   const again = tl.querySelector(".tl-rows");
   if (again) again.scrollTop = scroll;
 }
@@ -698,13 +699,19 @@ function timelineRows(T) {
 }
 
 function timelineHtml(T) {
-  const t = T.task;
+  return timelineCore({
+    rows: timelineRows(T), selected: T.task.selected, side: budgetHtml(T),
+    empty: "Nothing has run yet. Planning and the steps show here as they run, on one time line.",
+    foot: (total) => timelineSummary(T, total),
+  });
+}
+
+/** Rows on one time axis, with a side panel: tasks' and factories' timelines. */
+function timelineCore({ rows, selected, side, empty, foot, label = "step", legend = [] }) {
   const now = Date.now();
-  const rows = timelineRows(T);
   const spans = rows.flatMap((r) => r.spans);
-  const side = budgetHtml(T);
   if (!spans.length) {
-    return `<div class="tl-wrap"><div class="tl-main"><div class="tl-empty">Nothing has run yet. Planning and the steps show here as they run, on one time line.</div></div>${side}</div>${legendHtml()}`;
+    return `<div class="tl-wrap"><div class="tl-main"><div class="tl-empty">${esc(empty)}</div></div>${side}</div>${legendHtml(legend)}`;
   }
   const t0 = Math.min(...spans.map((s) => s.at));
   const t1 = Math.max(...spans.map((s) => s.end ?? now), t0 + 1000);
@@ -720,7 +727,7 @@ function timelineHtml(T) {
       return `<span class="tl-bar v-${esc(s.view)}" style="left:${pct(s.at - t0)};width:max(3px, ${pct(w)})" title="${esc(STEP_STATE_TEXT[s.view] ?? s.view)} · ${esc(fmtElapsed(w))}"></span>`;
     }).join("");
     const runs = r.spans.length > 1 ? `<span class="tl-tag">${r.spans.length} runs</span>` : "";
-    return `<div class="tl-row${r.id && r.id === t.selected ? " sel" : ""}"${r.id ? ` data-step="${esc(r.id)}"` : ""}>
+    return `<div class="tl-row${r.id && r.id === selected ? " sel" : ""}"${r.id ? ` data-step="${esc(r.id)}"` : ""}>
       <div class="tl-lbl" style="padding-left:${8 + r.level * 8}px">
         <span class="tl-name" title="${esc(r.name)} · ${esc(r.agent)}">${esc(r.name)}</span>
         <span class="tl-tag v-${esc(r.view)}">${esc(STEP_STATE_TEXT[r.view] ?? r.view)}</span>${runs}
@@ -732,10 +739,10 @@ function timelineHtml(T) {
     </div>`;
   };
   return `<div class="tl-wrap"><div class="tl-main">
-      <div class="tl-head"><div class="tl-lbl"><span class="tl-name">step</span><span class="tl-grow"></span><span class="tl-tok">tokens</span><span class="tl-dur">time</span></div><div class="tl-axis">${ticks.join("")}</div></div>
+      <div class="tl-head"><div class="tl-lbl"><span class="tl-name">${esc(label)}</span><span class="tl-grow"></span><span class="tl-tok">tokens</span><span class="tl-dur">time</span></div><div class="tl-axis">${ticks.join("")}</div></div>
       <div class="tl-rows">${rows.map(rowHtml).join("")}</div>
-      <div class="tl-foot">${esc(timelineSummary(T, total))}</div>
-    </div>${side}</div>${legendHtml()}`;
+      <div class="tl-foot">${esc(foot(total))}</div>
+    </div>${side}</div>${legendHtml(legend)}`;
 }
 
 function timelineSummary(T, total) {
@@ -786,8 +793,8 @@ function budgetHtml(T) {
     </aside>`;
 }
 
-function legendHtml() {
-  const items = [["running", "running"], ["done", "done"], ["needs", "needs you"], ["failed", "failed"], ["stopped", "stopped"], ["skipped", "skipped"]];
+function legendHtml(extra = []) {
+  const items = [["running", "running"], ["done", "done"], ["needs", "needs you"], ...extra, ["failed", "failed"], ["stopped", "stopped"], ["skipped", "skipped"]];
   return `<div class="tl-legend">${items.map(([v, label]) => `<span><i class="tl-swatch v-${v}"></i>${label}</span>`).join("")}</div>`;
 }
 
@@ -1077,12 +1084,18 @@ function bindTaskView(P) {
   lower?.addEventListener("click", (e) => {
     const b = e.target.closest("[data-lower]");
     const T = S();
-    if (!b || !T?.task) return;
+    if (!b || !(T?.task || T?.factory)) return;
     T.lowerView = b.dataset.lower;
     withPane(P, renderTaskView);
   });
   tl?.addEventListener("click", (e) => {
     const T = S();
+    // A factory's timeline: a row selects its node.
+    if (T?.factory) {
+      const row = e.target.closest(".tl-row[data-step]");
+      if (row) { T.factory.selected = T.factory.selected === row.dataset.step ? null : row.dataset.step; withPane(P, renderTaskView); }
+      return;
+    }
     const t = T?.task;
     if (!t) return;
     if (e.target.closest('[data-act="budget"]')) {
@@ -1113,6 +1126,7 @@ function bindTaskView(P) {
     const T = S();
     const g = host.querySelector(".tk-graph");
     if (T?.task && g) drawEdges(g, T.task);
+    if (T?.factory && g) drawFactoryEdges(g, T);
   }).observe(host);
 }
 
@@ -1120,6 +1134,8 @@ function bindTaskView(P) {
 setInterval(() => {
   for (const P of panes.values()) {
     const T = sessions.get(P.sid);
+    // A factory's run going: its times tick too.
+    if (T?.factory && runsOf(T.factory.id)[0]?.state === "running") { withPane(P, renderTaskView); continue; }
     if (!T?.task) continue;
     if (T.task.state === "running" || (T.task.state === "planning" && T.lowerView === "timeline")) withPane(P, renderTaskView);
     else if (T.task.state === "planning" && !T.task.steps.length) withPane(P, () => {

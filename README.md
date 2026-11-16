@@ -7,7 +7,7 @@
   <a href="https://github.com/reevik/Paw/releases/latest"><img src="https://img.shields.io/badge/Get%20it%20for-Apple%20Silicon-black?logo=apple&logoColor=white" alt="Get it for Apple Silicon"></a>
 </p>
 
-<h1 align="center">Agent Multiplexer and Terminal Application</h1>
+<h1 align="center">Agentic Terminal Multiplexer</h1>
 
 <p align="center">
   <img src="docs/screenshot.webp" alt="Paw: a task planned by Claude Code, its steps as a 3D graph, and the plan in the transcript">

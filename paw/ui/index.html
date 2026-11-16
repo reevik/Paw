@@ -38,8 +38,10 @@
           <div class="sk-sec-head" data-sec-toggle>
             <svg class="sk-chev" viewBox="0 0 12 12"><path d="M3 4.5 6 7.5 9 4.5"/></svg>
             <span class="sk-sec-title">Factories</span>
+            <span class="sk-count" id="factories-count"></span>
+            <button id="factories-add" class="sk-sec-add" title="New factory">+</button>
           </div>
-          <div class="sk-sec-body"><div class="sk-empty">No factories yet.</div></div>
+          <div class="sk-sec-body" id="factories-body"><div class="sk-empty">No factories yet.</div></div>
         </section>
         <section class="sk-sec nav-sec" data-sec="sessions">
           <div class="sk-sec-head" data-sec-toggle>
@@ -218,6 +220,7 @@
   <script src="vendor/purify.min.js"></script>
   <script src="themes.js"></script>
   <script src="tasks.js"></script>
+  <script src="factories.js"></script>
   <script src="plugins.js"></script>
   <script src="app.js"></script>
 </body>

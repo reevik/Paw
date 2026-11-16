@@ -235,7 +235,15 @@ fn ancestors(nodes: &[Node], id: &str) -> HashSet<String> {
 
 /// Read and check a factory file's text. Errors say what to fix, with the node.
 pub fn parse(text: &str) -> Result<Factory, String> {
-    let f: Factory = serde_yaml::from_str(text).map_err(|e| e.to_string())?;
+    let f: Factory = serde_yaml::from_str(text).map_err(|e| {
+        let msg = e.to_string();
+        // The usual YAML slip: a value with ": " in it, unquoted.
+        if msg.contains("mapping values are not allowed") {
+            format!("{msg}. Text with “: ” in it needs quotes, or write it as a block (prompt: > and the text on the next lines, indented).")
+        } else {
+            msg
+        }
+    })?;
     check(&f)?;
     Ok(f)
 }
@@ -485,6 +493,7 @@ nodes:
         assert!(bad("id: report", "id: hotfix").contains("Two nodes"));
         assert!(bad("    prompt: Summarize\n", "\n").contains("needs a prompt"));
         assert!(bad("edits: false\n    skills", "editz: false\n    skills").contains("editz"), "unknown keys are caught");
+        assert!(bad("prompt: Write a note", "prompt: End with \"severity: low\" or so").contains("needs quotes"));
     }
 
     #[test]

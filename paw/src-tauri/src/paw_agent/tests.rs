@@ -58,7 +58,7 @@ fn config(dir: &Path, approval: &str, conversation: &str) -> SessionConfig {
         cwd: dir.to_path_buf(),
         approval: approval.into(),
         allow_rules: vec![],
-        preamble: build_preamble(dir, approval, true, "", None),
+        preamble: build_preamble(dir, approval, true, "", None, None),
         conversation: conversation.into(),
         history_path: Some(dir.join(".paw-history").join(format!("{conversation}.json"))),
         tools: true,
@@ -476,13 +476,13 @@ async fn model_errors_end_the_turn() {
 fn preamble_mentions_folder_level_and_skills() {
     let dir = Tmp::new("pre");
     std::fs::write(dir.0.join("AGENTS.md"), "Use tabs.").unwrap();
-    let p = build_preamble(&dir.0, "plan", true, "<skills>\n- x: y (/s/SKILL.md)\n</skills>", Some(Path::new("/h/.paw/session/abc/scripts")));
+    let p = build_preamble(&dir.0, "plan", true, "<skills>\n- x: y (/s/SKILL.md)\n</skills>", Some(Path::new("/h/.paw/session/abc/scripts")), None);
     assert!(p.contains(&dir.0.display().to_string()));
     assert!(p.contains("plan — read-only"));
     assert!(p.contains("Use tabs."));
     assert!(p.contains("/s/SKILL.md"));
     assert!(p.contains("Scripts folder for this session: /h/.paw/session/abc/scripts"));
-    let p = build_preamble(&dir.0, "edits", false, "<skills>x</skills>", None);
+    let p = build_preamble(&dir.0, "edits", false, "<skills>x</skills>", None, None);
     assert!(p.contains("can't call tools"));
     assert!(!p.contains("<skills>"));
 }
@@ -765,4 +765,16 @@ async fn auto_mode_runs_routine_actions_and_asks_about_risky_ones() {
     let review = model.requests().into_iter().find(|r| format!("{r:?}").contains("Paw's auto mode")).expect("a review request");
     let asked_about = format!("{:?}", review.chat_history);
     assert!(asked_about.contains("make some notes") && asked_about.contains("touch reviewed.txt"), "{asked_about}");
+}
+
+#[test]
+fn a_node_with_some_tools_is_told_only_about_those() {
+    let dir = std::env::temp_dir();
+    let only = vec!["read".to_string(), "list".to_string()];
+    let p = build_preamble(&dir, "plan", true, "", None, Some(&only));
+    assert!(p.contains("Your only built-in tools: read (a file's lines), list (a folder's files)."));
+    assert!(!p.contains("shell (a command line"), "shell isn't offered");
+    assert!(!p.contains("the shell tool runs commands"));
+    let none = build_preamble(&dir, "plan", true, "", None, Some(&[]));
+    assert!(none.contains("no built-in tools"));
 }

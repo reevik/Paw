@@ -27,6 +27,7 @@ const DAEMON_COMMANDS = new Set([
   "shell_open", "shell_run", "shell_write", "shell_interrupt", "shell_close", "shell_write_raw", "shell_resize", "shell_raw_exit",
   "paw_agent_start", "paw_agent_send", "paw_agent_note", "paw_agent_cancel", "paw_agent_close", "paw_agent_approve",
   "tray_update", "daemon_attach",
+  "factory_list", "factory_get", "factory_run", "factory_stop", "factory_retry", "factory_skip", "factory_new",
 ]);
 const invoke = (cmd, args) => (DAEMON_COMMANDS.has(cmd) ? tauriInvoke("daemon_call", { cmd, args: args ?? {} }) : tauriInvoke(cmd, args));
 const eventHandlers = new Map(); // event → [handler]
@@ -332,6 +333,7 @@ async function newSession(agentId, opts = {}) {
   };
   if (opts.approval) S.approval = opts.approval;
   if (opts.task) S.task = opts.task;
+  if (opts.factory) S.factory = opts.factory;
   if (opts.stepOf) S.stepOf = opts.stepOf;
   sessions.set(S.sid, S);
   openTabs.splice(opts.after ? tabInsertIndex(opts.after) : openTabs.length, 0, S.sid);
@@ -347,6 +349,7 @@ async function newSession(agentId, opts = {}) {
 
 function banner(S) {
   if (S.task) return taskBanner(S);
+  if (S.factory) return factoryBanner(S);
   const d = detections[S.agent.id];
   const ver = isPaw(S.agent) ? ` <span class="dim">built-in${providerOf(S.model) ? " · " + esc(providerName(providerOf(S.model))) : ""}</span>`
     : d?.version ? ` <span class="dim">${esc(d.version)}</span>` : "";
@@ -553,6 +556,7 @@ async function submit(text) {
     return;
   }
   if (S.task) return taskSubmit(S, text, atts);
+  if (S.factory) return factorySubmit(S, text, atts);
   await sendToAgent(S, text, atts);
 }
 
@@ -746,6 +750,8 @@ function helpHtml(S) {
     row(CLI_AGENTS ? "/new [agent]" : "/new [model]", "open a new tab with a new conversation"),
     row("/task [what]", `plan a task with ${name} and run its steps on several ${CLI_AGENTS ? "agents" : "models"} (pasted text counts too)`),
     row("/tasks", "list the open tasks and how far each one is (click one to open it)"),
+    row("/factories", "list your factories and their last runs (click one to open it)"),
+    row("/factory <name>", "open a factory; /factory new <name> makes one"),
     row("/sessions", "list stored sessions, open and closed; click one to reopen it in a new tab"),
     row("/stats [day|week|month]", "tokens, queries, tasks and time per model: today, this week, this month"),
     row("/clear", "clear the screen (⌘K)"),
@@ -887,6 +893,22 @@ async function slashCommand(S, line) {
       echo();
       info(S, tasksListHtml());
       return true;
+    case "/factories":
+      echo();
+      info(S, await factoriesListHtml().catch((e) => `<span class="err">✗ ${esc(e)}</span>`));
+      return true;
+    case "/factory": {
+      echo();
+      const m = /^new\s+(.+)$/i.exec(arg);
+      if (m) { await newFactory(m[1].trim()); return true; }
+      if (!arg) { info(S, await factoriesListHtml().catch((e) => `<span class="err">✗ ${esc(e)}</span>`)); return true; }
+      await loadFactories();
+      const want = arg.toLowerCase();
+      const f = factoryState.list.find((x) => x.id === want || x.factory?.name?.toLowerCase() === want);
+      if (f) { await openFactory(f.id); return true; }
+      sys(S, `No factory “${arg}”. /factories lists them; /factory new ${arg} makes it.`);
+      return true;
+    }
     case "/stats":
       echo();
       info(S, await statsHtml(arg).catch((e) => `<span class="err">✗ ${esc(e)}</span>`));
@@ -1940,6 +1962,7 @@ function workspaceSnapshot() {
 /** What the tab was about, for /sessions: the task, the name it was given, or the first prompt. */
 function sessionSummary(S) {
   if (S.task) return S.task.title || S.task.goal?.split("\n")[0] || "";
+  if (S.factory) return `Factory ${factoryTabLabel(S)}`;
   if (S.title) return S.title;
   const first = S.lines.find((l) => l.stream === "stdin" && !l.local && String(l.text ?? "").trim());
   return first ? String(first.text).trim().split("\n")[0].slice(0, 160) : "";
@@ -1972,6 +1995,7 @@ function tabSnapshot(S) {
       history: S.history.slice(-200),
       lines: S.lines.slice(-WS_LINES).map(persistableLine),
       task: taskSnapshot(S) ?? undefined,
+      factory: S.factory ?? undefined,
       stepOf: S.stepOf ?? undefined,
       // Its processes in the daemon: a window that starts again re-attaches.
       live: daemon.instance && (S.proc != null || S.shell != null) ? {
@@ -2174,6 +2198,7 @@ async function restoreTab(t, note = null) {
   // The last prompt's turn: an answer still coming in goes in its block.
   S.turnId = [...S.lines].reverse().find((l) => l.turn != null)?.turn ?? null;
   if (t.task) S.task = restoreTask(t.task, { live: !!attach });
+  if (t.factory) S.factory = t.factory;
   if (t.stepOf) S.stepOf = t.stepOf;
   if (t.group) S.group = t.group;
   sessions.set(S.sid, S);
@@ -2494,6 +2519,7 @@ function stepFontSize(dir) {
 // ---------- rendering: tabs, sidebar, header ----------
 function tabLabel(S) {
   if (S.task) return taskTabLabel(S);
+  if (S.factory) return factoryTabLabel(S);
   if (S.title) return S.title; // the name the user gave it
   const step = stepOfTab(S)?.st;
   if (step) return step.title;
@@ -2520,7 +2546,7 @@ function renderTabs() {
     t.title = S.task ? `Task: ${S.task.goal || "new"} — planned by ${runs}` : step ? `Step of ${step.T.task.title}: ${runs} — ${tildify(S.cwd)}` : `${runs} — ${tildify(S.cwd)}`;
     const needs = S.task ? taskNeedsYou(S) : 0;
     t.innerHTML = (S.task ? `<span class="task-ico" aria-hidden="true"></span>` : "") +
-      `<span class="dot ${S.task ? taskDotState(S) : sessionState(S)}"></span><span class="label">${esc(tabLabel(S))}</span>` +
+      `<span class="dot ${S.task ? taskDotState(S) : S.factory ? factoryDotState(S) : sessionState(S)}"></span><span class="label">${esc(tabLabel(S))}</span>` +
       (needs ? `<span class="tab-badge" title="${needs} step${needs > 1 ? "s" : ""} waiting for your approval">${needs}</span>` : "") +
       `${S.unread ? `<span class="tab-unread"></span>` : ""}<button class="close" title="Close tab (⌘W)">×</button>`;
     t.onmousedown = (e) => { if (e.button === 1) { e.preventDefault(); closeSession(sid); } };
@@ -2532,6 +2558,7 @@ function renderTabs() {
     tabs.appendChild(t);
   }
   renderSessionList();
+  renderFactoryNav();
 }
 
 // ---------- dragging tabs ----------
@@ -2716,7 +2743,7 @@ function groupChip(g) {
   const members = groupMembers(g.id);
   const color = GROUP_COLORS[g.color] ?? GROUP_COLORS.grey;
   const name = groupName(g);
-  const busy = members.some((S) => (S.task ? taskDotState(S) : sessionState(S)) === "running");
+  const busy = members.some((S) => (S.task ? taskDotState(S) : S.factory ? factoryDotState(S) : sessionState(S)) === "running");
   const needs = members.reduce((n, S) => n + (S.task ? taskNeedsYou(S) : 0), 0);
   const el = document.createElement("div");
   el.className = "tab-group" + (g.collapsed ? " collapsed" : "") + (name ? "" : " unnamed");
@@ -2971,6 +2998,7 @@ function renameSession(S) {
 // Sessions: the open tabs, in tab order, under their tab groups.
 const STATE_TEXT = { running: "Working", ready: "Ready", idle: "Idle", starting: "Starting", failed: "Failed", stopped: "Stopped", exited: "Exited" };
 function sessionStatus(S) {
+  if (S.factory) return factoryStatus(S.factory.id);
   if (S.task) {
     const n = taskNeedsYou(S);
     return n ? `${n} step${n > 1 ? "s" : ""} waiting for you` : `Task · ${S.task.state}`;
@@ -2984,7 +3012,7 @@ function sessionRow(S) {
   row.title = `${S.agent.name} — ${tildify(S.cwd)}`;
   row.dataset.sid = S.sid;
   const needs = S.task ? taskNeedsYou(S) : 0;
-  row.innerHTML = `<span class="dot ${S.task ? taskDotState(S) : sessionState(S)}"></span>` +
+  row.innerHTML = `<span class="dot ${S.task ? taskDotState(S) : S.factory ? factoryDotState(S) : sessionState(S)}"></span>` +
     `<span class="nav-text"><span class="nav-name">${esc(tabLabel(S))}</span><span class="nav-status">${esc(sessionStatus(S))}</span></span>` +
     (needs ? `<span class="tab-badge">${needs}</span>` : "") + (S.unread ? `<span class="tab-unread"></span>` : "");
   row.onclick = () => select(S.sid);
@@ -5117,6 +5145,7 @@ function waitForDetections(timeoutMs) {
     saveWorkspaceSoon();
   });
   // A tab picked in the menu bar.
+  initFactories();
   listen("tray:open", ({ payload: id }) => {
     const S = [...sessions.values()].find((x) => x.pawId === id);
     if (!S) return;

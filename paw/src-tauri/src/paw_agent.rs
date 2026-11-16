@@ -1086,14 +1086,36 @@ fn project_notes(cwd: &Path) -> String {
     out
 }
 
-pub fn build_preamble(cwd: &Path, level: &str, tools: bool, skills_index: &str, scripts: Option<&Path>) -> String {
+/// `only`: the built-in tools the session has, when it doesn't have them all
+/// (a factory node); the model is told about those alone.
+pub fn build_preamble(cwd: &Path, level: &str, tools: bool, skills_index: &str, scripts: Option<&Path>, only: Option<&[String]>) -> String {
+    let has = |t: &str| only.map_or(true, |o| o.iter().any(|x| x == t));
     let mut p = String::new();
     p.push_str("You are Paw Agent, a coding agent built into Paw, a macOS app where people work with coding agents in terminal-like tabs.\n\n");
-    p.push_str(&format!("Working folder: {}\nRelative paths are resolved there; the shell tool runs commands there.\n", cwd.display()));
+    p.push_str(&format!("Working folder: {}\nRelative paths are resolved there{}.\n", cwd.display(), if tools && has("shell") { "; the shell tool runs commands there" } else { "" }));
     if let (true, Some(dir)) = (tools, scripts) {
         p.push_str(&format!("{}\n", scripts_note(dir)));
     }
-    if tools {
+    if let (true, Some(only)) = (tools, only) {
+        const ALL: [(&str, &str); 6] = [
+            ("read", "a file's lines"),
+            ("search", "regex over the tree"),
+            ("list", "a folder's files"),
+            ("edit", "exact replacements in a file"),
+            ("write", "a whole file"),
+            ("shell", "a command line, `sh -c`"),
+        ];
+        let mine: Vec<String> = ALL.iter().filter(|(t, _)| only.iter().any(|x| x == t)).map(|(t, what)| format!("{t} ({what})")).collect();
+        if mine.is_empty() {
+            p.push_str("\nYou have no built-in tools here (no file or shell access); use only the other tools you're given, if any.\n");
+        } else {
+            p.push_str(&format!(
+                "\nYour only built-in tools: {}. Don't call any other built-in tool (such as shell) — you don't have it; do the job with these.\n",
+                mine.join(", ")
+            ));
+        }
+        p.push_str(&format!("\nApproval level: {}\n", level_text(level)));
+    } else if tools {
         p.push_str(
             "\nTools: read (a file's lines), search (regex over the tree), list (a folder's files), edit (exact replacements in a file), \
 write (a whole file), shell (a command line, `sh -c`).\n\
@@ -1269,6 +1291,7 @@ pub async fn paw_agent_start(
     let (cwd2, provider2, model2, base2, approval2, source2) =
         (cwd.clone(), provider.clone(), model.clone(), base_url.clone(), approval.clone(), opts.key_source.clone());
     let only_skills = opts.skills.clone();
+    let only_tools = opts.tools.clone();
     // Keys, the sign-ins, `ollama show` and the skill folders: off the async threads.
     let (cred, copilot_source, tools, preamble) = tauri::async_runtime::spawn_blocking(move || {
         let cred = match provider2.as_str() {
@@ -1282,7 +1305,7 @@ pub async fn paw_agent_start(
         let copilot_source = (provider2 == copilot::PROVIDER).then(|| copilot::source(&copilot::user_home())).transpose()?;
         let tools = provider2 != "ollama" || ollama_supports_tools(&base2, &model2).unwrap_or(true);
         let skills = crate::skills::agent_skills_index_of(&app2, &cwd2, only_skills.as_deref());
-        Ok::<_, String>((cred, copilot_source, tools, build_preamble(&cwd2, &approval2, tools, &skills, scripts2.as_deref())))
+        Ok::<_, String>((cred, copilot_source, tools, build_preamble(&cwd2, &approval2, tools, &skills, scripts2.as_deref(), only_tools.as_deref())))
     })
     .await
     .map_err(|e| e.to_string())??;

@@ -268,6 +268,7 @@ async function taskSubmit(S, text, atts) {
 // ---------- turns ending ----------
 /** Called by app.js when a tab's turn ends: { ok, stopped, text, error }. */
 function taskTurnEnded(S, r) {
+  if (S.factory) loadFactories(); // its agent may have changed the file
   if (S.task) return plannerTurnEnded(S, r);
   const link = stepOfTab(S);
   if (!link) return;
@@ -571,6 +572,8 @@ function renderTaskView() {
   const host = $("task-view");
   if (!host) return;
   const S = curS();
+  // A factory tab has its own board (factories.js).
+  if (S?.factory) { renderTaskLower(S); return renderFactoryView(S, host); }
   const t = S?.task;
   host.classList.toggle("hidden", !t);
   renderTaskLower(S);
@@ -865,7 +868,9 @@ function drawEdges(g, t) {
       const x2 = to.left - box.left + g.scrollLeft, y2 = to.top + to.height / 2 - box.top + g.scrollTop;
       const dx = Math.max(16, (x2 - x1) / 2);
       const live = stepView(s) === "running" || stepView(s) === "needs";
-      paths += `<path class="${live ? "live" : ""}" d="M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}"/>`;
+      // A factory's branch: the node runs only if this input's answer matches.
+      const cond = s.condFrom === n ? " cond" : "";
+      paths += `<path class="${live ? "live" : ""}${cond}" d="M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}"/>`;
     }
   }
   svg.innerHTML = paths;
@@ -994,6 +999,7 @@ function bindTaskView(P) {
   });
   host.addEventListener("click", (e) => {
     const T = S();
+    if (T?.factory) return factoryClick(T, e, P);
     if (!T?.task) return;
     const t = T.task;
     const vb = e.target.closest(".tk-viewbtn");
@@ -1060,7 +1066,7 @@ function bindTaskView(P) {
     if (rerender) { el.blur(); taskChanged(T); }
   };
   host.addEventListener("input", (e) => { if (e.target.matches("input[type=text], input:not([type]), textarea")) edit(e, false); });
-  host.addEventListener("change", (e) => edit(e, true));
+  host.addEventListener("change", (e) => { const T = S(); if (T?.factory) return factoryChange(T, e, P); edit(e, true); });
   host.addEventListener("focusout", (e) => {
     // Titles show in the graph: redraw when you leave the field.
     if (e.target.dataset?.field === "title") setTimeout(() => { const T = S(); if (T?.task) withPane(P, renderTaskView); }, 0);

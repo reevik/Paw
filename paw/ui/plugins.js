@@ -29,7 +29,7 @@ const pluginHost = {
 };
 
 /** Names a plugin can't take. */
-const BUILTIN_COMMANDS = new Set(["help", "model", "agent", "approval", "restart", "stop", "new", "task", "tasks", "sessions", "session",
+const BUILTIN_COMMANDS = new Set(["help", "model", "agent", "approval", "restart", "stop", "new", "task", "tasks", "factory", "factories", "sessions", "session",
   "stats", "clear", "cd", "history", "plugins", "exit", "quit"]);
 
 const PERMISSION_TEXT = {

@@ -44,9 +44,10 @@ fn open_url(url: String) -> Result<(), String> {
 /// Open a folder in Finder (the status bar's folder).
 #[tauri::command]
 fn open_folder(path: String) -> Result<(), String> {
+    // A folder opens in Finder; a file (a factory's YAML) in its app.
     let dir = agents::expand_home(path.trim());
-    if !dir.is_dir() {
-        return Err(format!("{} isn't a folder any more", dir.display()));
+    if !dir.exists() {
+        return Err(format!("{} isn't there any more", dir.display()));
     }
     std::process::Command::new("/usr/bin/open").arg(&dir).spawn().map(|_| ()).map_err(|e| e.to_string())
 }

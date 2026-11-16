@@ -2935,7 +2935,7 @@ function renderSidebar() {
 }
 
 // ---------- sidebar: Specs, Factories, Sessions ----------
-// Each section folds; which are folded is remembered. Each has a filter, and
+// They're tabs (one shows at a time). Each has a filter, and
 // its items can be pinned: pinned ones come first, under "Pinned" (kept per
 // section: specs by path, factories by id, sessions by their session folder).
 const PIN_KINDS = ["specs", "factories", "sessions"];
@@ -2976,22 +2976,25 @@ document.addEventListener("input", (e) => {
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && e.target.dataset?.navFilter) { e.target.value = ""; renderNav(e.target.dataset.navFilter); }
 });
-const navClosed = new Set((() => { try { return JSON.parse(localStorage.getItem("paw.nav.closed") || "[]"); } catch { return []; } })());
-function applyNavClosed() {
-  document.querySelectorAll(".nav-sec").forEach((s) => s.classList.toggle("closed", navClosed.has(s.dataset.sec)));
+// One section at a time, picked with the tabs above them (remembered).
+let navTab = (() => { try { return localStorage.getItem("paw.navTab") || "sessions"; } catch { return "sessions"; } })();
+function applyNavTab() {
+  for (const b of $("nav-tabs").querySelectorAll("button")) {
+    b.classList.toggle("active", b.dataset.navtab === navTab);
+    b.setAttribute("aria-selected", String(b.dataset.navtab === navTab));
+  }
+  document.querySelectorAll(".sidebar .nav-sec").forEach((s) => s.classList.toggle("hidden", s.dataset.sec !== navTab));
 }
-function setNavClosed(sec, closed) {
-  closed ? navClosed.add(sec) : navClosed.delete(sec);
-  try { localStorage.setItem("paw.nav.closed", JSON.stringify([...navClosed])); } catch {}
-  applyNavClosed();
+function setNavTab(tab) {
+  navTab = tab;
+  try { localStorage.setItem("paw.navTab", tab); } catch {}
+  applyNavTab();
 }
-document.querySelector(".sidebar .nav").addEventListener("click", (e) => {
-  const head = e.target.closest("[data-sec-toggle]");
-  if (!head || e.target.closest("button, input")) return;
-  const sec = head.closest(".nav-sec").dataset.sec;
-  setNavClosed(sec, !navClosed.has(sec));
+$("nav-tabs").addEventListener("click", (e) => {
+  const tab = e.target.closest("button")?.dataset.navtab;
+  if (tab) setNavTab(tab);
 });
-applyNavClosed();
+applyNavTab();
 
 /** Edit `el`'s text in place: `done(text)` gets the trimmed text, or null when cancelled. */
 function editInPlace(el, value, done) {
@@ -3265,7 +3268,7 @@ $("specs-body").addEventListener("contextmenu", (e) => {
 });
 $("specs-add").onclick = () => {
   const row = $("specs-add-row");
-  setNavClosed("specs", false);
+  setNavTab("specs");
   row.classList.toggle("hidden");
   if (!row.classList.contains("hidden")) $("specs-group").focus();
 };

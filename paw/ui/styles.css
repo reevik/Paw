@@ -1267,3 +1267,16 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
 .nav-pinned .nav-group { margin: 0; }
 .nav-pinned-head .sk-sec-title { color: var(--accent); }
 .nav-pinned > .nav-item, .nav-pinned .nav-group > .nav-item { margin-left: 0; }
+
+/* The sidebar's tabs: Specs | Factories | Sessions (app.js › applyNavTab). */
+.nav-head { padding: 0 10px 8px; flex-shrink: 0; }
+.nav-tabs { display: flex; width: 100%; box-sizing: border-box; }
+.nav-tabs button { flex: 1; padding: 3px 6px; white-space: nowrap; }
+.nav-tab-n { margin-left: 5px; font-size: 10.5px; font-weight: 500; color: var(--text-3); }
+.nav-tab-n:empty { display: none; }
+.nav-tabs button.active .nav-tab-n { color: var(--text-2); }
+.sidebar .nav-sec.hidden { display: none; }
+.sidebar .nav-sec > .sk-sec-head { display: none; } /* the tab names it */
+.sidebar .nav-sec > .sk-sec-body { display: block; padding-top: 0; }
+.nav-tools { display: flex; align-items: center; gap: 4px; margin: 0 0 6px; }
+.nav-tools .nav-filter { flex: 1; min-width: 0; margin: 0; }

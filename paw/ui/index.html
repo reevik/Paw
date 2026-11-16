@@ -12,17 +12,25 @@
     <!-- Sidebar: sits on the native vibrancy material -->
     <aside class="sidebar">
       <div class="sidebar-top" data-tauri-drag-region></div>
-      <!-- Specs, Factories and Tasks: cards like the skills' -->
+      <!-- Specs, Factories and Sessions: one at a time, picked with the tabs (like the right panel's) -->
+      <div class="nav-head">
+        <div class="panel-tabs nav-tabs" id="nav-tabs" role="tablist">
+          <button type="button" role="tab" data-navtab="specs">Specs<span class="nav-tab-n" id="specs-count"></span></button>
+          <button type="button" role="tab" data-navtab="factories">Factories<span class="nav-tab-n" id="factories-count"></span></button>
+          <button type="button" role="tab" data-navtab="sessions">Sessions<span class="nav-tab-n" id="sessions-count"></span></button>
+        </div>
+      </div>
       <div class="sidebar-section nav">
         <section class="sk-sec nav-sec" data-sec="specs">
           <div class="sk-sec-head" data-sec-toggle>
             <svg class="sk-chev" viewBox="0 0 12 12"><path d="M3 4.5 6 7.5 9 4.5"/></svg>
             <span class="sk-sec-title">Specs</span>
-            <span class="sk-count" id="specs-count"></span>
-            <button id="specs-add" class="sk-sec-add" title="Import specs (Markdown files) into a group">+</button>
           </div>
           <div class="sk-sec-body">
-            <input id="specs-filter" class="skills-filter nav-filter" data-nav-filter="specs" placeholder="Filter specs" spellcheck="false" autocomplete="off" />
+            <div class="nav-tools">
+              <input id="specs-filter" class="skills-filter nav-filter" data-nav-filter="specs" placeholder="Filter specs" spellcheck="false" autocomplete="off" />
+              <button id="specs-add" class="sk-icon" title="Import specs (Markdown files) into a group"><svg viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg></button>
+            </div>
             <form id="specs-add-row" class="skills-add hidden" autocomplete="off">
               <input id="specs-group" list="specs-groups" placeholder="Group (new or existing)" spellcheck="false" />
               <datalist id="specs-groups"></datalist>
@@ -39,11 +47,12 @@
           <div class="sk-sec-head" data-sec-toggle>
             <svg class="sk-chev" viewBox="0 0 12 12"><path d="M3 4.5 6 7.5 9 4.5"/></svg>
             <span class="sk-sec-title">Factories</span>
-            <span class="sk-count" id="factories-count"></span>
-            <button id="factories-add" class="sk-sec-add" title="New factory">+</button>
           </div>
           <div class="sk-sec-body">
-            <input id="factories-filter" class="skills-filter nav-filter" data-nav-filter="factories" placeholder="Filter factories" spellcheck="false" autocomplete="off" />
+            <div class="nav-tools">
+              <input id="factories-filter" class="skills-filter nav-filter" data-nav-filter="factories" placeholder="Filter factories" spellcheck="false" autocomplete="off" />
+              <button id="factories-add" class="sk-icon" title="New factory"><svg viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg></button>
+            </div>
             <div id="factories-body"><div class="sk-empty">No factories yet.</div></div>
           </div>
         </section>
@@ -51,10 +60,11 @@
           <div class="sk-sec-head" data-sec-toggle>
             <svg class="sk-chev" viewBox="0 0 12 12"><path d="M3 4.5 6 7.5 9 4.5"/></svg>
             <span class="sk-sec-title">Sessions</span>
-            <span class="sk-count" id="sessions-count"></span>
           </div>
           <div class="sk-sec-body">
-            <input id="sessions-filter" class="skills-filter nav-filter" data-nav-filter="sessions" placeholder="Filter sessions" spellcheck="false" autocomplete="off" />
+            <div class="nav-tools">
+              <input id="sessions-filter" class="skills-filter nav-filter" data-nav-filter="sessions" placeholder="Filter sessions" spellcheck="false" autocomplete="off" />
+            </div>
             <div id="sessions-body"></div>
           </div>
         </section>

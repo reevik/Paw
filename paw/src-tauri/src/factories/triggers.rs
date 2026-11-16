@@ -64,6 +64,8 @@ struct Entry {
     file_sig: Option<(u64, usize)>,
     file_changed: Option<Instant>,
     next_file_poll: Option<Instant>,
+    /// Fired while a run was going: starts when that run ends (why, payload).
+    queued: Option<(String, Option<String>)>,
 }
 
 pub struct Triggers {
@@ -143,6 +145,9 @@ impl Triggers {
             .and_then(|v| v.pointer("/factories/webhook_port").and_then(Value::as_u64))
             .and_then(|p| u16::try_from(p).ok())
             .unwrap_or(DEFAULT_PORT);
+        for id in &paused {
+            runner.set_paused(id, true);
+        }
         let t = Arc::new(Triggers { app: app.clone(), runner, entries: Mutex::default(), paused: Mutex::new(paused), port, server: Mutex::default() });
         let me = t.clone();
         tauri::async_runtime::spawn(async move {
@@ -168,10 +173,12 @@ impl Triggers {
         {
             let mut entries = self.entries.lock().unwrap();
             let paused = self.paused.lock().unwrap().clone();
-            entries.retain(|id, _| found.iter().any(|f| &f.id == id && f.factory.as_ref().is_some_and(|x| x.trigger.is_some())));
+            let wants = |x: &Factory| x.trigger.is_some() || repeat_of(x).is_some();
+            entries.retain(|id, _| found.iter().any(|f| &f.id == id && f.factory.as_ref().is_some_and(wants)));
             for f in &found {
-                let Some(def) = &f.factory else { continue };
-                let Some(trig) = &def.trigger else { continue };
+                let Some(def) = f.factory.as_ref().filter(|d| wants(d)) else { continue };
+                let none = Trigger::default();
+                let trig = def.trigger.as_ref().unwrap_or(&none);
                 if entries.get(&f.id).is_some_and(|e| e.modified == f.modified && e.trigger.as_ref() == Some(trig)) {
                     continue;
                 }
@@ -190,6 +197,7 @@ impl Triggers {
                         trig.at.as_ref().map(|_| "at"),
                         webhook_secret(trig).map(|_| "webhook"),
                         trig.file.as_ref().map(|_| "file"),
+                        repeat_of(def).map(|_| "repeat"),
                     ]
                     .into_iter()
                     .flatten()
@@ -243,6 +251,11 @@ impl Triggers {
                 if e.status.paused {
                     continue;
                 }
+                // Fired during a run: its turn comes when that run has ended.
+                if e.queued.is_some() && !self.runner.running(id) {
+                    let (why, payload) = e.queued.take().unwrap();
+                    fire.push((id.clone(), why, payload));
+                }
                 if let (Some(cmd), Some(due)) = (&t.watch, e.next_check) {
                     if now >= due && !e.checking {
                         e.checking = true;
@@ -287,7 +300,9 @@ impl Triggers {
                     let mut entries = me.entries.lock().unwrap();
                     let Some(e) = entries.get_mut(&id) else { return };
                     e.checking = false;
-                    let rose = out.0 && e.was_ok == Some(false) || out.0 && e.was_ok.is_none();
+                    // fires: each — every success is a new event; else only a change to success.
+                    let each = e.trigger.as_ref().and_then(|t| t.fires.as_deref()) == Some("each");
+                    let rose = out.0 && (each || e.was_ok != Some(true));
                     e.was_ok = Some(out.0);
                     e.status.last_check = Some(Check { at: now_ms(), ok: out.0, output: out.1.chars().rev().take(400).collect::<String>().chars().rev().collect() });
                     rose && !e.status.paused
@@ -306,7 +321,11 @@ impl Triggers {
     /// Start a run (unless one is going); note what happened.
     fn fire(self: &Arc<Self>, id: &str, why: &str, payload: Option<String>) {
         let note = if self.runner.running(id) {
-            format!("{why}: skipped, a run was still going")
+            // One more run right after this one (later events replace earlier ones).
+            if let Some(e) = self.entries.lock().unwrap().get_mut(id) {
+                e.queued = Some((why.to_string(), payload));
+            }
+            format!("{why}: a run was going, so another starts when it ends")
         } else {
             match self.runner.start(id, why, payload) {
                 Ok(_) => format!("{why}: started a run"),
@@ -321,6 +340,7 @@ impl Triggers {
     }
 
     pub fn set_paused(&self, id: &str, paused: bool) {
+        self.runner.set_paused(id, paused);
         {
             let mut p = self.paused.lock().unwrap();
             if paused {
@@ -465,8 +485,11 @@ impl Triggers {
             return (409, json!({ "error": "This factory's trigger is paused." }));
         }
         if self.runner.running(id) {
-            self.note(id, "its webhook: skipped, a run was still going");
-            return (409, json!({ "error": "A run of this factory is still going." }));
+            if let Some(e) = self.entries.lock().unwrap().get_mut(*id) {
+                e.queued = Some(("its webhook".into(), (!body.trim().is_empty()).then_some(body)));
+            }
+            self.note(id, "its webhook: a run was going, so another starts when it ends");
+            return (202, json!({ "queued": true }));
         }
         let payload = (!body.trim().is_empty()).then_some(body);
         match self.runner.start(id, "its webhook", payload) {

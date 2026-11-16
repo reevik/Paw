@@ -37,10 +37,45 @@ pub struct Factory {
     /// Approval level for nodes that change files (default: auto).
     #[serde(default)]
     pub approval: String,
-    /// What starts a run besides Run now (part 2: schedule, watch, webhook, file).
+    /// What starts a run besides Run now (schedule, watch, webhook, file).
     #[serde(default)]
     pub trigger: Option<Trigger>,
+    /// Start again when a run finishes: `true`, or `{ after: 10s, on_failure: continue }`.
+    #[serde(default)]
+    pub repeat: Option<Repeat>,
     pub nodes: Vec<Node>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum Repeat {
+    On(bool),
+    With(RepeatOpts),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RepeatOpts {
+    /// Wait this long before the next run (at least 5s).
+    #[serde(default)]
+    pub after: Option<String>,
+    /// stop (the default): a failed run ends the loop; continue: it goes on.
+    #[serde(default)]
+    pub on_failure: Option<String>,
+}
+
+pub const MIN_REPEAT: Duration = Duration::from_secs(5);
+
+/// (how long to wait before the next run, go on after a failed run) when the factory repeats.
+pub fn repeat_of(f: &Factory) -> Option<(Duration, bool)> {
+    match f.repeat.as_ref()? {
+        Repeat::On(false) => None,
+        Repeat::On(true) => Some((MIN_REPEAT, false)),
+        Repeat::With(o) => Some((
+            o.after.as_deref().and_then(parse_duration).unwrap_or(MIN_REPEAT).max(MIN_REPEAT),
+            o.on_failure.as_deref() == Some("continue"),
+        )),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
@@ -55,6 +90,10 @@ pub struct Trigger {
     /// A command checked every `every`; the run starts when it succeeds.
     #[serde(default)]
     pub watch: Option<String>,
+    /// change (default): a run when the watch starts succeeding; each: on every
+    /// success (for a check that succeeds once per new event, like a new commit).
+    #[serde(default)]
+    pub fires: Option<String>,
     /// Start when something posts to the local webhook (true, or a secret).
     #[serde(default)]
     pub webhook: Option<serde_yaml::Value>,
@@ -321,6 +360,18 @@ pub fn check(f: &Factory) -> Result<(), String> {
     if topo_order(&f.nodes).is_none() {
         return Err("The nodes need each other in a circle.".into());
     }
+    if let Some(Repeat::With(o)) = &f.repeat {
+        if let Some(a) = &o.after {
+            if parse_duration(a).is_none() {
+                return Err(format!("repeat after: “{a}” isn't a duration (like 10s, 5m)."));
+            }
+        }
+        if let Some(x) = &o.on_failure {
+            if x != "stop" && x != "continue" {
+                return Err(format!("repeat on_failure: “{x}” should be stop or continue."));
+            }
+        }
+    }
     if let Some(t) = &f.trigger {
         if t.every.is_none() && t.at.is_none() && t.watch.is_none() && t.file.is_none() && webhook_secret(t).is_none() {
             return Err("The trigger is empty: give it every, at, watch, webhook or file (or remove it).".into());
@@ -337,6 +388,14 @@ pub fn check(f: &Factory) -> Result<(), String> {
         }
         if t.watch.is_some() && t.every.is_none() {
             return Err("A watch trigger also needs every: how often to check.".into());
+        }
+        if let Some(x) = &t.fires {
+            if t.watch.is_none() {
+                return Err("Trigger fires: goes with watch.".into());
+            }
+            if x != "each" && x != "change" {
+                return Err(format!("Trigger fires: “{x}” should be each or change."));
+            }
         }
         if let Some(at) = &t.at {
             if at_times(at).is_none() {
@@ -569,7 +628,21 @@ nodes:
         assert!(with("  every: 1s").unwrap_err().contains("at least 5s"));
         assert!(with("  watch: ./x.sh").unwrap_err().contains("needs every"));
         assert!(with("  webhook: false").unwrap_err().contains("empty"));
+        assert!(with("  watch: ./x.sh\n  every: 30s\n  fires: each").is_ok());
+        assert!(with("  watch: ./x.sh\n  every: 30s\n  fires: always").unwrap_err().contains("each or change"));
+        assert!(with("  every: 30s\n  fires: each").unwrap_err().contains("goes with watch"));
         assert_eq!(at_times("9:05,17:30"), Some(vec![(9, 5), (17, 30)]));
+    }
+
+    #[test]
+    fn repeat_reads_both_ways() {
+        let with = |r: &str| parse(&format!("name: x\n{r}\nnodes:\n  - {{ id: a, prompt: hi }}\n"));
+        assert_eq!(repeat_of(&with("repeat: true").unwrap()), Some((MIN_REPEAT, false)));
+        assert_eq!(repeat_of(&with("repeat: false").unwrap()), None);
+        assert_eq!(repeat_of(&with("repeat: { after: 2m, on_failure: continue }").unwrap()), Some((Duration::from_secs(120), true)));
+        assert_eq!(repeat_of(&with("repeat: { after: 1s }").unwrap()).unwrap().0, MIN_REPEAT, "at least 5s");
+        assert!(with("repeat: { after: soon }").unwrap_err().contains("isn't a duration"));
+        assert!(with("repeat: { on_failure: retry }").unwrap_err().contains("stop or continue"));
     }
 
     #[test]

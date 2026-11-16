@@ -103,7 +103,7 @@ trigger:
 |---|---|
 | `every` | every so often |
 | `at` | at these times of day (local time) |
-| `watch` + `every` | when the command **starts** succeeding: it has to fail before it fires again, so a long error spike starts one run, not one per check. Its output goes to the nodes as the trigger's payload. |
+| `watch` + `every` | when the command **starts** succeeding: it has to fail before it fires again, so a long error spike starts one run, not one per check. With `fires: each`, every successful check starts a run instead, for a check that succeeds once per new event (a new commit, a new file). The command's output goes to the nodes as the trigger's payload. |
 | `webhook` | when something posts to `http://127.0.0.1:4747/factories/<id>`. The request's body goes to the nodes as the trigger's payload, so an alert's JSON reaches them. With a secret, the caller sends it as an `X-Paw-Token` header or `?token=`. |
 | `file` | when the file, or anything in the folder, changes and then stays quiet for 2 seconds |
 
@@ -113,9 +113,29 @@ For example, Alertmanager or Grafana can post their alerts straight to a factory
 curl -X POST -H "X-Paw-Token: s3cret" -d @alert.json http://127.0.0.1:4747/factories/error-spike
 ```
 
-A trigger never starts a run while one of the same factory is still going. **Pause trigger** in the factory view stops it from starting runs (Run now still works), and **Resume trigger** turns it back on. The view shows the next scheduled run, the last check and what the trigger did last.
+A trigger never starts a run while one of the same factory is still going. If it fires during a run, one more run starts right after that run ends, so an event that arrives mid-run isn't lost. **Pause trigger** in the factory view stops it from starting runs (Run now still works), and **Resume trigger** turns it back on. The view shows the next scheduled run, the last check and what the trigger did last.
 
 The webhook listens only on this Mac (127.0.0.1). Port 4747 can be changed in `~/.paw/settings.json`: `"factories": { "webhook_port": 4800 }`.
+
+## Repeat
+
+A run goes once through the nodes. For a pipeline that should start over when it's done, add `repeat`:
+
+```yaml
+repeat: true                                  # start again 5s after a run finishes
+repeat: { after: 2m, on_failure: continue }   # or wait 2m, and go on even after a failed run
+```
+
+A failed run stops the loop unless `on_failure: continue`. **Pause trigger** stops the loop too.
+
+To react to events, a trigger is usually better than a loop with a long wait node: the factory below starts one run per new commit, and nothing sits waiting in between.
+
+```yaml
+trigger:
+  watch: ./new-commit.sh   # succeeds once for each commit it hasn't seen
+  every: 30s
+  fires: each
+```
 
 ## Runs
 

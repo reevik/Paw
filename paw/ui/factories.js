@@ -55,7 +55,7 @@ function initFactories() {
 
 // ---------- the sidebar's Factories section ----------
 const triggerOf = (id) => factoryState.triggers.factories?.[id] ?? null;
-const TRIGGER_WORD = { watch: "Watching", every: "Scheduled", at: "Scheduled", webhook: "Webhook", file: "Watching files" };
+const TRIGGER_WORD = { watch: "Watching", every: "Scheduled", at: "Scheduled", webhook: "Webhook", file: "Watching files", repeat: "Repeating" };
 
 function factoryStatus(id) {
   const f = factoryById(id);
@@ -75,9 +75,16 @@ function fmtIn(ms) {
 }
 
 /** The trigger part of a factory's summary: what starts it, and how it's doing. */
+function repeatText(r) {
+  if (!r) return "";
+  const o = typeof r === "object" ? r : {};
+  return `Starts again ${o.after ? `${esc(o.after)} after` : "when"} a run finishes${o.on_failure === "continue" ? ", even a failed one" : "; a failed run stops the loop"}`;
+}
+
 function triggerHtml(id, def) {
-  const t = def.trigger;
-  if (!t) return `<label class="tk-lbl">Trigger</label><div class="tk-dim">Manual: Run now. Add a trigger to the file (every, at, watch, webhook or file) to start runs on their own.</div>`;
+  const t = def.trigger ?? {};
+  const rep = def.repeat && def.repeat !== false ? repeatText(def.repeat) : "";
+  if (!def.trigger && !rep) return `<label class="tk-lbl">Trigger</label><div class="tk-dim">Manual: Run now. Add a trigger to the file (every, at, watch, webhook or file) to start runs on their own, or repeat: true to loop.</div>`;
   const st = triggerOf(id);
   const rows = [];
   if (t.watch) rows.push(`When <code>${esc(t.watch)}</code> starts succeeding (checked every ${esc(t.every)})`);
@@ -85,6 +92,7 @@ function triggerHtml(id, def) {
   if (t.at) rows.push(`At ${esc(t.at)}`);
   if (t.file) rows.push(`When ${esc(st?.watching_file ? tildify(st.watching_file) : t.file)} changes`);
   if (t.webhook !== undefined && t.webhook !== false && t.webhook !== null) rows.push("When its webhook is called");
+  if (rep) rows.push(rep);
   const parts = [`<label class="tk-lbl">Trigger${st?.paused ? ` <span class="fa-paused">paused</span>` : ""}</label><div>${rows.join("<br>")}</div>`];
   if (!st) {
     parts.push(`<div class="tk-dim">Paw's background process hasn't picked this up yet.</div>`);
@@ -210,6 +218,13 @@ description: …     # what it's for
 folder: ~/path     # where the nodes work (default ~)
 model: provider/model   # default model for nodes
 approval: auto     # level for nodes that change files: ask, edits, auto, full
+trigger:           # optional: what starts runs on its own (any of these; Paw's background process watches them)
+  every: 15m       # a run every so often
+  at: "09:00, 17:30"   # a run at these times of day
+  watch: "./check.sh"  # a run each time this command STARTS succeeding (it must fail in between); with watch, every is how often it's checked
+  webhook: s3cret  # a run when something POSTs to http://127.0.0.1:4747/factories/<file name>; the body reaches the nodes (true: no secret)
+  file: ./inbox    # a run when this file or folder changes
+repeat: true       # optional: start the next run when one finishes (or { after: 10s, on_failure: continue }); a failed run stops the loop unless on_failure: continue
 nodes:             # required; ids use letters, digits, - and _
   - id: triage
     title: Short title
@@ -230,7 +245,8 @@ nodes:             # required; ids use letters, digits, - and _
     wait: "curl -sf localhost:8080/health"
     every: 30s
     timeout: 10m
-Nodes that don't need each other run side by side. A node whose inputs were all skipped is skipped too.`;
+Nodes that don't need each other run side by side. A node whose inputs were all skipped is skipped too.
+A run goes once through the nodes. To react to events (a new commit, an alert, a file), prefer a trigger over a long wait node: a watch trigger whose command succeeds once per new event starts one run per event. Use repeat for a pipeline that should loop. A trigger never starts a run while one of the same factory is going.`;
 
 function factoryPrompt(S, text) {
   const f = factoryById(S.factory.id);
@@ -292,7 +308,7 @@ function renderFactoryView(S, host) {
   const buttons = [
     f?.factory && !running && `<button class="tk-btn primary" data-fact="run">Run now</button>`,
     running && `<button class="tk-btn" data-fact="stop">Stop</button>`,
-    f?.factory?.trigger && triggerOf(S.factory.id) && `<button class="tk-btn" data-fact="pause" title="${triggerOf(S.factory.id).paused ? "Let the trigger start runs again" : "Stop the trigger from starting runs (Run now still works)"}">${triggerOf(S.factory.id).paused ? "Resume trigger" : "Pause trigger"}</button>`,
+    triggerOf(S.factory.id) && `<button class="tk-btn" data-fact="pause" title="${triggerOf(S.factory.id).paused ? "Let the trigger start runs again" : "Stop the trigger from starting runs (Run now still works)"}">${triggerOf(S.factory.id).paused ? "Resume trigger" : "Pause trigger"}</button>`,
     f && `<button class="tk-btn" data-fact="edit" title="${esc(tildify(f.path))}">Edit file</button>`,
   ].filter(Boolean).join("");
   const picker = runs.length ? `<select class="tk-in fa-runs" data-fact="pick" title="Show a run">${

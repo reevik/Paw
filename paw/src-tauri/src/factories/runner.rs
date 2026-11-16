@@ -176,6 +176,8 @@ struct State {
 pub struct Runner {
     app: AppHandle,
     state: Mutex<State>,
+    /// Factories whose trigger (and repeat) is paused (set by `triggers`).
+    paused: Mutex<HashSet<String>>,
 }
 
 /// Settings the runner reads: (agents at once, the default model).
@@ -205,7 +207,7 @@ fn folder_of(def: &Factory) -> PathBuf {
 
 impl Runner {
     pub fn new(app: &AppHandle) -> Arc<Runner> {
-        let runner = Arc::new(Runner { app: app.clone(), state: Mutex::new(State { runs: load_runs(), ..Default::default() }) });
+        let runner = Arc::new(Runner { app: app.clone(), state: Mutex::new(State { runs: load_runs(), ..Default::default() }), paused: Mutex::default() });
         let r = runner.clone();
         app.listen_any("agent:output", move |e| {
             if let Ok(v) = serde_json::from_str::<Value>(e.payload()) {
@@ -232,6 +234,19 @@ impl Runner {
         let st = self.state.lock().unwrap();
         let runs: Vec<Run> = st.runs.iter().rev().map(Run::summary).collect();
         json!({ "dir": dir, "factories": found, "runs": runs })
+    }
+
+    pub fn set_paused(&self, factory: &str, paused: bool) {
+        let mut p = self.paused.lock().unwrap();
+        if paused {
+            p.insert(factory.to_string());
+        } else {
+            p.remove(factory);
+        }
+    }
+
+    fn is_paused(&self, factory: &str) -> bool {
+        self.paused.lock().unwrap().contains(factory)
     }
 
     /// Is a run of this factory going?
@@ -363,16 +378,41 @@ impl Runner {
             // Agent nodes at work (or starting) in every run count against the limit.
             let mut busy = st.runs.iter().flat_map(|r| r.nodes.iter().zip(&r.def.nodes)).filter(|(n, d)| active(&n.state) && !d.is_wait()).count();
             let mut starts = vec![];
+            let mut repeats = vec![];
             let ids: Vec<String> = st.runs.iter().filter(|r| r.state == "running").map(|r| r.id.clone()).collect();
             for id in ids {
                 let r = st.runs.iter_mut().find(|r| r.id == id).unwrap();
                 starts.extend(pump(r, limit, &mut busy, &default_model));
+                // A run that just ended: a repeating factory starts again.
+                if let Some((after, on_failure)) = repeat_of(&r.def).filter(|_| r.state == "done" || r.state == "failed") {
+                    if r.state == "done" || on_failure {
+                        let when = format!("The next run starts in {}.", fmt_duration(after));
+                        r.note = if r.note.is_empty() { when } else { format!("{} {when}", r.note) };
+                        repeats.push((r.factory.clone(), after));
+                    } else {
+                        r.note = format!("{} It repeats, but stops after a failed run: fix it and press Run now.", r.note).trim().to_string();
+                    }
+                }
                 st.dirty.insert(id);
             }
-            starts
+            (starts, repeats)
         };
+        let (starts, repeats) = starts;
         for s in starts {
             self.launch(s);
+        }
+        for (factory, after) in repeats {
+            let me = self.clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(after).await;
+                // Paused meanwhile, or already going again (Run now): nothing to do.
+                if me.is_paused(&factory) || me.running(&factory) {
+                    return;
+                }
+                if let Err(e) = me.start(&factory, "repeat", None) {
+                    eprintln!("Paw: factory {factory} couldn't start again: {e}");
+                }
+            });
         }
         self.flush(true);
     }

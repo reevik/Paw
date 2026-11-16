@@ -1,7 +1,8 @@
 //! Paw Agent: Paw's own coding agent, running inside the Paw process on
 //! Rig (`rig-agent`'s multi-turn tool loop, `rig-tools`' coding tools).
 //!
-//! One session per tab. A session is a model (Ollama or Anthropic), a system
+//! One session per tab. A session is a model (Anthropic, GitHub Copilot,
+//! ChatGPT, OpenRouter, Ollama or a provider the user added), a system
 //! prompt, the tools (read, write, edit, search, list, shell) working in the
 //! tab's folder, and the conversation so far, which is saved after every
 //! prompt so a restarted Paw continues it.
@@ -453,14 +454,14 @@ impl Session {
         let request = self.request.lock().unwrap().clone();
         let preamble = auto::REVIEWER.replace("{cwd}", &self.cfg.cwd.display().to_string());
         let mut b = AgentBuilder::new(self.model.clone()).name("Paw auto review").preamble(preamble);
-        // Copilot takes each model's own reply budget.
+        // Copilot, ChatGPT, OpenRouter and added providers take each model's own reply budget.
         match self.cfg.provider.as_str() {
             "anthropic" => b = b.max_tokens(400),
-            copilot::PROVIDER => {}
-            _ => {
+            "ollama" => {
                 use rig_core::providers::ollama::extension::{KeepAlive, OllamaOptions};
                 b = b.provider_option(OllamaOptions::default().num_ctx(OLLAMA_NUM_CTX).keep_alive(KeepAlive::duration("30m")));
             }
+            _ => {}
         }
         let agent = b.build();
         let question = auto::review_prompt(&request, &ask.label, &ask.detail);
@@ -485,11 +486,11 @@ impl Session {
         let mut b = AgentBuilder::new(self.model.clone()).name("Paw Agent").preamble(self.cfg.preamble.clone());
         match self.cfg.provider.as_str() {
             "anthropic" => b = b.max_tokens(16_000),
-            copilot::PROVIDER => {}
-            _ => {
+            "ollama" => {
                 use rig_core::providers::ollama::extension::{KeepAlive, OllamaOptions};
                 b = b.provider_option(OllamaOptions::default().num_ctx(OLLAMA_NUM_CTX).keep_alive(KeepAlive::duration("30m")));
             }
+            _ => {}
         }
         if self.cfg.tools {
             let ws: Arc<dyn Workspace> = Arc::new(Local);
@@ -737,8 +738,11 @@ fn friendly_error(cfg: &SessionConfig, e: &str) -> String {
     if cfg.provider == "ollama" && lower.contains("not found") && lower.contains("model") {
         return format!("Ollama doesn't have the model {} — `ollama pull {}`\n{e}", cfg.model, cfg.model);
     }
+    if cfg.provider == "anthropic" && lower.contains("only authorized for use with claude code") {
+        return format!("Anthropic refused the Claude sign-in for Paw: it takes subscription sign-ins only from Claude Code. Use an API key instead.\n{e}");
+    }
     if cfg.provider == "anthropic" && (lower.contains("401") || lower.contains("authentication") || lower.contains("invalid x-api-key")) {
-        return format!("Anthropic didn't accept the API key — check it in Settings › Agents › Paw Agent.\n{e}");
+        return format!("Anthropic didn't accept the key or sign-in — check it in Settings › Agents › Paw Agent.\n{e}");
     }
     if cfg.provider == copilot::PROVIDER && (lower.contains("model_not_supported") || lower.contains("model is not supported")) {
         return format!("GitHub Copilot doesn't offer {} to this account — pick another with /model.\n{e}", cfg.model);
@@ -924,11 +928,15 @@ impl PawAgents {
     }
 }
 
-fn provider_label(p: &str) -> &'static str {
+/// A provider's name; an added provider's id stands for its name.
+fn provider_label(p: &str) -> &str {
     match p {
         "anthropic" => "Anthropic",
         copilot::PROVIDER => "GitHub Copilot",
-        _ => "Ollama",
+        chatgpt::PROVIDER => "ChatGPT",
+        openrouter::PROVIDER => "OpenRouter",
+        "ollama" => "Ollama",
+        _ => p,
     }
 }
 
@@ -939,44 +947,62 @@ fn provider_label(p: &str) -> &'static str {
 pub const ANTHROPIC_MODELS: &[&str] = &["claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5", "claude-fable-5-2"];
 pub const DEFAULT_OLLAMA_URL: &str = "http://localhost:11434";
 
-/// The model for a provider. A model written `anthropic/<name>`,
-/// `copilot/<name>` or `ollama/<name>` picks that provider whatever the
-/// agent's setting.
+/// Paw's own providers; any other id is one the user added.
+pub const BUILT_IN: &[&str] = &["anthropic", copilot::PROVIDER, chatgpt::PROVIDER, openrouter::PROVIDER, "ollama"];
+
+/// The provider and model of a model id written `<provider>/<model>`, where
+/// `<model>` may hold `/` itself (`openrouter/anthropic/claude-sonnet-4.6`).
+/// The prefix is stripped when it's `provider`'s. Without it, a model
+/// written `anthropic/<name>`, `copilot/<name>`… picks that built-in
+/// provider over Anthropic, Copilot, ChatGPT or Ollama (older settings);
+/// OpenRouter's and added providers' model names are taken as they are.
+/// No provider at all is Ollama.
 pub fn split_provider<'a>(provider: &'a str, model: &'a str) -> (&'a str, &'a str) {
-    for p in ["anthropic", copilot::PROVIDER, "ollama"] {
-        if let Some(rest) = model.strip_prefix(p).and_then(|r| r.strip_prefix('/')) {
-            return (p, rest);
+    let provider = if provider.is_empty() { "ollama" } else { provider };
+    if let Some(rest) = model.strip_prefix(provider).and_then(|r| r.strip_prefix('/')) {
+        return (provider, rest);
+    }
+    if provider != openrouter::PROVIDER && BUILT_IN.contains(&provider) {
+        for p in BUILT_IN {
+            if let Some(rest) = model.strip_prefix(p).and_then(|r| r.strip_prefix('/')) {
+                return (p, rest);
+            }
         }
     }
-    (if provider == "anthropic" || provider == copilot::PROVIDER { provider } else { "ollama" }, model)
+    (provider, model)
 }
 
-/// The Anthropic configuration for a credential: `x-api-key`, or a
-/// gateway's auth token as `Authorization: Bearer`.
-pub fn anthropic_config(cred: &keys::Credential, base_url: &str) -> rig_core::providers::anthropic::AnthropicConfig {
-    use rig_core::providers::anthropic::{wire::Auth, AnthropicConfig, ANTHROPIC};
-    let mut cfg = if cred.bearer {
-        let mut dialect = ANTHROPIC;
-        dialect.quirks.auth = Auth::OptionalBearer;
-        AnthropicConfig::with_key(&dialect, cred.secret.clone())
-    } else {
-        AnthropicConfig::new(cred.secret.clone())
-    };
-    if !base_url.trim().is_empty() {
-        cfg = cfg.with_base_url(base_url.trim());
-    }
-    cfg
-}
-
+/// The model for a provider and its credential. Anthropic: an API key as
+/// `x-api-key`, a gateway's auth token as `Authorization: Bearer`, both at
+/// `base_url` when set; a claude.ai sign-in on the account's Claude plan,
+/// always at Anthropic's API (its token is for nowhere else). ChatGPT: the
+/// account's sign-in. OpenRouter: its key. Ollama at `base_url`. Any other
+/// provider is one the user added: Chat Completions at `base_url`, with
+/// its key when it has one. (Copilot's model is `copilot::model`.)
 pub fn make_model(provider: &str, model: &str, base_url: &str, cred: Option<keys::Credential>) -> Result<DynModel<Completion>, String> {
+    let key = |cred: Option<keys::Credential>| match cred.map(|c| c.secret) {
+        Some(keys::Secret::ApiKey(k) | keys::Secret::Bearer(k)) if !k.is_empty() => Some(k),
+        _ => None,
+    };
     match provider {
         "anthropic" => {
-            let cred = cred.filter(|c| !c.secret.is_empty()).ok_or(
-                "No Anthropic API key yet — add one in Settings › Agents › Paw Agent (it's kept in your Keychain).",
-            )?;
-            Ok(anthropic_config(&cred, base_url).client().completion(model).into())
+            use rig_core::providers::anthropic::{wire::Auth, AnthropicConfig, ANTHROPIC};
+            let cred = cred.ok_or("No Anthropic API key or Claude sign-in yet — add one in Settings › Agents › Paw Agent.")?;
+            let mut cfg = match cred.secret {
+                keys::Secret::Claude(login) => return Ok(claude::model(login, model)),
+                keys::Secret::ApiKey(key) => AnthropicConfig::new(key),
+                keys::Secret::Bearer(token) => {
+                    let mut dialect = ANTHROPIC;
+                    dialect.quirks.auth = Auth::OptionalBearer;
+                    AnthropicConfig::with_key(&dialect, token)
+                }
+            };
+            if !base_url.trim().is_empty() {
+                cfg = cfg.with_base_url(base_url.trim());
+            }
+            Ok(cfg.client().completion(model).into())
         }
-        _ => {
+        "ollama" => {
             use rig_core::providers::ollama::OllamaConfig;
             let mut cfg = OllamaConfig::new();
             if !base_url.trim().is_empty() {
@@ -984,6 +1010,10 @@ pub fn make_model(provider: &str, model: &str, base_url: &str, cred: Option<keys
             }
             Ok(cfg.client().native_completion(model).into())
         }
+        chatgpt::PROVIDER => Ok(chatgpt::model(model)),
+        openrouter::PROVIDER => Ok(openrouter::model(&key(cred).ok_or(openrouter::NO_KEY)?, model)),
+        _ if base_url.trim().is_empty() => Err(format!("The provider “{provider}” has no address. Set its base URL in Settings › Agents.")),
+        _ => Ok(compatible::model(base_url, key(cred).as_deref(), model)),
     }
 }
 
@@ -1190,6 +1220,7 @@ pub async fn paw_agent_start(
         _ if !model.is_empty() => model,
         "anthropic" => ANTHROPIC_MODELS[0].to_string(),
         copilot::PROVIDER => copilot::MODELS[0].to_string(),
+        chatgpt::PROVIDER => rig_core::providers::chatgpt::DEFAULT_MODEL.to_string(),
         _ => model,
     };
     if model.is_empty() {
@@ -1206,9 +1237,16 @@ pub async fn paw_agent_start(
     let scripts2 = scripts.clone();
     let (cwd2, provider2, model2, base2, approval2, source2) =
         (cwd.clone(), provider.clone(), model.clone(), base_url.clone(), approval.clone(), opts.key_source.clone());
-    // Keys, Copilot's sign-in, `ollama show` and the skill folders: off the async threads.
+    // Keys, the sign-ins, `ollama show` and the skill folders: off the async threads.
     let (cred, copilot_source, tools, preamble) = tauri::async_runtime::spawn_blocking(move || {
-        let cred = (provider2 == "anthropic").then(|| keys::resolve(&keys::System, &source2)).transpose()?;
+        let cred = match provider2.as_str() {
+            "anthropic" => Some(keys::resolve(&keys::System, &source2)?),
+            copilot::PROVIDER | "ollama" => None,
+            chatgpt::PROVIDER if !chatgpt::status().signed_in => return Err(chatgpt::NOT_SIGNED_IN.to_string()),
+            chatgpt::PROVIDER => None,
+            // OpenRouter's key, or an added provider's.
+            p => keychain::get(p).map(|k| keys::Credential { secret: keys::Secret::ApiKey(k), base_url: None, source: p.to_string() }),
+        };
         let copilot_source = (provider2 == copilot::PROVIDER).then(|| copilot::source(&copilot::user_home())).transpose()?;
         let tools = provider2 != "ollama" || ollama_supports_tools(&base2, &model2).unwrap_or(true);
         let skills = crate::skills::agent_skills_index(&app2, &cwd2);
@@ -1320,19 +1358,38 @@ pub async fn paw_key_sources() -> Result<Vec<keys::KeySource>, String> {
     tauri::async_runtime::spawn_blocking(|| keys::list(&keys::System)).await.map_err(|e| e.to_string())
 }
 
+/// The providers Paw keeps an API key for: Anthropic, OpenRouter and the
+/// ones the user added (the settings name them).
+fn key_ids(app: &tauri::AppHandle, reg: &crate::registry::Registry) -> Vec<String> {
+    reg.settings(app).providers.key_ids()
+}
+
+fn key_provider(app: &tauri::AppHandle, reg: &crate::registry::Registry, provider: &str) -> Result<(), String> {
+    if key_ids(app, reg).iter().any(|p| p == provider) {
+        Ok(())
+    } else {
+        Err(format!("Paw keeps no API key for “{provider}”."))
+    }
+}
+
 /// Which providers have an API key in the Keychain (never the key itself).
 #[tauri::command]
-pub async fn paw_key_status() -> Result<HashMap<String, bool>, String> {
-    tauri::async_runtime::spawn_blocking(|| HashMap::from([("anthropic".to_string(), keychain::get("anthropic").is_some())]))
-        .await
-        .map_err(|e| e.to_string())
+pub async fn paw_key_status(app: tauri::AppHandle, reg: tauri::State<'_, crate::registry::Registry>) -> Result<HashMap<String, bool>, String> {
+    let ids = key_ids(&app, &reg);
+    let saved = move || {
+        ids.into_iter()
+            .map(|p| {
+                let saved = keychain::get(&p).is_some();
+                (p, saved)
+            })
+            .collect()
+    };
+    tauri::async_runtime::spawn_blocking(saved).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn paw_key_set(provider: String, key: String) -> Result<(), String> {
-    if provider != "anthropic" {
-        return Err("Only Anthropic uses an API key".into());
-    }
+pub async fn paw_key_set(app: tauri::AppHandle, reg: tauri::State<'_, crate::registry::Registry>, provider: String, key: String) -> Result<(), String> {
+    key_provider(&app, &reg, &provider)?;
     let key = key.trim().to_string();
     if key.is_empty() {
         return Err("The key is empty".into());
@@ -1341,7 +1398,8 @@ pub async fn paw_key_set(provider: String, key: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn paw_key_delete(provider: String) -> Result<(), String> {
+pub async fn paw_key_delete(app: tauri::AppHandle, reg: tauri::State<'_, crate::registry::Registry>, provider: String) -> Result<(), String> {
+    key_provider(&app, &reg, &provider)?;
     tauri::async_runtime::spawn_blocking(move || keychain::delete(&provider)).await.map_err(|e| e.to_string())?
 }
 
@@ -1384,9 +1442,129 @@ pub async fn paw_copilot_sign_out() -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(copilot::sign_out).await.map_err(|e| e.to_string())?
 }
 
+/// Paw's Claude sign-in (never a token).
+#[tauri::command]
+pub async fn paw_claude_status() -> Result<claude::Status, String> {
+    tauri::async_runtime::spawn_blocking(claude::status).await.map_err(|e| e.to_string())
+}
+
+/// Stops the Claude sign-in that's waiting for the browser.
+static CANCEL_CLAUDE_SIGN_IN: Mutex<Option<oneshot::Sender<()>>> = Mutex::new(None);
+
+/// Sign in with claude.ai: the browser opens Claude's consent page and
+/// `claude:auth` tells Settings its address (to open it again). Answers the
+/// account's email once the user has allowed Paw.
+#[tauri::command]
+pub async fn paw_claude_sign_in(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri::Emitter;
+    let (tx, rx) = oneshot::channel();
+    // A sign-in already waiting ends (its sender is dropped).
+    *CANCEL_CLAUDE_SIGN_IN.lock().unwrap() = Some(tx);
+    let show = move |url: String| {
+        let _ = std::process::Command::new("/usr/bin/open").arg(&url).spawn();
+        let _ = app.emit("claude:auth", url);
+    };
+    tokio::select! {
+        r = claude::sign_in(show) => r,
+        _ = rx => Err("Sign-in cancelled.".into()),
+    }
+}
+
+#[tauri::command]
+pub async fn paw_claude_cancel_sign_in() -> Result<(), String> {
+    CANCEL_CLAUDE_SIGN_IN.lock().unwrap().take();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn paw_claude_sign_out() -> Result<(), String> {
+    claude::sign_out().await
+}
+
+/// Paw's ChatGPT sign-in (never a token).
+#[tauri::command]
+pub async fn paw_chatgpt_status() -> Result<chatgpt::Status, String> {
+    tauri::async_runtime::spawn_blocking(chatgpt::status).await.map_err(|e| e.to_string())
+}
+
+/// Stops the ChatGPT sign-in that's waiting for the browser.
+static CANCEL_CHATGPT_SIGN_IN: Mutex<Option<oneshot::Sender<()>>> = Mutex::new(None);
+
+/// Sign in with ChatGPT: the browser opens OpenAI's sign-in page and
+/// `chatgpt:auth` tells Settings its address (to open it again); when that
+/// can't be used, `chatgpt:device` tells the code to enter on OpenAI's
+/// device page. Answers the account's email ("" when unknown).
+#[tauri::command]
+pub async fn paw_chatgpt_sign_in(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri::Emitter;
+    let (tx, rx) = oneshot::channel();
+    // A sign-in already waiting ends (its sender is dropped).
+    *CANCEL_CHATGPT_SIGN_IN.lock().unwrap() = Some(tx);
+    let app2 = app.clone();
+    let page = move |url: String, opened: bool| {
+        if !opened {
+            let _ = std::process::Command::new("/usr/bin/open").arg(&url).spawn();
+        }
+        let _ = app.emit("chatgpt:auth", json!({ "url": url }));
+    };
+    let code = move |device: copilot::DeviceCode| {
+        let _ = std::process::Command::new("/usr/bin/open").arg(&device.uri).spawn();
+        let _ = app2.emit("chatgpt:device", device);
+    };
+    tokio::select! {
+        r = chatgpt::sign_in(page, code) => r,
+        _ = rx => Err("Sign-in cancelled.".into()),
+    }
+}
+
+#[tauri::command]
+pub async fn paw_chatgpt_cancel_sign_in() -> Result<(), String> {
+    CANCEL_CHATGPT_SIGN_IN.lock().unwrap().take();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn paw_chatgpt_sign_out() -> Result<(), String> {
+    chatgpt::sign_out().await
+}
+
+/// Stops the OpenRouter sign-in that's waiting for the browser.
+static CANCEL_OPENROUTER_SIGN_IN: Mutex<Option<oneshot::Sender<()>>> = Mutex::new(None);
+
+/// Sign in with OpenRouter: the browser opens openrouter.ai and
+/// `openrouter:auth` tells Settings its address (to open it again). The key
+/// OpenRouter makes for Paw is saved as the `openrouter` key; signing out
+/// is `paw_key_delete("openrouter")`.
+#[tauri::command]
+pub async fn paw_openrouter_sign_in(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Emitter;
+    let (tx, rx) = oneshot::channel();
+    // A sign-in already waiting ends (its sender is dropped).
+    *CANCEL_OPENROUTER_SIGN_IN.lock().unwrap() = Some(tx);
+    let show = move |url: String| {
+        let _ = std::process::Command::new("/usr/bin/open").arg(&url).spawn();
+        let _ = app.emit("openrouter:auth", json!({ "url": url }));
+    };
+    tokio::select! {
+        r = openrouter::sign_in(show) => r,
+        _ = rx => Err("Sign-in cancelled.".into()),
+    }
+}
+
+#[tauri::command]
+pub async fn paw_openrouter_cancel_sign_in() -> Result<(), String> {
+    CANCEL_OPENROUTER_SIGN_IN.lock().unwrap().take();
+    Ok(())
+}
+
 pub mod auto;
+pub mod chatgpt;
+pub mod claude;
+pub mod compatible;
 pub mod copilot;
 pub mod keys;
+pub mod oauth;
+pub mod openrouter;
 
 #[cfg(test)]
 mod tests;

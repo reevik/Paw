@@ -1,19 +1,18 @@
 //! Where Paw Agent gets an Anthropic credential.
 //!
-//! Besides a key the user gives Paw (kept in Paw's own Keychain item),
-//! Paw looks where other tools keep one: the login shell's
-//! `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN`, Claude Code (the `env` block
-//! and `apiKeyHelper` in `~/.claude/settings.json`, a Console key in
-//! `~/.claude.json` or in its "Claude Code" Keychain item) and opencode
-//! (`~/.local/share/opencode/auth.json`).
-//!
-//! A claude.ai sign-in (Claude Code's "Claude Code-credentials" item, an
-//! opencode OAuth login) is listed but never used: it is a subscription
-//! credential for that app, not an API key.
+//! Besides a key the user gives Paw (kept in Paw's own Keychain item) and
+//! Paw's own Claude sign-in (see `claude`), Paw looks where other tools keep
+//! one: the login shell's `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN`,
+//! Claude Code (the `env` block and `apiKeyHelper` in
+//! `~/.claude/settings.json`, a Console key in `~/.claude.json` or in its
+//! "Claude Code" Keychain item, its claude.ai sign-in) and opencode
+//! (`~/.local/share/opencode/auth.json`). opencode's claude.ai sign-in is
+//! listed but not used.
 //!
 //! Listing never returns a secret. A key is read only when a session starts,
 //! from the source the user picked (or the first usable one), so a key that
-//! changes there is picked up without copying it anywhere.
+//! changes there is picked up without copying it anywhere. A sign-in's token
+//! is read when a request needs one.
 
 use serde::Serialize;
 use serde_json::Value;
@@ -25,34 +24,55 @@ pub struct KeySource {
     /// Stable id, saved as the agent's `key_source`.
     pub id: String,
     pub label: String,
-    /// Where exactly, in words.
+    /// Where exactly, in words (empty when the label says it all).
     pub detail: String,
     pub usable: bool,
+    /// A claude.ai sign-in (Settings shows these apart from keys).
+    pub sign_in: bool,
     /// Why it can't be used, or what using it involves.
     pub note: String,
 }
 
-/// A credential read from a source.
+impl KeySource {
+    /// "label (detail)", or the label alone.
+    pub fn name(&self) -> String {
+        if self.detail.is_empty() {
+            self.label.clone()
+        } else {
+            format!("{} ({})", self.label, self.detail)
+        }
+    }
+}
+
+/// What a request is authorized with.
 #[derive(Clone, PartialEq)]
+pub enum Secret {
+    /// An API key, sent as `x-api-key`.
+    ApiKey(String),
+    /// A gateway's auth token, sent as `Authorization: Bearer`.
+    Bearer(String),
+    /// A claude.ai sign-in: the Claude plan's models, its token read per request.
+    Claude(super::claude::Login),
+}
+
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Never print the secret.
+        match self {
+            Secret::ApiKey(k) => write!(f, "ApiKey(<{} chars>)", k.len()),
+            Secret::Bearer(t) => write!(f, "Bearer(<{} chars>)", t.len()),
+            Secret::Claude(login) => write!(f, "Claude({login:?})"),
+        }
+    }
+}
+
+/// A credential read from a source.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Credential {
-    pub secret: String,
-    /// Sent as `Authorization: Bearer` (a gateway's auth token) rather than `x-api-key`.
-    pub bearer: bool,
+    pub secret: Secret,
     /// The address that goes with it (`ANTHROPIC_BASE_URL` beside it), if any.
     pub base_url: Option<String>,
     pub source: String,
-}
-
-impl std::fmt::Debug for Credential {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Never print the secret.
-        f.debug_struct("Credential")
-            .field("secret", &format!("<{} chars>", self.secret.len()))
-            .field("bearer", &self.bearer)
-            .field("base_url", &self.base_url)
-            .field("source", &self.source)
-            .finish()
-    }
 }
 
 /// What the scan looks at; tests swap in a fake machine.
@@ -67,14 +87,15 @@ pub trait Probe {
     fn keychain_read(&self, service: &str) -> Option<String>;
     /// Paw's own key.
     fn paw_key(&self) -> Option<String>;
+    /// Paw's own Claude sign-in: the account's email ("" when unknown).
+    fn paw_claude(&self) -> Option<String>;
     /// Run Claude Code's `apiKeyHelper` command; its output is the key.
     fn run_helper(&self, command: &str) -> Option<String>;
 }
 
 pub const PAW: &str = "paw";
+pub const PAW_CLAUDE: &str = "paw-claude";
 const CLAUDE_CODE_KEYCHAIN: &str = "Claude Code";
-const CLAUDE_CODE_LOGIN: &str = "Claude Code-credentials";
-const SUBSCRIPTION_NOTE: &str = "A claude.ai sign-in works only in Claude Code. Paw Agent needs an API key from console.anthropic.com.";
 
 fn read_json(path: &Path) -> Option<Value> {
     serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
@@ -99,22 +120,39 @@ struct Found {
     read: Box<dyn Fn(&dyn Probe) -> Option<Credential>>,
 }
 
+impl Found {
+    /// This source as a claude.ai sign-in rather than a key.
+    fn sign_in(mut self) -> Self {
+        self.source.sign_in = true;
+        self
+    }
+}
+
 fn found(id: &str, label: &str, detail: impl Into<String>, note: &str, read: impl Fn(&dyn Probe) -> Option<Credential> + 'static) -> Found {
     Found {
-        source: KeySource { id: id.into(), label: label.into(), detail: detail.into(), usable: true, note: note.into() },
+        source: KeySource { id: id.into(), label: label.into(), detail: detail.into(), usable: true, sign_in: false, note: note.into() },
         read: Box::new(read),
     }
 }
 
 fn not_usable(id: &str, label: &str, detail: &str, note: &str) -> Found {
     Found {
-        source: KeySource { id: id.into(), label: label.into(), detail: detail.into(), usable: false, note: note.into() },
+        source: KeySource { id: id.into(), label: label.into(), detail: detail.into(), usable: false, sign_in: false, note: note.into() },
         read: Box::new(|_| None),
     }
 }
 
-fn cred(secret: String, bearer: bool, base_url: Option<String>, source: &str) -> Credential {
-    Credential { secret, bearer, base_url, source: source.into() }
+fn cred(secret: Secret, base_url: Option<String>, source: &str) -> Credential {
+    Credential { secret, base_url, source: source.into() }
+}
+
+/// " (email)", when there is one.
+fn account(email: &str) -> String {
+    if email.is_empty() {
+        String::new()
+    } else {
+        format!(" ({email})")
+    }
 }
 
 /// Every source on this machine, in the order "Automatic" tries them.
@@ -122,9 +160,17 @@ fn scan(p: &dyn Probe) -> Vec<Found> {
     let mut out = vec![];
     let home = p.home();
 
+    if let Some(email) = p.paw_claude() {
+        out.push(
+            found(PAW_CLAUDE, &format!("Paw Sign-in{}", account(&email)), "", "", |_| {
+                Some(cred(Secret::Claude(super::claude::Login::Paw), None, PAW_CLAUDE))
+            })
+            .sign_in(),
+        );
+    }
     if p.paw_key().is_some() {
         out.push(found(PAW, "Paw's own key", "Saved in Settings (your Keychain)", "", |p| {
-            p.paw_key().map(|k| cred(k, false, None, PAW))
+            p.paw_key().map(|k| cred(Secret::ApiKey(k), None, PAW))
         }));
     }
 
@@ -133,13 +179,13 @@ fn scan(p: &dyn Probe) -> Vec<Found> {
     if !api_key.trim().is_empty() {
         out.push(found("shell-api-key", "Login shell", "ANTHROPIC_API_KEY", "", |p| {
             let [k, _, b] = p.shell_vars();
-            nonempty(&k).map(|k| cred(k, false, nonempty(&b), "shell-api-key"))
+            nonempty(&k).map(|k| cred(Secret::ApiKey(k), nonempty(&b), "shell-api-key"))
         }));
     }
     if !auth_token.trim().is_empty() {
         out.push(found("shell-auth-token", "Login shell", "ANTHROPIC_AUTH_TOKEN (sent as a bearer token)", "", |p| {
             let [_, t, b] = p.shell_vars();
-            nonempty(&t).map(|t| cred(t, true, nonempty(&b), "shell-auth-token"))
+            nonempty(&t).map(|t| cred(Secret::Bearer(t), nonempty(&b), "shell-auth-token"))
         }));
     }
 
@@ -151,14 +197,14 @@ fn scan(p: &dyn Probe) -> Vec<Found> {
             let (path, b) = (settings_path.clone(), env_base.clone());
             out.push(found("claude-code-env-key", "Claude Code", "ANTHROPIC_API_KEY in ~/.claude/settings.json", "", move |_| {
                 let s = read_json(&path)?;
-                str_at(&s, &["env", "ANTHROPIC_API_KEY"]).map(|k| cred(k.into(), false, b.clone(), "claude-code-env-key"))
+                str_at(&s, &["env", "ANTHROPIC_API_KEY"]).map(|k| cred(Secret::ApiKey(k.into()), b.clone(), "claude-code-env-key"))
             }));
         }
         if str_at(&settings, &["env", "ANTHROPIC_AUTH_TOKEN"]).is_some() {
             let (path, b) = (settings_path.clone(), env_base.clone());
             out.push(found("claude-code-env-token", "Claude Code", "ANTHROPIC_AUTH_TOKEN in ~/.claude/settings.json (bearer token)", "", move |_| {
                 let s = read_json(&path)?;
-                str_at(&s, &["env", "ANTHROPIC_AUTH_TOKEN"]).map(|t| cred(t.into(), true, b.clone(), "claude-code-env-token"))
+                str_at(&s, &["env", "ANTHROPIC_AUTH_TOKEN"]).map(|t| cred(Secret::Bearer(t.into()), b.clone(), "claude-code-env-token"))
             }));
         }
         if str_at(&settings, &["apiKeyHelper"]).is_some() {
@@ -171,7 +217,7 @@ fn scan(p: &dyn Probe) -> Vec<Found> {
                 move |p| {
                     let s = read_json(&path)?;
                     let cmd = str_at(&s, &["apiKeyHelper"])?;
-                    p.run_helper(cmd).and_then(|k| nonempty(&k)).map(|k| cred(k, false, b.clone(), "claude-code-helper"))
+                    p.run_helper(cmd).and_then(|k| nonempty(&k)).map(|k| cred(Secret::ApiKey(k), b.clone(), "claude-code-helper"))
                 },
             ));
         }
@@ -182,7 +228,7 @@ fn scan(p: &dyn Probe) -> Vec<Found> {
         let (path, b) = (state_path.clone(), shell_base.clone());
         out.push(found("claude-code-console-key", "Claude Code", "Console API key in ~/.claude.json", "", move |_| {
             let s = read_json(&path)?;
-            str_at(&s, &["primaryApiKey"]).map(|k| cred(k.into(), false, b.clone(), "claude-code-console-key"))
+            str_at(&s, &["primaryApiKey"]).map(|k| cred(Secret::ApiKey(k.into()), b.clone(), "claude-code-console-key"))
         }));
     }
     if p.keychain_has(CLAUDE_CODE_KEYCHAIN) {
@@ -192,7 +238,7 @@ fn scan(p: &dyn Probe) -> Vec<Found> {
             "Claude Code",
             "Console API key in the \"Claude Code\" Keychain item",
             "macOS asks once whether Paw may read it.",
-            move |p| p.keychain_read(CLAUDE_CODE_KEYCHAIN).and_then(|k| nonempty(&k)).map(|k| cred(k, false, b.clone(), "claude-code-keychain")),
+            move |p| p.keychain_read(CLAUDE_CODE_KEYCHAIN).and_then(|k| nonempty(&k)).map(|k| cred(Secret::ApiKey(k), b.clone(), "claude-code-keychain")),
         ));
     }
 
@@ -204,18 +250,35 @@ fn scan(p: &dyn Probe) -> Vec<Found> {
                 let path = oc_path.clone();
                 out.push(found("opencode", "opencode", "Anthropic API key in ~/.local/share/opencode/auth.json", "", move |_| {
                     let s = read_json(&path)?;
-                    str_at(&s, &["anthropic", "key"]).map(|k| cred(k.into(), false, None, "opencode"))
+                    str_at(&s, &["anthropic", "key"]).map(|k| cred(Secret::ApiKey(k.into()), None, "opencode"))
                 }));
             }
-            Some(_) => out.push(not_usable("opencode-login", "opencode", "Signed in with a claude.ai account", SUBSCRIPTION_NOTE)),
+            Some(_) => out.push(
+                not_usable(
+                    "opencode-login",
+                    "opencode's Sign-in",
+                    "",
+                    "Paw doesn't use opencode's sign-in. Sign in with Claude in Paw, or use Claude Code's sign-in.",
+                )
+                .sign_in(),
+            ),
             None => {}
         }
     }
 
-    // Subscription sign-ins: shown, never used.
-    let claude_ai = p.keychain_has(CLAUDE_CODE_LOGIN) || state.as_ref().is_some_and(|s| s.get("oauthAccount").is_some_and(|a| !a.is_null()));
-    if claude_ai {
-        out.push(not_usable("claude-code-login", "Claude Code", "Signed in with a claude.ai account", SUBSCRIPTION_NOTE));
+    // Claude Code's claude.ai sign-in: its token, read per request.
+    if p.keychain_has(super::claude::CLAUDE_CODE_ITEM) {
+        let email = state.as_ref().and_then(|s| str_at(s, &["oauthAccount", "emailAddress"])).unwrap_or_default();
+        out.push(
+            found(
+                "claude-code-login",
+                &format!("Claude Code's Sign-in{}", account(email)),
+                "",
+                "macOS asks once whether Paw may read it. Paw uses it while Claude Code keeps it renewed (it renews when you use claude).",
+                |_| Some(cred(Secret::Claude(super::claude::Login::ClaudeCode), None, "claude-code-login")),
+            )
+            .sign_in(),
+        );
     }
     out
 }
@@ -236,19 +299,16 @@ pub fn resolve(p: &dyn Probe, choice: &str) -> Result<Credential, String> {
         if !f.source.usable {
             return Err(f.source.note.clone());
         }
-        return (f.read)(p).ok_or_else(|| format!("Couldn't read the key from {} ({}).", f.source.label, f.source.detail));
+        return (f.read)(p).ok_or_else(|| format!("Couldn't read the key from {}.", f.source.name()));
     }
     for f in all.iter().filter(|f| f.source.usable) {
         if let Some(c) = (f.read)(p) {
             return Ok(c);
         }
     }
-    let mut msg = String::from("No Anthropic API key found. Add one in Settings › Agents › Paw Agent (it's kept in your Keychain), or set ANTHROPIC_API_KEY in your shell.");
-    if all.iter().any(|f| !f.source.usable) {
-        msg.push(' ');
-        msg.push_str(SUBSCRIPTION_NOTE);
-    }
-    Err(msg)
+    Err("No Anthropic API key or Claude sign-in found. Sign in with Claude or add a key in Settings › Agents › Paw Agent, \
+or set ANTHROPIC_API_KEY in your shell."
+        .into())
 }
 
 /// This Mac.
@@ -294,6 +354,11 @@ impl Probe for System {
         super::keychain::get("anthropic")
     }
 
+    fn paw_claude(&self) -> Option<String> {
+        let st = super::claude::status();
+        st.signed_in.then(|| st.login.unwrap_or_default())
+    }
+
     fn run_helper(&self, command: &str) -> Option<String> {
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
         let out = crate::registry::run_with_env(&shell, &["-lc", command], &[], std::time::Duration::from_secs(20))?;
@@ -312,6 +377,7 @@ mod tests {
         vars: [String; 3],
         keychain: Vec<(&'static str, &'static str)>,
         paw: Option<String>,
+        paw_claude: Option<String>,
         helper: Option<String>,
     }
 
@@ -331,6 +397,9 @@ mod tests {
         fn paw_key(&self) -> Option<String> {
             self.paw.clone()
         }
+        fn paw_claude(&self) -> Option<String> {
+            self.paw_claude.clone()
+        }
         fn run_helper(&self, _command: &str) -> Option<String> {
             self.helper.clone()
         }
@@ -348,16 +417,26 @@ mod tests {
         list(p).into_iter().map(|s| (s.id, s.usable)).collect()
     }
 
+    fn key(k: &str) -> Secret {
+        Secret::ApiKey(k.into())
+    }
+
     #[test]
-    fn subscription_only_is_listed_but_not_used() {
-        // This Mac today: Claude Code signed in with claude.ai, no key anywhere.
+    fn claude_sign_ins_are_used_and_paws_comes_first() {
+        use crate::paw_agent::claude::{Login, CLAUDE_CODE_ITEM};
+        // Claude Code signed in with claude.ai, no key anywhere.
         let h = home("sub");
-        std::fs::write(h.join(".claude.json"), r#"{"oauthAccount":{"emailAddress":"x"}}"#).unwrap();
-        let p = Fake { home: h.clone(), keychain: vec![(CLAUDE_CODE_LOGIN, "{\"claudeAiOauth\":{}}")], ..Default::default() };
-        assert_eq!(ids(&p), [("claude-code-login".to_string(), false)]);
-        let err = resolve(&p, "").unwrap_err();
-        assert!(err.contains("console.anthropic.com"), "{err}");
-        assert!(resolve(&p, "claude-code-login").is_err());
+        std::fs::write(h.join(".claude.json"), r#"{"oauthAccount":{"emailAddress":"me@example.com"}}"#).unwrap();
+        let mut p = Fake { home: h.clone(), keychain: vec![(CLAUDE_CODE_ITEM, "{\"claudeAiOauth\":{}}")], ..Default::default() };
+        assert_eq!(ids(&p), [("claude-code-login".to_string(), true)]);
+        assert_eq!(list(&p)[0].name(), "Claude Code's Sign-in (me@example.com)");
+        assert_eq!(resolve(&p, "").unwrap().secret, Secret::Claude(Login::ClaudeCode));
+        // Paw's own sign-in goes first, before Paw's own key.
+        p.paw = Some("sk-paw".into());
+        p.paw_claude = Some(String::new());
+        assert_eq!(ids(&p).iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), [PAW_CLAUDE, PAW, "claude-code-login"]);
+        assert_eq!(resolve(&p, "").unwrap().secret, Secret::Claude(Login::Paw));
+        assert_eq!(resolve(&p, PAW).unwrap().secret, key("sk-paw"));
         std::fs::remove_dir_all(h).ok();
     }
 
@@ -377,6 +456,7 @@ mod tests {
             keychain: vec![(CLAUDE_CODE_KEYCHAIN, "sk-keychain")],
             paw: Some("sk-paw".into()),
             helper: Some("sk-helper".into()),
+            ..Default::default()
         };
         let found: Vec<String> = ids(&p).into_iter().map(|(id, u)| { assert!(u, "{id}"); id }).collect();
         assert_eq!(
@@ -384,16 +464,16 @@ mod tests {
             ["paw", "shell-api-key", "shell-auth-token", "claude-code-env-key", "claude-code-helper", "claude-code-console-key", "claude-code-keychain", "opencode"]
         );
         // Automatic: Paw's own key first.
-        assert_eq!(resolve(&p, "").unwrap(), cred("sk-paw".into(), false, None, PAW));
+        assert_eq!(resolve(&p, "").unwrap(), cred(key("sk-paw"), None, PAW));
         let c = resolve(&p, "shell-auth-token").unwrap();
-        assert_eq!((c.secret.as_str(), c.bearer, c.base_url.as_deref()), ("tok-shell", true, Some("https://shell.example")));
+        assert_eq!((c.secret, c.base_url.as_deref()), (Secret::Bearer("tok-shell".into()), Some("https://shell.example")));
         // Claude Code's settings carry their own address.
         let c = resolve(&p, "claude-code-env-key").unwrap();
-        assert_eq!((c.secret.as_str(), c.base_url.as_deref()), ("sk-settings", Some("https://gw.example")));
-        assert_eq!(resolve(&p, "claude-code-helper").unwrap().secret, "sk-helper");
-        assert_eq!(resolve(&p, "claude-code-console-key").unwrap().secret, "sk-primary");
-        assert_eq!(resolve(&p, "claude-code-keychain").unwrap().secret, "sk-keychain");
-        assert_eq!(resolve(&p, "opencode").unwrap().secret, "sk-oc");
+        assert_eq!((c.secret, c.base_url.as_deref()), (key("sk-settings"), Some("https://gw.example")));
+        assert_eq!(resolve(&p, "claude-code-helper").unwrap().secret, key("sk-helper"));
+        assert_eq!(resolve(&p, "claude-code-console-key").unwrap().secret, key("sk-primary"));
+        assert_eq!(resolve(&p, "claude-code-keychain").unwrap().secret, key("sk-keychain"));
+        assert_eq!(resolve(&p, "opencode").unwrap().secret, key("sk-oc"));
         assert!(resolve(&p, "gone").unwrap_err().contains("isn't there any more"));
         // Listing never carries a secret.
         let listed = serde_json::to_string(&list(&p)).unwrap();
@@ -414,8 +494,9 @@ mod tests {
         let all: HashSet<(String, bool)> = ids(&p).into_iter().collect();
         assert!(all.contains(&("claude-code-helper".into(), true)));
         assert!(all.contains(&("opencode-login".into(), false)));
+        assert!(resolve(&p, "opencode-login").unwrap_err().contains("Sign in with Claude"));
         let err = resolve(&p, "").unwrap_err();
-        assert!(err.contains("No Anthropic API key found") && err.contains("claude.ai"), "{err}");
+        assert!(err.contains("No Anthropic API key or Claude sign-in found"), "{err}");
         std::fs::remove_dir_all(h).ok();
     }
 }

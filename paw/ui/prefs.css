@@ -29,7 +29,7 @@ body.prefs { display: flex; flex-direction: column; height: 100vh; }
 }
 .form-grid > label, .form-grid > span { text-align: right; padding-top: 6px; color: var(--text-2); }
 .form-grid.tight { grid-template-columns: 120px minmax(0, 1fr); margin: 0; padding: 0; max-width: none; gap: 10px 14px; }
-.prefs input:not([type]), .prefs input[type="text"], .prefs input[type="number"], .prefs input[type="search"], .prefs textarea, .prefs select {
+.prefs input:not([type]), .prefs input[type="text"], .prefs input[type="password"], .prefs input[type="number"], .prefs input[type="search"], .prefs textarea, .prefs select {
   width: 100%; border: 0; outline: none; border-radius: 7px; padding: 6px 9px;
   background: var(--card); box-shadow: 0 0 0 0.5px var(--hair), 0 1px 1px rgba(0,0,0,.03);
   user-select: text; -webkit-user-select: text;
@@ -59,6 +59,19 @@ body.prefs { display: flex; flex-direction: column; height: 100vh; }
 .alist .nm { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .alist .sub { font-size: 11px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .alist .avatar { width: 26px; height: 26px; border-radius: 7px; font-size: 12px; }
+/* Providers and their models */
+.alist li.alist-note { color: var(--text-3); font-size: 12px; pointer-events: none; }
+.alist li.alist-prov { gap: 8px; margin-top: 6px; }
+.alist li.alist-prov:first-child { margin-top: 0; }
+.alist li.alist-prov .nm { font-weight: 600; }
+.alist .pdot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--text-3); }
+.alist .pdot.ok { background: #1f9d44; }
+.alist li.active .pdot { box-shadow: 0 0 0 1.5px rgba(255,255,255,.85); }
+.alist li.alist-model { padding: 4px 8px 4px 23px; }
+.alist li.alist-model .nm { font: 12px var(--mono); }
+.alist li.dimmed:not(.active) .nm { color: var(--text-3); }
+.alist li .tag { flex-shrink: 0; background: var(--card); box-shadow: 0 0 0 0.5px var(--hair); }
+.alist li.active .tag { background: rgba(255,255,255,.22); box-shadow: none; color: white; }
 .alist-footer {
   display: flex; align-items: center; gap: 2px; padding: 6px 8px; border-top: 0.5px solid var(--hair);
 }
@@ -110,7 +123,7 @@ body.prefs { display: flex; flex-direction: column; height: 100vh; }
 .models li:hover { background: var(--hover); }
 .models li .lbl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .models li .lbl.plain { font-family: var(--font); color: var(--text-2); }
-.models .tag {
+.models .tag, .alist .tag {
   font: 10px var(--font); font-weight: 600; padding: 1px 6px; border-radius: 8px;
   background: var(--card-2); color: var(--text-2);
 }
@@ -119,6 +132,13 @@ body.prefs { display: flex; flex-direction: column; height: 100vh; }
 .models .rm:hover { color: var(--red); background: var(--hover); }
 .models input[type="radio"] { accent-color: var(--accent); margin: 0; }
 .add-model { display: flex; gap: 8px; }
+/* A large catalogue (OpenRouter's…): search it, add the models to show. */
+.avail { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.avail .models { margin: 0; }
+.avail .models button { flex-shrink: 0; }
+.avail .models button.added { color: var(--accent); }
+.avail .hint { margin: 0; }
+.avail .hint:empty { display: none; }
 .key-row { display: flex; gap: 8px; }
 #d-keysource { width: 100%; }
 .key-sources { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
@@ -131,6 +151,17 @@ body.prefs { display: flex; flex-direction: column; height: 100vh; }
 .key-row input { flex: 1; min-width: 0; }
 .cp-device { margin-top: 8px; }
 .cp-device .cp-code { display: inline-block; margin-top: 6px; font: 600 18px/1.2 var(--mono); letter-spacing: 2px; padding: 6px 12px; border-radius: 7px; background: var(--card-2); user-select: all; }
+.login-tabs { display: flex; flex-direction: column; gap: 8px; }
+.login-tabs .seg { align-self: flex-start; }
+.login-card {
+  display: flex; flex-direction: column; gap: 10px; padding: 10px 12px; border-radius: 9px;
+  background: var(--card-2); box-shadow: 0 0 0 0.5px var(--hair);
+}
+.login-card.hidden { display: none; }
+.login-field { display: flex; flex-direction: column; gap: 4px; }
+.login-field > label { font-size: 11.5px; color: var(--text-2); }
+.login-card .hint, .login-card .key-sources { margin: 0; }
+.login-card .hint:empty, .login-card .key-sources:empty { display: none; }
 .cmd-preview {
   font: 11px/1.5 var(--mono); padding: 7px 9px; border-radius: 7px; background: var(--card-2);
   white-space: pre-wrap; word-break: break-all; color: var(--text-2);
@@ -140,7 +171,7 @@ body.prefs { display: flex; flex-direction: column; height: 100vh; }
 .detail-footer { display: flex; justify-content: flex-end; }
 
 /* ---------- Switch ---------- */
-.switch { position: relative; width: 38px; height: 22px; flex-shrink: 0; }
+.switch { position: relative; display: inline-block; width: 38px; height: 22px; flex-shrink: 0; }
 .switch input { opacity: 0; width: 0; height: 0; }
 .switch span {
   position: absolute; inset: 0; border-radius: 11px; background: rgba(120,120,128,.3); transition: background .2s;

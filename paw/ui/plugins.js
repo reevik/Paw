@@ -141,7 +141,7 @@ const PLUGIN_BOOTSTRAP = String.raw`
 
 /** A tab as plugins see it. */
 function pluginTab(S) {
-  return S ? { id: S.pawId, title: tabLabel(S), agent: S.agent.name, model: modelOf(S), cwd: S.cwd, active: S.sid === activeId } : null;
+  return S ? { id: S.pawId, title: tabLabel(S), agent: S.agent.name, model: S.model || modelOf(S), cwd: S.cwd, active: S.sid === activeId } : null;
 }
 const tabByPluginId = (id) => (id ? [...sessions.values()].find((S) => S.pawId === id) : curS()) ?? curS();
 
@@ -402,7 +402,7 @@ function pluginTask(T) {
     id: t.id, tab: T.pawId, title: t.title || t.goal?.split("\n")[0] || "New task", state: t.state, cwd: T.cwd, planner: T.agent.name,
     selected: t.selected ?? null, startedAt: t.startedAt ?? null, endedAt: t.endedAt ?? null,
     steps: t.steps.map((s) => ({
-      id: s.id, title: s.title, agent: agentName(s.agent), needs: [...s.needs], edits: !!s.edits,
+      id: s.id, title: s.title, agent: stepModelName(s), model: s.model ?? null, needs: [...s.needs], edits: !!s.edits,
       state: stepView(s), startedAt: s.startedAt ?? null, endedAt: s.endedAt ?? null,
     })),
   };

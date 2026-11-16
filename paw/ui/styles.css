@@ -762,7 +762,7 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
    all but vanishes. A tint steadies the background and the sidebar gets its own,
    stronger text colours. The theme sets them (themes.js › chromeVars); these
    are the defaults. */
-.sidebar, .mcp-panel {
+.sidebar, .right-panel {
   background: var(--sidebar-bg, rgba(255, 255, 255, 0.34));
   --text-2: var(--side-text-2, #4a4a4f);
   --text-3: var(--side-text-3, #6e6e73);
@@ -772,7 +772,7 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
   --sk-card-line: rgba(0, 0, 0, 0.08);
 }
 @media (prefers-color-scheme: dark) {
-  .sidebar, .mcp-panel {
+  .sidebar, .right-panel {
     background: var(--sidebar-bg, rgba(18, 18, 22, 0.46));
     --text-2: var(--side-text-2, #cfcfd4);
     --text-3: var(--side-text-3, #a1a1a6);
@@ -782,26 +782,124 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
     --sk-card-line: rgba(255, 255, 255, 0.09);
   }
 }
-.sidebar .section-title, .mcp-panel .section-title { color: var(--text-2); }
-.sidebar .sk-tag, .mcp-panel .sk-tag { background: rgba(128, 128, 128, 0.22); }
+.sidebar .section-title, .right-panel .section-title { color: var(--text-2); }
+.sidebar .sk-tag, .right-panel .sk-tag { background: rgba(128, 128, 128, 0.22); }
 
 /* ⌃R history search */
 .ac-icon.prompt { color: var(--t-accent); }
 .ac-empty { padding: 6px 8px; color: var(--t-dim); font: 12px var(--font); }
 
-/* ---------- MCP panel (right) ----------
-   Same material and cards as the sidebar; servers of the focused tab's agent. */
-.mcp-panel {
-  width: var(--mcp-w, 300px); flex-shrink: 0; display: flex; flex-direction: column; min-height: 0;
+/* ---------- Right panel ----------
+   Same material and cards as the sidebar: the focused tab's MCP servers, and
+   skills, one tab at a time. */
+.right-panel {
+  width: var(--panel-w, 300px); flex-shrink: 0; display: flex; flex-direction: column; min-height: 0;
   border-left: 0.5px solid var(--hair); overflow: hidden;
 }
-.mcp-panel.hidden { display: none; }
-.mcp-top { height: 44px; flex-shrink: 0; }
-.mcp-head { display: flex; align-items: center; gap: 2px; padding: 0 10px 0 10px; }
-.mcp-head .section-title { flex: 1; }
-.mcp-sub { font-size: 11.5px; color: var(--text-2); padding: 0 18px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.mcp-panel .skills-msg { margin: 0 10px; }
+.right-panel.hidden { display: none; }
+.panel-top { height: 44px; flex-shrink: 0; }
+.panel-head { display: flex; align-items: center; gap: 6px; padding: 0 10px 8px; }
+.panel-tabs {
+  display: inline-flex; padding: 2px; border-radius: 8px; background: var(--hover);
+  box-shadow: 0 0 0 0.5px var(--sk-card-line);
+}
+.panel-tabs button {
+  border: 0; background: transparent; padding: 3px 12px; border-radius: 6px;
+  font: inherit; font-size: 11.5px; font-weight: 500; color: var(--text-2);
+}
+.panel-tabs button.active { background: var(--sk-card); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.12), 0 0 0 0.5px var(--sk-card-line); }
+.panel-pane { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.panel-pane.hidden { display: none; }
+.mcp-head { display: flex; align-items: center; gap: 2px; padding: 0 10px 6px 16px; }
+.mcp-sub { flex: 1; min-width: 0; font-size: 11.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.right-panel .panel-pane[data-pane="mcp"] .skills-msg { margin: 0 10px; }
 .mcp-body { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 0 10px 10px; min-height: 0; }
+.right-panel .skills-panel { padding: 0 10px; }
+.right-panel .skills-head { gap: 4px; padding: 0 0 8px; }
+.right-panel .skills-head .skills-filter { flex: 1; min-width: 0; margin: 0; }
+
+/* Its lists sit on the panel itself, as the sidebar's do: quiet section
+   titles that fold, rows that light up under the pointer, no cards. */
+.right-panel .sk-sec { margin: 0 0 12px; background: none; border: 0; border-radius: 0; overflow: visible; }
+.right-panel .sk-sec-head,
+.right-panel .sk-sec:not(.closed) .sk-sec-head {
+  position: relative; padding: 2px 6px 4px; min-height: 18px; border-bottom: 0;
+  font-size: 11px; font-weight: 600; color: var(--text-3);
+}
+.right-panel .sk-sec-head:hover { background: none; color: var(--text-2); }
+/* Title, then its tools, then the count, which lines up in every section. */
+.right-panel .sk-sec-title { flex: 1; }
+.right-panel .sk-count { order: 2; margin-left: 0; background: none; padding: 0; font-weight: 500; color: var(--text-3); }
+.right-panel .sk-sec-head .sk-sec-add { order: 1; visibility: hidden; }
+.right-panel .sk-sec-head:hover .sk-sec-add { visibility: visible; }
+/* In the gutter left of the title, as in the sidebar. */
+.right-panel .sk-chev { position: absolute; left: -7px; top: 5px; width: 9px; height: 9px; opacity: 0; transition: opacity .15s, transform .15s; }
+.right-panel .sk-sec-head:hover .sk-chev, .right-panel .sk-sec.closed .sk-chev { opacity: 1; }
+.right-panel .sk-sec-body { padding: 0; }
+.right-panel .sk-empty { color: var(--text-3); padding: 2px 6px 4px; }
+/* The list scrolls with its gutter inside it, so the chevrons aren't clipped. */
+.right-panel .skills-body { margin: 0 -10px; padding: 0 10px 8px; }
+/* Open details are just more text, not a selection. */
+.right-panel .sk-item.open { background: none; }
+.right-panel .sk-item.open:hover { background: var(--hover); }
+.right-panel .mcp-list { background: none; border: 0; border-radius: 0; overflow: visible; }
+.right-panel .mcp-list > * + * { border-top: 0; }
+.right-panel .mcp-list > .mcp-srv { border-radius: 7px; padding: 6px; }
+.right-panel .mcp-list > .mcp-form { padding: 6px; border-radius: 8px; background: var(--hover); }
+.right-panel .mcp-note { padding: 6px; color: var(--text-3); }
+
+/* ---------- Sidebar: Specs, Factories, Sessions ----------
+   Sections sit on the sidebar itself, as in Finder: a quiet title row, no card. */
+.sidebar-section.nav { display: flex; flex-direction: column; gap: 12px; padding: 0 10px 10px; }
+.nav-sec { flex-shrink: 0; margin: 0; background: none; border: 0; border-radius: 0; overflow: visible; }
+/* A name being edited in place (a session's, a spec group's). */
+.inplace-input {
+  flex: 1; min-width: 0; font: inherit; color: var(--text); padding: 0 4px; margin: -1px 0;
+  border: 1px solid var(--accent); border-radius: 4px; background: var(--sk-card, var(--bg)); outline: none;
+}
+.nav-sec .sk-sec-head,
+.nav-sec:not(.closed) .sk-sec-head {
+  position: relative; padding: 2px 6px 4px; min-height: 18px; border-bottom: 0;
+  font-size: 11px; font-weight: 600; color: var(--text-3);
+}
+.nav-sec .sk-sec-head:hover { background: none; color: var(--text-2); }
+/* In the gutter left of the title, so titles line up with the items. */
+.nav-sec .sk-chev { position: absolute; left: -7px; top: 5px; width: 9px; height: 9px; opacity: 0; transition: opacity .15s, transform .15s; }
+.nav-sec .sk-sec-head:hover .sk-chev, .nav-sec.closed .sk-chev { opacity: 1; }
+.nav-sec .sk-count { background: none; padding: 0; font-weight: 500; color: var(--text-3); }
+.nav-sec .sk-sec-head .sk-sec-add { visibility: hidden; }
+.nav-sec .sk-sec-head:hover .sk-sec-add { visibility: visible; }
+.nav-sec .sk-sec-body { padding: 0; }
+.nav-sec .sk-empty { padding: 2px 6px 4px; color: var(--text-3); }
+.nav-sub {
+  display: flex; align-items: center; gap: 6px; padding: 4px 6px 2px; min-height: 18px;
+  font-size: 11.5px; font-weight: 500; color: var(--text-2);
+}
+.nav-sub .g-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.nav-sub .sk-sec-title { flex: 1; }
+.nav-sub ~ .nav-item, .nav-sub ~ .sk-empty { margin-left: 10px; }
+.nav-sub .sk-sec-add, .nav-sub .sk-x { visibility: hidden; }
+.nav-sub:hover .sk-sec-add, .nav-sub:hover .sk-x { visibility: visible; }
+.nav-sub input { flex: 1; min-width: 0; font: inherit; text-transform: none; padding: 1px 4px; border-radius: 4px; border: 1px solid var(--accent); background: var(--sk-card); color: var(--text); outline: none; }
+.nav-group.drop { background: color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 7px; }
+.nav-item { display: flex; align-items: center; gap: 7px; padding: 5px 6px; border-radius: 7px; cursor: default; min-width: 0; }
+.nav-item:hover { background: var(--hover); }
+.nav-item.active { background: var(--selected); }
+.nav-item.missing .nav-name { color: var(--text-3); text-decoration: line-through; }
+.nav-item.dragging { opacity: .45; }
+.nav-item .sk-x { visibility: hidden; flex-shrink: 0; }
+.nav-item:hover .sk-x { visibility: visible; }
+.nav-ico { width: 12px; height: 12px; flex-shrink: 0; fill: none; stroke: var(--text-3); stroke-width: 1.3; stroke-linejoin: round; }
+.nav-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.nav-name { font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nav-status { font-size: 10.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nav-item .tab-badge, .nav-item .tab-unread { flex-shrink: 0; }
+.nav-ghost {
+  position: fixed; left: 0; top: 0; z-index: 1000; pointer-events: none; box-sizing: border-box;
+  background: var(--sk-card); box-shadow: 0 4px 14px rgba(0,0,0,.18), 0 0 0 0.5px var(--sk-card-line); opacity: .95;
+}
+.nav-ghost .sk-x { display: none; }
+.sidebar .skills-add input { margin: 0 0 6px; }
 .mcp-note { font-size: 11px; color: var(--text-2); padding: 6px 10px; line-height: 1.35; overflow-wrap: anywhere; }
 .mcp-file { font-size: 10.5px; color: var(--text-3); padding: 0 6px 4px; overflow-wrap: anywhere; }
 .mcp-file a { color: inherit; cursor: pointer; }
@@ -1028,3 +1126,76 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
   background: var(--accent); opacity: 0; transition: opacity .15s;
 }
 .tk-split:hover::after, .tk-split.dragging::after { opacity: .8; }
+
+/* ---------- A task's lower half: stream or timeline (tasks.js) ---------- */
+.tk-lower { display: flex; align-items: center; padding: 8px 18px 2px; flex-shrink: 0; }
+.tk-lower.hidden, .tk-timeline.hidden { display: none; }
+.tk-lower .tk-views { margin-left: 0; --tk-card: color-mix(in srgb, var(--t-fg) 5%, transparent); }
+.terminal.tk-tl .output, .terminal.tk-tl [data-id="busy"] { display: none !important; }
+.tk-timeline {
+  flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 6px 18px 10px;
+  font: 12px/1.4 var(--font); color: var(--t-fg);
+  --tk-card: color-mix(in srgb, var(--t-fg) 5%, transparent);
+  --tk-line: color-mix(in srgb, var(--t-fg) 14%, transparent);
+}
+.tl-wrap {
+  flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 230px;
+  border-radius: 10px; box-shadow: inset 0 0 0 0.5px var(--tk-line); overflow: hidden;
+}
+.tl-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.tl-head, .tl-row { display: grid; grid-template-columns: minmax(260px, 50%) minmax(0, 1fr); }
+.tl-head { font-size: 11px; color: var(--t-dim); border-bottom: 0.5px solid var(--tk-line); flex-shrink: 0; }
+.tl-axis { position: relative; height: 26px; margin-right: 18px; }
+.tl-tick { position: absolute; top: 0; bottom: 0; padding: 6px 0 0 4px; border-left: 0.5px solid var(--tk-line); font: 10.5px var(--mono); white-space: nowrap; }
+.tl-rows { flex: 1; min-height: 0; overflow-y: auto; }
+.tl-row { min-height: 26px; cursor: default; }
+.tl-row:hover { background: var(--tk-card); }
+.tl-row.sel { background: color-mix(in srgb, var(--accent) 13%, transparent); }
+.tl-lbl { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 4px 8px; }
+.tl-name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font: 11.5px var(--mono); }
+.tl-head .tl-name { font: inherit; }
+.tl-grow { flex: 1; }
+.tl-tag { flex-shrink: 0; font-size: 10px; line-height: 16px; padding: 0 5px; border-radius: 4px; background: var(--tk-card); color: var(--t-dim); }
+.tl-tok, .tl-dur { flex-shrink: 0; text-align: right; font: 11px var(--mono); color: var(--t-dim); }
+.tl-tok { width: 40px; }
+.tl-dur { width: 48px; }
+.tl-track { position: relative; margin-right: 18px; border-left: 0.5px solid var(--tk-line); }
+.tl-bar { position: absolute; top: 50%; height: 6px; margin-top: -3px; border-radius: 3px; background: var(--t-dim); opacity: .55; }
+/* One colour per state, for the bars, the tags and the legend. */
+.tl-bar.v-running, .tl-swatch.v-running { background: var(--t-accent); opacity: 1; }
+.tl-bar.v-running { animation: tl-pulse 1.6s ease-in-out infinite; }
+.tl-bar.v-done, .tl-swatch.v-done { background: var(--t-green); opacity: 1; }
+.tl-bar.v-failed, .tl-swatch.v-failed { background: var(--t-red); opacity: 1; }
+.tl-bar.v-stopped, .tl-swatch.v-stopped { background: var(--t-yellow); opacity: 1; }
+.tl-bar.v-needs, .tl-swatch.v-needs { background: var(--orange); opacity: 1; }
+.tl-bar.v-skipped, .tl-swatch.v-skipped { background: var(--t-dim); opacity: .35; }
+.tl-tag.v-running { color: var(--t-accent); background: color-mix(in srgb, var(--t-accent) 14%, transparent); }
+.tl-tag.v-done { color: var(--t-green); background: color-mix(in srgb, var(--t-green) 14%, transparent); }
+.tl-tag.v-failed { color: var(--t-red); background: color-mix(in srgb, var(--t-red) 14%, transparent); }
+.tl-tag.v-stopped { color: var(--t-yellow); background: color-mix(in srgb, var(--t-yellow) 14%, transparent); }
+.tl-tag.v-needs { color: var(--orange); background: color-mix(in srgb, var(--orange) 14%, transparent); }
+@keyframes tl-pulse { 50% { opacity: .55; } }
+.tl-foot { flex-shrink: 0; padding: 6px 10px; border-top: 0.5px solid var(--tk-line); font: 11px var(--mono); color: var(--t-dim); }
+.tl-empty { padding: 18px; color: var(--t-dim); }
+.tl-side { min-height: 0; overflow-y: auto; padding: 10px 14px; border-left: 0.5px solid var(--tk-line); display: flex; flex-direction: column; gap: 6px; }
+.tl-k { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--t-dim); }
+.tl-link { border: 0; background: none; padding: 0; font: 11px var(--font); color: var(--accent); cursor: pointer; }
+.tl-link:hover { text-decoration: underline; }
+.tl-meter { height: 6px; border-radius: 3px; overflow: hidden; background: var(--tk-card); box-shadow: inset 0 0 0 0.5px var(--tk-line); }
+.tl-meter span { display: block; height: 100%; background: var(--accent); }
+.tl-meter.over span { background: var(--t-red); }
+.tl-big { font: 600 15px var(--mono); }
+.tl-of { font: 400 12px var(--font); color: var(--t-dim); }
+.tl-side .inplace-input { flex: none; font: 13px var(--mono); padding: 3px 6px; margin: 0; color: var(--t-fg); background: var(--tk-card); }
+.tl-sub { font-size: 11px; color: var(--t-dim); }
+.tl-over { color: var(--t-red); }
+.tl-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; margin: 6px 0 2px; }
+.tl-v { font: 13px var(--mono); }
+.tl-side .tk-state { align-self: flex-start; }
+.tl-legend { flex-shrink: 0; display: flex; flex-wrap: wrap; gap: 14px; padding: 8px 4px 0; font-size: 11px; color: var(--t-dim); }
+.tl-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; background: var(--t-dim); }
+
+/* New-session menu and welcome: models under their provider's name. */
+.menu-models { max-height: min(60vh, 520px); overflow-y: auto; }
+.menu-head { padding: 7px 8px 3px; font-size: 11px; font-weight: 600; color: var(--text-3); }
+.welcome-head { flex-basis: 100%; margin-top: 6px; font-size: 11.5px; font-weight: 600; color: var(--text-3); }

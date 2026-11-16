@@ -195,6 +195,16 @@ fn provider_prefix() {
     assert_eq!(split_provider("copilot", "gpt-5.5"), ("copilot", "gpt-5.5"));
     assert_eq!(split_provider("ollama", "qwen3:8b"), ("ollama", "qwen3:8b"));
     assert_eq!(split_provider("", "x"), ("ollama", "x"));
+    assert_eq!(split_provider("", "chatgpt/gpt-5.5"), ("chatgpt", "gpt-5.5"));
+    // Model names with `/` of their own: only the provider's prefix goes.
+    assert_eq!(split_provider("chatgpt", "chatgpt/gpt-5.5"), ("chatgpt", "gpt-5.5"));
+    assert_eq!(split_provider("openrouter", "openrouter/anthropic/claude-sonnet-4.6"), ("openrouter", "anthropic/claude-sonnet-4.6"));
+    assert_eq!(split_provider("openrouter", "anthropic/claude-sonnet-4.6"), ("openrouter", "anthropic/claude-sonnet-4.6"));
+    assert_eq!(split_provider("ollama", "ollama/user/model:tag"), ("ollama", "user/model:tag"));
+    // Added providers: any id, and their models may look like a built-in's.
+    assert_eq!(split_provider("groq", "groq/meta-llama/llama-4-scout"), ("groq", "meta-llama/llama-4-scout"));
+    assert_eq!(split_provider("litellm", "anthropic/claude-sonnet-5-5"), ("litellm", "anthropic/claude-sonnet-5-5"));
+    assert_eq!(split_provider("my-box-2", "my-box-2/qwen3"), ("my-box-2", "qwen3"));
 }
 
 #[test]
@@ -221,6 +231,15 @@ fn conversation_ids_match_the_ui_pattern() {
 fn missing_anthropic_key_is_explained() {
     let err = make_model("anthropic", "claude-sonnet-5-5", "", None).err().unwrap();
     assert!(err.contains("Settings"), "{err}");
+}
+
+#[test]
+fn missing_openrouter_key_and_custom_address_are_explained() {
+    let err = make_model("openrouter", "anthropic/claude-sonnet-4.6", "", None).err().unwrap();
+    assert!(err.contains("Settings › Agents › OpenRouter"), "{err}");
+    let err = make_model("groq", "llama-4", " ", None).err().unwrap();
+    assert!(err.contains("“groq” has no address") && err.contains("Settings"), "{err}");
+    assert!(make_model("groq", "llama-4", "https://api.groq.com/openai/v1", None).is_ok(), "no key is fine");
 }
 
 // ---------- the loop ----------
@@ -594,11 +613,11 @@ async fn anthropic_credentials_on_the_wire() {
         assert!(agent.prompt("hi").await.is_err(), "the fake server refuses");
         server.await.unwrap()
     }
-    let key = capture(keys::Credential { secret: "sk-test-key".into(), bearer: false, base_url: None, source: "t".into() }).await;
+    let key = capture(keys::Credential { secret: keys::Secret::ApiKey("sk-test-key".into()), base_url: None, source: "t".into() }).await;
     assert!(key.starts_with("post /v1/messages"), "{key}");
     assert!(key.contains("x-api-key: sk-test-key"), "{key}");
     assert!(!key.contains("authorization:"), "{key}");
-    let token = capture(keys::Credential { secret: "tok-test".into(), bearer: true, base_url: None, source: "t".into() }).await;
+    let token = capture(keys::Credential { secret: keys::Secret::Bearer("tok-test".into()), base_url: None, source: "t".into() }).await;
     assert!(token.contains("authorization: bearer tok-test"), "{token}");
     assert!(!token.contains("x-api-key"), "{token}");
 }

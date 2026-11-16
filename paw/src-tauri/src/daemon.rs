@@ -456,6 +456,7 @@ async fn dispatch(app: AppHandle, cmd: String, a: Value) -> Result<Value, String
             crate::menubar::tray_update(app.clone(), arg(&a, "tabs")?, arg(&a, "working")?)?;
             Ok(Value::Null)
         }
+        // Deprecated: CLI agents (feature "cli-agents"). Without it these answer `agents::CLI_AGENTS_OFF`.
         "spawn_agent" => ok(agents::spawn_agent(
             app.clone(), app.state(), arg(&a, "name")?, arg(&a, "command")?, arg(&a, "cwd")?, arg(&a, "env")?, arg(&a, "no_stdin")?,
         )?),

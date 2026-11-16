@@ -1,4 +1,5 @@
-// Tasks: one goal, planned into steps that several agents work through.
+// Tasks: one goal, planned into steps that Paw Agent works through, each
+// step on the model the plan gives it.
 //
 // A task tab is an ordinary session whose agent is the *planner*: you describe
 // the task in its prompt box, the planner answers with a plan (JSON at the end
@@ -29,9 +30,12 @@ function stepOfTab(C) {
   const st = T?.task.steps.find((s) => s.id === C.stepOf.step);
   return T && st && st.sid === C.sid ? { T, st } : null;
 }
-/** Agents a step can run on: anything that ends its turns (not raw stdin programs). */
-const taskAgents = () => availableAgents().filter((a) => sessionMode(a) !== "stdin");
+/** Models a step can run on: the visible ones (Settings › Agents). */
+const taskModels = () => visibleModels();
+/** Deprecated: CLI agents (CLI_AGENTS). Steps used to name an agent. */
 const agentName = (id) => settings.agents.find((a) => a.id === id)?.name ?? id;
+/** What a step runs on, short: claude-sonnet-5-5. */
+const stepModelName = (st) => (st.model ? modelShort(st.model) : CLI_AGENTS && st.agent ? agentName(st.agent) : "default model");
 
 function hasPendingApproval(C) {
   if (!C) return false;
@@ -81,10 +85,10 @@ function stepLevels(steps) {
 }
 
 /** Turn whatever the planner wrote into a plan Paw can run, or say why not. */
-function checkPlan(raw, plannerAgentId) {
+function checkPlan(raw, plannerModel) {
   const warnings = [];
-  const agents = taskAgents();
-  const fallback = agents.find((a) => a.id === plannerAgentId) ?? agents[0];
+  const models = taskModels();
+  const fallback = plannerModel || defaultPawModel();
   const list = (Array.isArray(raw?.steps) ? raw.steps : []).slice(0, TASK_MAX_STEPS);
   if (!list.length) return { error: "The plan has no steps." };
   if (raw.steps.length > TASK_MAX_STEPS) warnings.push(`Only the first ${TASK_MAX_STEPS} steps are kept.`);
@@ -95,16 +99,20 @@ function checkPlan(raw, plannerAgentId) {
     for (let n = 2; used.has(id); n++) id = `${slug(p?.id || p?.title)}-${n}`;
     used.add(id);
     ids.set(String(p?.id ?? id), id);
-    const want = String(p?.agent ?? "").trim().toLowerCase();
-    let agent = agents.find((a) => a.id.toLowerCase() === want || a.name.toLowerCase() === want);
-    if (!agent) {
-      agent = fallback;
-      if (want) warnings.push(`“${p.agent}” isn't available here, so ${agent?.name ?? "the planner's agent"} does “${p?.title ?? id}”.`);
+    // A full "provider/model", or a bare id only one provider has (older plans said "agent").
+    const want = String(p?.model ?? p?.agent ?? "").trim();
+    let model = models.includes(want) ? want : null;
+    const hits = model || !want ? [] : models.filter((m) => modelShort(m) === want);
+    if (hits.length === 1) model = hits[0];
+    if (!model) {
+      model = fallback;
+      const why = hits.length ? `“${want}” could be ${hits.join(" or ")}` : `“${want}” isn't available here`;
+      if (want) warnings.push(`${why}, so ${model ? modelShort(model) : "the planner's model"} does “${p?.title ?? id}”.`);
     }
     return {
       id,
       title: String(p?.title || id).trim().slice(0, 120),
-      agent: agent?.id ?? plannerAgentId,
+      model: model || "",
       needs: Array.isArray(p?.needs) ? p.needs.map(String) : [],
       edits: p?.edits !== false,
       prompt: String(p?.prompt || p?.title || "").trim(),
@@ -133,7 +141,7 @@ function looseJson(text) {
 }
 
 /** The plan at the end of the planner's answer: the last ```json block with steps. */
-function parsePlan(text, plannerAgentId) {
+function parsePlan(text, plannerModel) {
   const t = String(text ?? "");
   const blocks = [...t.matchAll(/```(?:json)?[ \t]*\n([\s\S]*?)```/g)].map((m) => m[1]).reverse();
   // No fence: the JSON from its last {"title" (or the whole answer) on.
@@ -169,7 +177,7 @@ function foldPlanJson(line) {
 
 // ---------- prompts ----------
 function plannerPrompt(T, goal) {
-  const agents = taskAgents().map((a) => `- ${a.id}: ${a.name}${isPaw(a) ? " (built into Paw: reads, searches, edits files and runs commands)" : ""}`).join("\n");
+  const models = taskModels().map((m) => `- ${m} (${providerName(providerOf(m))})`).join("\n");
   return `Plan this task for a team of coding agents working in ${tildify(T.cwd)}.
 
 The task:
@@ -179,13 +187,13 @@ Look around the folder first if that helps, but don't change anything: other age
 
 Split the task into steps (usually 2 to 6). Each step is one prompt for one agent, so make each prompt complete: the agent sees only its prompt and the results of the steps it needs. A step can use the results of earlier steps (list their ids in "needs"); steps that don't need each other can run at the same time. Mark steps that only read, research or review with "edits": false. Steps that change files run one after another.
 
-Agents you can give steps to:
-${agents}
+Each step runs Paw's own coding agent (it reads, searches, edits files and runs commands) on the model you give it. Models you can give steps to:
+${models}
 
 Explain the plan in a few lines, then end your answer with the plan as JSON in a \`\`\`json block, in exactly this shape:
 \`\`\`json
 {"title": "short name for the task", "steps": [
-  {"id": "short-id", "title": "what this step does", "agent": "agent id", "needs": [], "edits": true, "prompt": "complete instructions for this step"}
+  {"id": "short-id", "title": "what this step does", "model": "provider/model", "needs": [], "edits": true, "prompt": "complete instructions for this step"}
 ]}
 \`\`\``;
 }
@@ -214,25 +222,22 @@ function stepPrompt(T, st, text) {
 }
 
 // ---------- starting a task ----------
-async function newTask({ agentId, cwd, goal, atts = [] } = {}) {
-  const usable = taskAgents();
-  const agent = usable.find((a) => a.id === agentId) ?? usable.find((a) => a.id === defaultAgent()?.id) ?? usable[0];
-  if (!agent) { invoke("open_preferences", { tab: "agents" }); return null; }
-  // The planner only reads: Paw Agent has a read-only level; other agents ask before changing anything.
-  const levels = approvalLevels(agent);
-  const approval = isPaw(agent) ? "plan" : levels.includes("ask") ? "ask" : undefined;
+async function newTask({ model, cwd, goal, atts = [] } = {}) {
+  // The planner is Paw Agent on the tab's model (or the default one), at its read-only level.
+  model = (providerOf(model) ? model : "") || defaultPawModel();
+  if (!model) { invoke("open_preferences", { tab: "agents" }); return null; }
   const task = {
     id: `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
     title: "", goal: "", state: "new", steps: [], selected: null, note: "", createdAt: Date.now(),
   };
-  const T = await newSession(agent.id, { cwd, approval, task });
+  const T = await newSession("paw", { model, cwd, approval: "plan", task });
   if (T && (goal?.trim() || atts.length)) await taskSubmit(T, (goal ?? "").trim(), atts);
   return T;
 }
 
 function taskBanner(S) {
-  info(S, `<b>New task</b> <span class="dim">planned by</span> ${esc(S.agent.name)}  <span class="dim">in</span> ${esc(tildify(S.cwd))}\n` +
-    `<span class="dim">Describe the task below. ${esc(S.agent.name)} splits it into steps for your agents; you review the plan before anything runs.</span>`);
+  info(S, `<b>New task</b> <span class="dim">planned by</span> ${esc(S.agent.name)} <span class="dim">on</span> ${esc(modelShort(S.model) || "no model")}  <span class="dim">in</span> ${esc(tildify(S.cwd))}\n` +
+    `<span class="dim">Describe the task below. ${esc(S.agent.name)} splits it into steps, each on one of your models; you review the plan before anything runs.</span>`);
 }
 
 /** The task tab's prompt box: the first message is the task, later ones change the plan. */
@@ -244,12 +249,14 @@ async function taskSubmit(S, text, atts) {
     const first = t.goal.split("\n").find((l) => l.trim())?.trim() ?? "";
     t.title = first.length > 60 ? first.slice(0, 57) + "…" : first;
     t.state = "planning";
+    (t.plans ??= []).push({ at: Date.now() });
     t.note = "";
     taskChanged(S);
     return sendToAgent(S, text, atts, { wrap: (x) => plannerPrompt(S, x) });
   }
   if (t.state === "draft") {
     t.state = "planning";
+    (t.plans ??= []).push({ at: Date.now() });
     t.note = "";
     taskChanged(S);
     return sendToAgent(S, text, atts, { wrap: revisePrompt });
@@ -270,10 +277,10 @@ function taskTurnEnded(S, r) {
     st.state = "blocked"; // waits for the approval card in its tab
     return taskChanged(T);
   }
-  st.endedAt = Date.now();
   if (r.stopped) st.state = "stopped";
   else if (!r.ok) { st.state = "failed"; st.error = String(r.error || r.text || "The agent reported an error.").slice(0, 2000); }
   else { st.state = "done"; st.result = String(r.text ?? "").trim(); st.error = null; }
+  closeRun(st);
   taskPump(T);
 }
 
@@ -281,10 +288,11 @@ function plannerTurnEnded(S, r) {
   const t = S.task;
   if (t.state !== "planning") return;
   t.state = "draft";
+  closeSpan(t.plans, r.stopped ? "stopped" : r.ok ? "done" : "failed");
   if (r.stopped) t.note = "Planning stopped. Describe what you want below to plan again.";
   else if (!r.ok) t.note = "Planning failed; the planner's output is below. Ask again below.";
   else {
-    const plan = parsePlan(r.text, S.agent.id);
+    const plan = parsePlan(r.text, S.model);
     if (plan.error) t.note = `${plan.error} Ask the planner again below, for example “give me the plan as JSON”.`;
     else {
       t.title = plan.title || t.title;
@@ -298,6 +306,41 @@ function plannerTurnEnded(S, r) {
 
 // ---------- running ----------
 const activeStep = (s) => s.state === "running" || s.state === "blocked";
+
+/** The last span of `spans` that's still open ends now, as `state`. */
+function closeSpan(spans, state) {
+  const r = spans?.at(-1);
+  if (r && r.end == null) { r.end = Date.now(); r.state = state; }
+}
+/** The step's run ends now; its state says how. */
+function closeRun(st) {
+  st.endedAt = Date.now();
+  closeSpan(st.runs, st.state);
+}
+
+// ---------- tokens ----------
+// A finished turn's tokens go to what it worked for: the planner, or a step.
+// The turn under way adds its live count. Agents that report no usage
+// (only Claude Code and Paw Agent do) leave nothing.
+const noTokens = () => ({ input: 0, output: 0 });
+function taskUsage(S, u) {
+  if (!u || !(u.input || u.output)) return;
+  const add = (o) => { o.input += u.input; o.output += u.output; };
+  if (S.task) return add(S.task.planTokens ??= noTokens());
+  const link = stepOfTab(S);
+  if (link) add(link.st.tokens ??= noTokens());
+}
+/** `base` plus the live turn of tab `C`, and whether anything was reported. */
+function withLive(base, C) {
+  const live = C?.turnStarted ? C.turnUsage : null;
+  return { input: (base?.input ?? 0) + (live?.input ?? 0), output: (base?.output ?? 0) + (live?.output ?? 0), known: !!(base || live?.input || live?.output) };
+}
+const stepTokens = (st) => withLive(st.tokens, activeStep(st) ? sessions.get(st.sid) : null);
+const planTokens = (T) => withLive(T.task.planTokens, T.task.state === "planning" ? T : null);
+function taskTokens(T) {
+  const all = [planTokens(T), ...T.task.steps.map(stepTokens)];
+  return { input: all.reduce((n, x) => n + x.input, 0), output: all.reduce((n, x) => n + x.output, 0), known: all.some((x) => x.known) };
+}
 
 function runTask(T) {
   const t = T.task;
@@ -315,6 +358,7 @@ async function stopTask(T) {
   for (const s of t.steps) {
     if (!activeStep(s)) continue;
     s.state = "stopped";
+    closeRun(s);
     const C = sessions.get(s.sid);
     if (C && isBusy(C)) await interrupt(C).catch(() => {});
   }
@@ -351,16 +395,28 @@ async function startStep(T, st) {
   st.state = "running";
   st.startedAt = Date.now();
   st.endedAt = null;
+  (st.runs ??= []).push({ at: st.startedAt });
   st.error = null;
   taskChanged(T);
   let C = st.sid != null ? sessions.get(st.sid) : null;
   if (!C) {
-    const agent = settings.agents.find((a) => a.id === st.agent);
-    if (!agent) return stepFailed(T, st, `${agentName(st.agent)} isn't set up in Paw any more.`);
-    // Read-only steps: Paw Agent's read-only level; other agents ask first.
-    const approval = st.edits ? undefined : isPaw(agent) ? "plan" : approvalLevels(agent).includes("ask") ? "ask" : undefined;
-    C = await newSession(agent.id, { cwd: T.cwd, background: true, after: T, approval, stepOf: { task: T.task.id, step: st.id } });
-    if (!C) return stepFailed(T, st, `Couldn't open a tab for ${agentName(st.agent)}.`);
+    if (CLI_AGENTS && st.agent && !st.model) {
+      // Deprecated: CLI agents (CLI_AGENTS). Steps from before models named an agent.
+      const agent = settings.agents.find((a) => a.id === st.agent);
+      if (!agent) return stepFailed(T, st, `${agentName(st.agent)} isn't set up in Paw any more.`);
+      // Read-only steps: Paw Agent's read-only level; other agents ask first.
+      const approval = st.edits ? undefined : isPaw(agent) ? "plan" : approvalLevels(agent).includes("ask") ? "ask" : undefined;
+      C = await newSession(agent.id, { cwd: T.cwd, background: true, after: T, approval, stepOf: { task: T.task.id, step: st.id } });
+      if (!C) return stepFailed(T, st, `Couldn't open a tab for ${agentName(st.agent)}.`);
+    } else {
+      // A step without a model (or from before models) runs on the default one.
+      st.model = savedModel(st.model);
+      delete st.agent;
+      if (!st.model) return stepFailed(T, st, "No model to run this step on: connect a provider in Settings › Agents.");
+      // Read-only steps run at Paw Agent's read-only level.
+      C = await newSession("paw", { model: st.model, cwd: T.cwd, background: true, after: T, approval: st.edits ? undefined : "plan", stepOf: { task: T.task.id, step: st.id } });
+      if (!C) return stepFailed(T, st, `Couldn't open a tab for ${modelShort(st.model)}.`);
+    }
     st.sid = C.sid;
   }
   if (!activeStep(st)) return; // stopped while its tab was opening
@@ -371,7 +427,7 @@ async function startStep(T, st) {
 function stepFailed(T, st, why) {
   st.state = "failed";
   st.error = why;
-  st.endedAt = Date.now();
+  closeRun(st);
   taskPump(T);
 }
 
@@ -403,7 +459,7 @@ function taskTabClosing(S) {
   if (!link) return;
   const { T, st } = link;
   st.sid = null;
-  if (activeStep(st)) { st.state = "stopped"; st.endedAt = Date.now(); }
+  if (activeStep(st)) { st.state = "stopped"; closeRun(st); }
   taskPump(T);
 }
 
@@ -432,10 +488,12 @@ function restoreTask(saved, { live = false } = {}) {
   t.steps ??= [];
   for (const s of t.steps) {
     s.sid = null;
-    if (activeStep(s) && !live) { s.state = "stopped"; s.endedAt = Date.now(); }
+    // Steps name a model; a bare id is matched, and one from before models (an agent) gets the default model.
+    if (s.model || !CLI_AGENTS) { s.model = savedModel(s.model); delete s.agent; }
+    if (activeStep(s) && !live) { s.state = "stopped"; closeRun(s); }
   }
   if (live) return t;
-  if (t.state === "planning") { t.state = t.goal ? "draft" : "new"; t.note = t.goal ? "Paw restarted while planning. Ask the planner again below." : ""; }
+  if (t.state === "planning") { closeSpan(t.plans, "stopped"); t.state = t.goal ? "draft" : "new"; t.note = t.goal ? "Paw restarted while planning. Ask the planner again below." : ""; }
   if (t.state === "running") { t.state = "stopped"; t.note = "Paw restarted while this task ran. Press Run to carry on where it stopped."; }
   return t;
 }
@@ -515,6 +573,7 @@ function renderTaskView() {
   const S = curS();
   const t = S?.task;
   host.classList.toggle("hidden", !t);
+  renderTaskLower(S);
   if (!t) { host.innerHTML = ""; $("task-split")?.classList.add("hidden"); return; }
   // Sizes the user dragged (the dividers): the board's height, the details' width.
   $("task-split")?.classList.toggle("hidden", !t);
@@ -572,6 +631,163 @@ function renderTaskView() {
   }
 }
 
+// ---------- the lower half: stream or timeline ----------
+// A task tab shows the planner's stream below the board, or the timeline of
+// everything that ran: planning, then each step's runs on one time axis,
+// with the task's token budget and what it has used beside it.
+function renderTaskLower(S) {
+  const lower = $("task-lower"), tl = $("task-timeline"), term = $("terminal");
+  if (!lower || !tl) return;
+  const t = S?.task;
+  const timeline = !!t && S.lowerView === "timeline";
+  lower.classList.toggle("hidden", !t);
+  for (const b of lower.querySelectorAll("[data-lower]")) b.classList.toggle("on", b.dataset.lower === (timeline ? "timeline" : "stream"));
+  term?.classList.toggle("tk-tl", timeline);
+  tl.classList.toggle("hidden", !timeline);
+  if (!timeline) { tl.innerHTML = ""; return; }
+  // Not under the user's typing (the budget).
+  if (tl.contains(document.activeElement) && document.activeElement.matches("input")) return;
+  const rows = tl.querySelector(".tl-rows");
+  const scroll = rows?.scrollTop ?? 0;
+  tl.innerHTML = timelineHtml(S);
+  const again = tl.querySelector(".tl-rows");
+  if (again) again.scrollTop = scroll;
+}
+
+/** A tick every 1, 2, 5, 10… seconds or minutes: about eight across `ms`. */
+function tickStep(ms) {
+  const steps = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200].map((s) => s * 1000);
+  return steps.find((s) => ms / s <= 8) ?? 14_400_000;
+}
+/** A tick's time from the start: 45s, 1m, 1m30s, 2h. */
+function fmtTick(ms) {
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return s % 60 ? `${Math.floor(s / 60)}m${s % 60}s` : `${s / 60}m`;
+  const m = Math.round(s / 60);
+  return m % 60 ? `${Math.floor(m / 60)}h${m % 60}m` : `${m / 60}h`;
+}
+const fmtCount = (n) => Math.round(n).toLocaleString("en-US");
+
+/** Every row: the planner's spans, then each step's runs (an older step without runs: its last one). */
+function timelineRows(T) {
+  const t = T.task;
+  const rows = [];
+  if (t.plans?.length) {
+    const last = t.plans.at(-1);
+    rows.push({
+      id: null, name: "Planning", agent: modelShort(T.model) || T.agent.name, level: 0, view: last.end == null ? "running" : last.state ?? "done",
+      spans: t.plans.map((p) => ({ at: p.at, end: p.end, view: p.end == null ? "running" : p.state ?? "done" })),
+      tokens: planTokens(T),
+    });
+  }
+  const level = stepLevels(t.steps);
+  for (const s of t.steps) {
+    const view = stepView(s);
+    const runs = s.runs?.length ? s.runs : s.startedAt ? [{ at: s.startedAt, end: s.endedAt, state: s.state }] : [];
+    rows.push({
+      id: s.id, name: s.title, agent: stepModelName(s), level: level.get(s.id) ?? 0, view,
+      spans: runs.map((r, i) => ({ at: r.at, end: r.end, view: r.end == null ? (i === runs.length - 1 ? view : "stopped") : r.state ?? "done" })),
+      tokens: stepTokens(s),
+    });
+  }
+  return rows;
+}
+
+function timelineHtml(T) {
+  const t = T.task;
+  const now = Date.now();
+  const rows = timelineRows(T);
+  const spans = rows.flatMap((r) => r.spans);
+  const side = budgetHtml(T);
+  if (!spans.length) {
+    return `<div class="tl-wrap"><div class="tl-main"><div class="tl-empty">Nothing has run yet. Planning and the steps show here as they run, on one time line.</div></div>${side}</div>${legendHtml()}`;
+  }
+  const t0 = Math.min(...spans.map((s) => s.at));
+  const t1 = Math.max(...spans.map((s) => s.end ?? now), t0 + 1000);
+  const total = t1 - t0;
+  const pct = (ms) => `${((ms / total) * 100).toFixed(3)}%`;
+  const step = tickStep(total);
+  const ticks = [];
+  for (let ms = 0; ms <= total; ms += step) ticks.push(`<span class="tl-tick" style="left:${pct(ms)}">${fmtTick(ms)}</span>`);
+  const rowHtml = (r) => {
+    const dur = r.spans.reduce((n, s) => n + ((s.end ?? now) - s.at), 0);
+    const bars = r.spans.map((s) => {
+      const w = Math.max((s.end ?? now) - s.at, 0);
+      return `<span class="tl-bar v-${esc(s.view)}" style="left:${pct(s.at - t0)};width:max(3px, ${pct(w)})" title="${esc(STEP_STATE_TEXT[s.view] ?? s.view)} · ${esc(fmtElapsed(w))}"></span>`;
+    }).join("");
+    const runs = r.spans.length > 1 ? `<span class="tl-tag">${r.spans.length} runs</span>` : "";
+    return `<div class="tl-row${r.id && r.id === t.selected ? " sel" : ""}"${r.id ? ` data-step="${esc(r.id)}"` : ""}>
+      <div class="tl-lbl" style="padding-left:${8 + r.level * 8}px">
+        <span class="tl-name" title="${esc(r.name)} · ${esc(r.agent)}">${esc(r.name)}</span>
+        <span class="tl-tag v-${esc(r.view)}">${esc(STEP_STATE_TEXT[r.view] ?? r.view)}</span>${runs}
+        <span class="tl-grow"></span>
+        <span class="tl-tok" title="${r.tokens.known ? `${fmtCount(r.tokens.input)} in · ${fmtCount(r.tokens.output)} out` : `${esc(r.agent)} reports no tokens`}">${r.tokens.known ? fmtTokens(r.tokens.input + r.tokens.output) : "–"}</span>
+        <span class="tl-dur">${r.spans.length ? esc(fmtElapsed(dur)) : ""}</span>
+      </div>
+      <div class="tl-track">${bars}</div>
+    </div>`;
+  };
+  return `<div class="tl-wrap"><div class="tl-main">
+      <div class="tl-head"><div class="tl-lbl"><span class="tl-name">step</span><span class="tl-grow"></span><span class="tl-tok">tokens</span><span class="tl-dur">time</span></div><div class="tl-axis">${ticks.join("")}</div></div>
+      <div class="tl-rows">${rows.map(rowHtml).join("")}</div>
+      <div class="tl-foot">${esc(timelineSummary(T, total))}</div>
+    </div>${side}</div>${legendHtml()}`;
+}
+
+function timelineSummary(T, total) {
+  const s = T.task.steps;
+  const count = (st) => s.filter((x) => x.state === st).length;
+  const retried = s.filter((x) => (x.runs?.length ?? 0) > 1).length;
+  const parts = [`${s.length} step${s.length === 1 ? "" : "s"}`];
+  for (const [st, word] of [["done", "done"], ["running", "running"], ["failed", "failed"], ["stopped", "stopped"], ["skipped", "skipped"]]) {
+    const n = st === "running" ? s.filter(activeStep).length : count(st);
+    if (n && !(st === "done" && n === s.length)) parts.push(`${n} ${word}`);
+  }
+  if (retried) parts.push(`${retried} retried`);
+  const head = T.task.state === "done" ? `Done in ${fmtElapsed(total)}` : `${taskStatusText(T.task)} · ${fmtElapsed(total)}`;
+  return `${head}: ${parts.join(", ")}.`;
+}
+
+/** "40k", "1.5M", "40,000": tokens; null when it isn't a number. */
+function parseTokens(s) {
+  const m = String(s).trim().toLowerCase().replace(/[,_\s]/g, "").match(/^(\d+(?:\.\d+)?)([km]?)$/);
+  if (!m) return null;
+  return Math.round(Number(m[1]) * (m[2] === "k" ? 1e3 : m[2] === "m" ? 1e6 : 1));
+}
+
+function budgetHtml(T) {
+  const t = T.task;
+  const used = taskTokens(T);
+  const sum = used.input + used.output;
+  const budget = t.budget > 0 ? t.budget : 0;
+  const share = budget ? Math.min(1, sum / budget) : 0;
+  const over = budget && sum > budget;
+  const elapsedFrom = t.plans?.[0]?.at ?? t.startedAt;
+  const elapsed = elapsedFrom ? (t.endedAt && t.state === "done" ? t.endedAt : Date.now()) - elapsedFrom : 0;
+  const done = t.steps.filter((s) => s.state === "done" || s.state === "skipped").length;
+  const running = t.steps.filter(activeStep).length;
+  return `<aside class="tl-side">
+      <div class="tl-k">Budget <button class="tl-link" data-act="budget">${budget ? "Change" : "Set"}</button></div>
+      ${budget ? `<div class="tl-meter${over ? " over" : ""}"><span style="width:${(share * 100).toFixed(1)}%"></span></div>` : ""}
+      <div class="tl-big"><span data-budget-used>${fmtCount(sum)}</span>${budget ? ` <span class="tl-of">/ <span data-budget>${fmtCount(budget)}</span> tokens</span>` : ` <span class="tl-of">tokens</span>`}</div>
+      <div class="tl-sub">${used.known ? `${fmtCount(used.input)} in · ${fmtCount(used.output)} out` : "No agent here reports its tokens yet."}${over ? ` · <span class="tl-over">${fmtCount(sum - budget)} over</span>` : ""}</div>
+      <div class="tl-grid2">
+        <div><div class="tl-k">Elapsed</div><div class="tl-v">${elapsed ? esc(fmtElapsed(elapsed)) : "–"}</div></div>
+        <div><div class="tl-k">Steps</div><div class="tl-v">${done} of ${t.steps.length}</div></div>
+        <div><div class="tl-k">Running</div><div class="tl-v">${running}</div></div>
+        <div><div class="tl-k">Planning</div><div class="tl-v">${planTokens(T).known ? fmtTokens(planTokens(T).input + planTokens(T).output) : "–"}</div></div>
+      </div>
+      <div class="tl-k">Outcome</div>
+      <div class="tk-state st-${esc(t.state)}">${esc(taskStatusText(t))}</div>
+    </aside>`;
+}
+
+function legendHtml() {
+  const items = [["running", "running"], ["done", "done"], ["needs", "needs you"], ["failed", "failed"], ["stopped", "stopped"], ["skipped", "skipped"]];
+  return `<div class="tl-legend">${items.map(([v, label]) => `<span><i class="tl-swatch v-${v}"></i>${label}</span>`).join("")}</div>`;
+}
+
 // ---------- resizing the board ----------
 // Two dividers: under the board (its height against the transcript) and
 // between the graph and the step's details (their width). The sizes are
@@ -623,7 +839,7 @@ function graphHtml(t) {
     const time = stepTime(s);
     return `<button class="tk-node v-${v}${t.selected === s.id ? " sel" : ""}" data-step="${esc(s.id)}" title="${esc(s.title)}">
       <span class="tk-node-title">${esc(s.title)}</span>
-      <span class="tk-node-sub"><span class="tk-dot v-${v}"></span>${esc(agentName(s.agent))} · ${esc(STEP_STATE_TEXT[v] ?? v)}${time && v !== "waiting" ? ` · <span data-time="${esc(s.id)}">${esc(time)}</span>` : ""}${s.edits ? "" : ` · <span class="tk-ro">reads</span>`}</span>
+      <span class="tk-node-sub"><span class="tk-dot v-${v}"></span>${esc(stepModelName(s))} · ${esc(STEP_STATE_TEXT[v] ?? v)}${time && v !== "waiting" ? ` · <span data-time="${esc(s.id)}">${esc(time)}</span>` : ""}${s.edits ? "" : ` · <span class="tk-ro">reads</span>`}</span>
     </button>`;
   }).join("")}</div>`).join("");
 }
@@ -673,8 +889,7 @@ function sideHtml(S) {
   const parts = [];
   if (draft) {
     parts.push(`<label class="tk-lbl">Step</label><input class="tk-in" data-field="title" value="${esc(st.title)}" spellcheck="false">`);
-    parts.push(`<label class="tk-lbl">Agent</label><select class="tk-in" data-field="agent">${taskAgents().map((a) =>
-      `<option value="${esc(a.id)}"${a.id === st.agent ? " selected" : ""}>${esc(a.name)}</option>`).join("")}</select>`);
+    parts.push(`<label class="tk-lbl">Model</label><select class="tk-in" data-field="model">${modelOptions(st.model)}</select>`);
     parts.push(`<label class="tk-check"><input type="checkbox" data-field="edits"${st.edits ? " checked" : ""}> Changes files</label>`);
     parts.push(`<label class="tk-lbl">Gets the results of</label>${others.length ? others.map((o) =>
       `<label class="tk-check"><input type="checkbox" data-need="${esc(o.id)}"${st.needs.includes(o.id) ? " checked" : ""}> ${esc(o.title)}</label>`).join("")
@@ -683,7 +898,7 @@ function sideHtml(S) {
     parts.push(`<div class="tk-row"><button class="tk-btn danger" data-act="delete" data-id="${esc(st.id)}">Delete step</button></div>`);
   } else {
     parts.push(`<div class="tk-side-title">${esc(st.title)}</div>`);
-    parts.push(`<div class="tk-dim"><span class="tk-dot v-${v}"></span>${esc(agentName(st.agent))} · ${esc(STEP_STATE_TEXT[v] ?? v)}${stepTime(st) ? ` · ${esc(stepTime(st))}` : ""}${st.edits ? "" : " · reads only"}</div>`);
+    parts.push(`<div class="tk-dim"><span class="tk-dot v-${v}"></span>${esc(stepModelName(st))} · ${esc(STEP_STATE_TEXT[v] ?? v)}${stepTime(st) ? ` · ${esc(stepTime(st))}` : ""}${st.edits ? "" : " · reads only"}</div>`);
     if (st.needs.length) parts.push(`<label class="tk-lbl">Gets the results of</label><div>${st.needs.map((n) => esc(t.steps.find((x) => x.id === n)?.title ?? n)).join(", ")}</div>`);
     const btns = [
       C && `<button class="tk-btn" data-act="open" data-id="${esc(st.id)}">Open its tab</button>`,
@@ -699,10 +914,17 @@ function sideHtml(S) {
   return parts.join("");
 }
 
+/** The Model select's options, by provider; a step's model that isn't listed (hidden, or its provider left) stays. */
+function modelOptions(cur) {
+  const opt = (m) => `<option value="${esc(m)}"${m === cur ? " selected" : ""}>${esc(modelShort(m))}</option>`;
+  const head = !cur ? `<option value="" selected>default model</option>` : visibleModels().includes(cur) ? "" : opt(cur);
+  return head + modelsByProvider().map(([p, list]) => `<optgroup label="${esc(providerName(p))}">${list.map(opt).join("")}</optgroup>`).join("");
+}
+
 function taskSummaryHtml(S) {
   const t = S.task;
   const parts = [`<div class="tk-side-title">The task</div><div class="tk-goal">${esc(t.goal)}</div>`,
-    `<div class="tk-dim">Planned by ${esc(S.agent.name)} · ${esc(tildify(S.cwd))}</div>`];
+    `<div class="tk-dim">Planned by ${esc(S.agent.name)}${S.model ? ` on ${esc(modelShort(S.model))}` : ""} · ${esc(tildify(S.cwd))}</div>`];
   if (t.state === "draft") parts.push(`<div class="tk-hint">Click a step to change it, or ask the planner below to change the plan. Steps that change files run one at a time; others run side by side, as many as Settings › General › Agents at once allows (${maxAgents() === Infinity ? "no limit" : maxAgents()}).</div>`);
   if (t.state === "done") {
     // The steps nobody else needed: their answers are the task's outcome.
@@ -807,7 +1029,7 @@ function bindTaskView(P) {
       case "add": {
         let id = "new-step";
         for (let n = 2; t.steps.some((s) => s.id === id); n++) id = `new-step-${n}`;
-        t.steps.push({ id, title: "New step", agent: T.agent.id, needs: [], edits: true, prompt: "", state: "waiting" });
+        t.steps.push({ id, title: "New step", model: T.model || defaultPawModel(), needs: [], edits: true, prompt: "", state: "waiting" });
         t.selected = id;
         taskChanged(T);
         break;
@@ -831,7 +1053,7 @@ function bindTaskView(P) {
       t.steps = topoOrder(t.steps) ?? t.steps;
     } else if (el.dataset.field === "edits") st.edits = el.checked;
     else if (el.dataset.field === "title") st.title = el.value.slice(0, 120) || st.id;
-    else if (el.dataset.field === "agent") st.agent = el.value;
+    else if (el.dataset.field === "model") st.model = el.value;
     else if (el.dataset.field === "prompt") st.prompt = el.value;
     else return;
     saveWorkspaceSoon();
@@ -842,6 +1064,44 @@ function bindTaskView(P) {
   host.addEventListener("focusout", (e) => {
     // Titles show in the graph: redraw when you leave the field.
     if (e.target.dataset?.field === "title") setTimeout(() => { const T = S(); if (T?.task) withPane(P, renderTaskView); }, 0);
+  });
+  // Below the board: the stream or the timeline, and the timeline's controls.
+  const lower = withPane(P, () => $("task-lower"));
+  const tl = withPane(P, () => $("task-timeline"));
+  lower?.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-lower]");
+    const T = S();
+    if (!b || !T?.task) return;
+    T.lowerView = b.dataset.lower;
+    withPane(P, renderTaskView);
+  });
+  tl?.addEventListener("click", (e) => {
+    const T = S();
+    const t = T?.task;
+    if (!t) return;
+    if (e.target.closest('[data-act="budget"]')) {
+      const el = tl.querySelector(".tl-big");
+      if (!el) return;
+      editInPlace(el, t.budget > 0 ? fmtCount(t.budget) : "", (text) => {
+        if (text === "") delete t.budget;
+        else if (text != null && parseTokens(text) > 0) t.budget = parseTokens(text);
+        saveWorkspaceSoon();
+        withPane(P, renderTaskView);
+      });
+      const input = tl.querySelector(".inplace-input");
+      if (input) input.placeholder = "Tokens, e.g. 40k or 1.5M (empty: no budget)";
+      return;
+    }
+    const row = e.target.closest(".tl-row[data-step]");
+    if (row) {
+      t.selected = t.selected === row.dataset.step ? null : row.dataset.step;
+      withPane(P, renderTaskView);
+    }
+  });
+  tl?.addEventListener("dblclick", (e) => {
+    const row = e.target.closest(".tl-row[data-step]");
+    const st = row && S()?.task?.steps.find((s) => s.id === row.dataset.step);
+    if (st?.sid != null && sessions.has(st.sid)) select(st.sid);
   });
   new ResizeObserver(() => {
     const T = S();
@@ -855,7 +1115,7 @@ setInterval(() => {
   for (const P of panes.values()) {
     const T = sessions.get(P.sid);
     if (!T?.task) continue;
-    if (T.task.state === "running") withPane(P, renderTaskView);
+    if (T.task.state === "running" || (T.task.state === "planning" && T.lowerView === "timeline")) withPane(P, renderTaskView);
     else if (T.task.state === "planning" && !T.task.steps.length) withPane(P, () => {
       const sp = $("task-view")?.querySelector(".tk-empty .spin-ch");
       if (sp) sp.textContent = SPIN[spinFrame % SPIN.length];
@@ -891,7 +1151,7 @@ function tasksListHtml() {
       `<a href="#" class="task-link" data-open-task="${esc(t.id)}" title="Open this task">${esc(title.length > 48 ? title.slice(0, 47) + "…" : title)}</a>` +
       `  <span class="${cls[t.state] ?? "dim"}">${esc(t.state)}</span>  ${bits.join(" · ")}` +
       (time ? `  <span class="dim">${esc(time)}</span>` : "") +
-      `  <span class="dim">${esc(T.agent.name)} · ${esc(tildify(T.cwd))}</span>`;
+      `  <span class="dim">${esc(modelShort(T.model) || T.agent.name)} · ${esc(tildify(T.cwd))}</span>`;
   });
   return `<span class="help-h">Tasks (${tasks.length})</span>\n${rows.join("\n")}`;
 }

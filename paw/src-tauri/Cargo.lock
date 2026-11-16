@@ -2795,6 +2795,7 @@ dependencies = [
  "rig-reqwest",
  "rig-rmcp",
  "rig-tools",
+ "ring",
  "rmcp",
  "security-framework",
  "serde",

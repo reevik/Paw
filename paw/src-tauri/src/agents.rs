@@ -5,6 +5,11 @@
 //! and friends match what the user has in their terminal (GUI apps on macOS get a
 //! minimal environment otherwise). Each agent gets its own process group, so
 //! stopping it also stops anything it spawned.
+//!
+//! The process agents are CLI agents, built only with the "cli-agents"
+//! feature; without it their commands answer `CLI_AGENTS_OFF`. The ids,
+//! `AgentInfo`/`Status`/`OutputLine` and the helpers below the commands are
+//! shared with Paw Agent and the shell.
 
 use serde::Serialize;
 use std::collections::{HashMap, VecDeque};
@@ -19,6 +24,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, State};
 
 const MAX_BUFFERED_LINES: usize = 10_000;
+
+/// What CLI agents' commands answer without the "cli-agents" feature.
+pub const CLI_AGENTS_OFF: &str = "CLI agents are turned off in this build.";
 
 #[derive(Clone, Copy, Serialize, PartialEq, Eq, Debug)]
 #[serde(rename_all = "lowercase")]
@@ -51,6 +59,7 @@ pub struct OutputLine {
     pub ts: u64,
 }
 
+/// Deprecated: CLI agents (feature "cli-agents").
 struct Agent {
     info: AgentInfo,
     stdin: Option<ChildStdin>,
@@ -105,6 +114,7 @@ pub fn expand_home(p: &str) -> PathBuf {
     }
 }
 
+/// Deprecated: CLI agents (feature "cli-agents").
 /// Record a line in the agent's buffer and push it to the UI.
 fn push_line(
     app: &AppHandle,
@@ -254,6 +264,7 @@ pub fn render_terminal_line(input: &str) -> String {
     out
 }
 
+/// Deprecated: CLI agents (feature "cli-agents").
 fn spawn_reader<R: Read + Send + 'static>(
     app: AppHandle,
     agents: Arc<Mutex<HashMap<u32, Agent>>>,
@@ -284,6 +295,7 @@ fn spawn_reader<R: Read + Send + 'static>(
     })
 }
 
+/// Deprecated: CLI agents (feature "cli-agents").
 #[tauri::command]
 pub fn spawn_agent(
     app: AppHandle,
@@ -296,6 +308,9 @@ pub fn spawn_agent(
     // read a piped stdin to EOF before doing anything.
     no_stdin: Option<bool>,
 ) -> Result<AgentInfo, String> {
+    if !cfg!(feature = "cli-agents") {
+        return Err(CLI_AGENTS_OFF.into());
+    }
     if command.trim().is_empty() {
         return Err("Command is empty".into());
     }
@@ -389,6 +404,7 @@ pub fn spawn_agent(
     Ok(info)
 }
 
+/// Deprecated: CLI agents (feature "cli-agents").
 #[tauri::command]
 pub fn send_input(
     app: AppHandle,
@@ -396,6 +412,9 @@ pub fn send_input(
     id: u32,
     text: String,
 ) -> Result<(), String> {
+    if !cfg!(feature = "cli-agents") {
+        return Err(CLI_AGENTS_OFF.into());
+    }
     {
         let mut map = state.agents.lock().unwrap();
         let agent = map.get_mut(&id).ok_or("Unknown agent")?;
@@ -410,17 +429,25 @@ pub fn send_input(
     Ok(())
 }
 
+/// Deprecated: CLI agents (feature "cli-agents").
 /// Close the agent's stdin (sends EOF) — useful for tools that read until EOF.
 #[tauri::command]
 pub fn close_input(state: State<'_, AgentManager>, id: u32) -> Result<(), String> {
+    if !cfg!(feature = "cli-agents") {
+        return Err(CLI_AGENTS_OFF.into());
+    }
     let mut map = state.agents.lock().unwrap();
     let agent = map.get_mut(&id).ok_or("Unknown agent")?;
     agent.stdin = None;
     Ok(())
 }
 
+/// Deprecated: CLI agents (feature "cli-agents").
 #[tauri::command]
 pub fn stop_agent(state: State<'_, AgentManager>, id: u32, force: Option<bool>) -> Result<(), String> {
+    if !cfg!(feature = "cli-agents") {
+        return Err(CLI_AGENTS_OFF.into());
+    }
     let mut map = state.agents.lock().unwrap();
     let agent = map.get_mut(&id).ok_or("Unknown agent")?;
     if agent.info.status != Status::Running {
@@ -435,8 +462,12 @@ pub fn stop_agent(state: State<'_, AgentManager>, id: u32, force: Option<bool>) 
     Ok(())
 }
 
+/// Deprecated: CLI agents (feature "cli-agents").
 #[tauri::command]
 pub fn remove_agent(state: State<'_, AgentManager>, id: u32) -> Result<(), String> {
+    if !cfg!(feature = "cli-agents") {
+        return Err(CLI_AGENTS_OFF.into());
+    }
     let mut map = state.agents.lock().unwrap();
     if let Some(agent) = map.get(&id) {
         if agent.info.status == Status::Running {
@@ -447,16 +478,26 @@ pub fn remove_agent(state: State<'_, AgentManager>, id: u32) -> Result<(), Strin
     Ok(())
 }
 
+/// Deprecated: CLI agents (feature "cli-agents").
+/// Without the feature there are no CLI agents: an empty list.
 #[tauri::command]
 pub fn list_agents(state: State<'_, AgentManager>) -> Vec<AgentInfo> {
+    if !cfg!(feature = "cli-agents") {
+        return vec![];
+    }
     let map = state.agents.lock().unwrap();
     let mut v: Vec<_> = map.values().map(|a| a.info.clone()).collect();
     v.sort_by_key(|a| a.id);
     v
 }
 
+/// Deprecated: CLI agents (feature "cli-agents").
+/// Without the feature there are no CLI agents: no output.
 #[tauri::command]
 pub fn agent_output(state: State<'_, AgentManager>, id: u32) -> Vec<OutputLine> {
+    if !cfg!(feature = "cli-agents") {
+        return vec![];
+    }
     let map = state.agents.lock().unwrap();
     map.get(&id).map(|a| a.lines.iter().cloned().collect()).unwrap_or_default()
 }

@@ -48,7 +48,7 @@ pub const NOT_SIGNED_IN: &str = "Paw Agent isn't signed in to GitHub Copilot. Si
 
 static HTTP: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(reqwest::Client::new);
 
-fn http() -> &'static reqwest::Client {
+pub(super) fn http() -> &'static reqwest::Client {
     &HTTP
 }
 
@@ -216,7 +216,7 @@ async fn post_form(url: &str, form: &[(&str, &str)]) -> Result<Value, String> {
     serde_json::from_str(&text).map_err(|_| format!("GitHub's answer couldn't be read: {}", text.chars().take(200).collect::<String>()))
 }
 
-fn urlencode(s: &str) -> String {
+pub(super) fn urlencode(s: &str) -> String {
     s.bytes()
         .map(|b| match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),

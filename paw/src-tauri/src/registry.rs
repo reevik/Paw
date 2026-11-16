@@ -68,13 +68,14 @@ pub struct AgentConfig {
     /// skills' text itself (agents that can't open files).
     #[serde(default)]
     pub skills_delivery: String,
-    /// Paw Agent only: "ollama" or "anthropic".
+    /// Paw Agent, before providers: "ollama", "anthropic" or "copilot". Moved
+    /// to `Settings.providers` on load and cleared (`move_paw_provider`).
     #[serde(default)]
     pub provider: String,
-    /// Paw Agent only: the provider's address (empty: its default).
+    /// Paw Agent, before providers: the provider's address (moved, as above).
     #[serde(default)]
     pub base_url: String,
-    /// Paw Agent only: where the Anthropic key comes from (empty: automatic).
+    /// Paw Agent, before providers: where the Anthropic key came from (moved, as above).
     #[serde(default)]
     pub key_source: String,
 }
@@ -108,7 +109,7 @@ impl Default for General {
         Self {
             default_cwd: "~".into(),
             only_installed: true,
-            default_agent: Some("claude".into()),
+            default_agent: Some("paw".into()),
             history_size: 1000,
             input_mode: "auto".into(),
             approval: "edits".into(),
@@ -172,6 +173,70 @@ pub struct AllowRule {
     pub label: String,
 }
 
+/// What Paw Agent needs to reach one provider.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(default)]
+pub struct ProviderConfig {
+    /// The provider's address; empty: its default (Copilot, ChatGPT and OpenRouter don't use it).
+    pub base_url: String,
+    /// Where the Anthropic key comes from; empty: automatic (Anthropic only).
+    pub key_source: String,
+    /// Models the user added by hand, plain ids (no provider prefix).
+    pub custom_models: Vec<String>,
+}
+
+/// A provider the user added: a server speaking OpenAI's Chat Completions
+/// API at `base_url`. Its API key, if any, is in the Keychain under `id`.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(default)]
+pub struct CustomProvider {
+    /// A slug of the name, never a built-in provider's id; models are `<id>/<model>`.
+    pub id: String,
+    pub name: String,
+    pub base_url: String,
+    /// Models the user added by hand, plain ids (no provider prefix).
+    pub custom_models: Vec<String>,
+}
+
+/// The providers Paw Agent can use; a model is written `provider/model`.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(default)]
+pub struct Providers {
+    pub anthropic: ProviderConfig,
+    pub copilot: ProviderConfig,
+    pub chatgpt: ProviderConfig,
+    pub openrouter: ProviderConfig,
+    pub ollama: ProviderConfig,
+    /// Added by the user, in the order added.
+    pub custom: Vec<CustomProvider>,
+}
+
+impl Providers {
+    fn get_mut(&mut self, id: &str) -> Option<&mut ProviderConfig> {
+        match id {
+            "anthropic" => Some(&mut self.anthropic),
+            "copilot" => Some(&mut self.copilot),
+            "ollama" => Some(&mut self.ollama),
+            _ => None,
+        }
+    }
+
+    /// The providers Paw keeps an API key for: Anthropic, OpenRouter and the added ones.
+    pub fn key_ids(&self) -> Vec<String> {
+        ["anthropic", crate::paw_agent::openrouter::PROVIDER].into_iter().map(String::from).chain(self.custom.iter().map(|c| c.id.clone())).collect()
+    }
+}
+
+/// Which models new tabs use and which the menus leave out (`provider/model` ids).
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(default)]
+pub struct ModelPrefs {
+    /// Used by new tabs; None: the first listed model.
+    pub default: Option<String>,
+    /// Hidden from menus, /model and task steps.
+    pub hidden: Vec<String>,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Settings {
     #[serde(default)]
@@ -182,6 +247,29 @@ pub struct Settings {
     pub appearance: Appearance,
     #[serde(default)]
     pub allow_rules: Vec<AllowRule>,
+    #[serde(default)]
+    pub providers: Providers,
+    #[serde(default)]
+    pub models: ModelPrefs,
+}
+
+/// One of Paw Agent's providers, as the scan found it.
+#[derive(Serialize, Clone, Debug, Default, PartialEq)]
+pub struct ProviderView {
+    pub id: String,
+    pub name: String,
+    /// "anthropic", "copilot", "chatgpt", "openrouter", "ollama", or "compatible" (added by the user).
+    pub kind: String,
+    pub connected: bool,
+    /// One line for Settings, e.g. "signed in as octocat · the account's chat models". Never a secret.
+    pub status: String,
+    /// Plain ids (no provider prefix), the user's own included, no duplicates.
+    pub models: Vec<String>,
+    /// Only providers the user added can be removed.
+    pub removable: bool,
+    /// When the provider offers more than `LISTING_LIMIT` models: all of them,
+    /// for Settings to search and add from (`models` then holds the added ones only).
+    pub available: Vec<String>,
 }
 
 #[derive(Serialize, Clone, Debug, Default)]
@@ -189,11 +277,15 @@ pub struct Detection {
     pub installed: bool,
     pub path: Option<String>,
     pub version: Option<String>,
+    /// Paw Agent: every connected provider's models, as `provider/model`.
     pub models: Vec<String>,
     /// Human-readable description of where `models` came from.
     pub models_source: String,
     /// The model the CLI itself is configured to use, if we could read it.
     pub configured_model: Option<String>,
+    /// Paw Agent only: Anthropic, GitHub Copilot, ChatGPT, OpenRouter, Ollama, then the added providers.
+    #[serde(default)]
+    pub providers: Vec<ProviderView>,
 }
 
 #[derive(Default)]
@@ -237,12 +329,11 @@ fn builtin_with(id: &str, name: &str, binary: &str, template: &str, io: &str, co
 /// Init event Paw Agent (and Claude Code) print first; group 1 is the session id.
 const INIT_SESSION_PATTERN: &str = r#"^\{"type":"system","subtype":"init".*?"session_id":"([0-9a-fA-F-]{8,})""#;
 
-/// Paw's own agent: runs inside Paw (io "paw"), no binary or template.
+/// Paw's own agent: runs inside Paw (io "paw"), no binary or template. Its
+/// providers and models are in `Settings.providers` / `Settings.models`.
 fn paw_agent() -> AgentConfig {
-    let mut a = builtin_with("paw", "Paw Agent", "", "", "paw", "session", INIT_SESSION_PATTERN)
-        .with_approvals(&[("ask", "ask"), ("edits", "edits"), ("auto", "auto"), ("plan", "plan"), ("full", "full")]);
-    a.provider = "ollama".into();
-    a
+    builtin_with("paw", "Paw Agent", "", "", "paw", "session", INIT_SESSION_PATTERN)
+        .with_approvals(&[("ask", "ask"), ("edits", "edits"), ("auto", "auto"), ("plan", "plan"), ("full", "full")])
 }
 
 impl AgentConfig {
@@ -327,6 +418,7 @@ pub fn catalog() -> Vec<AgentConfig> {
     ]
 }
 
+/// Deprecated: CLI agents (feature "cli-agents").
 /// Models we suggest when a CLI has no way to list them. Users can add more.
 fn suggested_models(id: &str) -> &'static [&'static str] {
     match id {
@@ -414,9 +506,6 @@ fn migrate_agents(agents: &mut [AgentConfig]) {
         if a.io == "paw" {
             a.continuity = def.continuity.clone();
             a.session_pattern = def.session_pattern.clone();
-            if a.provider.is_empty() {
-                a.provider = def.provider.clone();
-            }
             continue;
         }
         if !pristine && a.continuity.is_empty() {
@@ -471,6 +560,40 @@ fn drop_retired_agents(s: &mut Settings) {
     }
 }
 
+/// Settings saved before Paw Agent had providers: its one provider's
+/// address, key source, own models and default model sat on the agent. They
+/// move to `providers` / `models` and are cleared on the agent, so this runs
+/// once. A default model already chosen in `models` is kept.
+fn move_paw_provider(s: &mut Settings) {
+    let Some(a) = s.agents.iter_mut().find(|a| a.io == "paw" && !a.provider.is_empty()) else { return };
+    let provider = std::mem::take(&mut a.provider);
+    let base_url = std::mem::take(&mut a.base_url);
+    let key_source = std::mem::take(&mut a.key_source);
+    let custom_models = std::mem::take(&mut a.custom_models);
+    let default_model = a.default_model.take();
+    // Paw Agent had these three; unknown providers ran as Ollama.
+    let p = match provider.as_str() {
+        "anthropic" | "copilot" => provider.as_str(),
+        _ => "ollama",
+    };
+    if !key_source.is_empty() {
+        s.providers.anthropic.key_source = key_source;
+    }
+    let Some(cfg) = s.providers.get_mut(p) else { return };
+    if !base_url.trim().is_empty() && p != crate::paw_agent::copilot::PROVIDER {
+        cfg.base_url = base_url;
+    }
+    for m in custom_models {
+        if !m.trim().is_empty() && !cfg.custom_models.contains(&m) {
+            cfg.custom_models.push(m);
+        }
+    }
+    if let Some(d) = default_model.filter(|d| !d.trim().is_empty()) {
+        let (p, m) = crate::paw_agent::split_provider(p, &d);
+        s.models.default.get_or_insert_with(|| format!("{p}/{m}"));
+    }
+}
+
 fn load(app: &AppHandle) -> Settings {
     let mut s: Settings = settings_path(app)
         .and_then(|p| std::fs::read_to_string(p).ok())
@@ -478,6 +601,7 @@ fn load(app: &AppHandle) -> Settings {
         .unwrap_or_default();
     rename_from_hive(&mut s);
     drop_retired_agents(&mut s);
+    move_paw_provider(&mut s);
     migrate_agents(&mut s.agents);
     // Add built-ins that are missing (new catalog entries, or a fresh install).
     for b in catalog() {
@@ -602,49 +726,133 @@ pub fn run_with_env(binary: &str, args: &[&str], env: &[(&str, &str)], timeout: 
     Some(out)
 }
 
-/// Paw Agent: built in, so always available. Its models are the
-/// provider's: Ollama's that can call tools, Anthropic's, or the ones
-/// GitHub Copilot offers the signed-in account.
-fn detect_paw(cfg: &AgentConfig) -> Detection {
-    use crate::paw_agent::copilot;
-    let mut d = Detection { installed: true, version: Some("built-in".into()), ..Default::default() };
-    if cfg.provider == "anthropic" {
-        d.models = crate::paw_agent::ANTHROPIC_MODELS.iter().map(|m| m.to_string()).collect();
-        let sources = crate::paw_agent::keys::list(&crate::paw_agent::keys::System);
-        let chosen = sources.iter().find(|s| s.usable && (cfg.key_source.is_empty() || s.id == cfg.key_source));
-        d.models_source = match chosen {
-            Some(s) => format!("Anthropic API · key from {} ({})", s.label, s.detail),
-            None => "Anthropic API · no usable API key found yet".into(),
-        };
-        return d;
+/// A provider offering more models than this lists none by itself: the user
+/// picks the ones to show from `available`.
+const LISTING_LIMIT: usize = 25;
+
+fn dedup(models: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut list: Vec<String> = vec![];
+    for m in models {
+        if !m.trim().is_empty() && !list.contains(&m) {
+            list.push(m);
+        }
     }
-    if cfg.provider == copilot::PROVIDER {
-        // Detection runs on its own thread, outside the async runtime.
-        let listed = tauri::async_runtime::block_on(copilot::list_models());
-        let st = copilot::status(&copilot::user_home());
-        let who = match (&st.login, &st.cli) {
-            _ if st.signed_in => format!("signed in as {}", st.login.as_deref().filter(|l| !l.is_empty()).unwrap_or("you")),
-            (_, Some(cli)) => format!("Copilot CLI's sign-in ({cli})"),
-            _ => "not signed in yet".into(),
-        };
-        d.models_source = match &listed {
-            Some(_) => format!("GitHub Copilot · {who} · the account's chat models"),
-            None => format!("GitHub Copilot · {who} · suggested models (sign in with GitHub to list the account's)"),
-        };
-        d.models = listed.unwrap_or_else(|| copilot::MODELS.iter().map(|m| m.to_string()).collect());
-        return d;
-    }
-    let host = if cfg.base_url.trim().is_empty() { crate::paw_agent::DEFAULT_OLLAMA_URL } else { cfg.base_url.trim() };
-    let Some(list) = run_with_env("ollama", &["list"], &[("OLLAMA_HOST", host)], Duration::from_secs(15)) else {
-        d.models_source = "Ollama not found — install it, or switch Paw Agent to Anthropic in Settings".into();
-        return d;
+    list
+}
+
+/// A provider's view. Up to `LISTING_LIMIT` offered (`listed`) models: they
+/// are its models, then the user's own. More: the user's own only, and the
+/// offered ones are `available`.
+fn provider_view(id: &str, name: &str, kind: &str, connected: bool, mut status: String, listed: Vec<String>, custom: &[String]) -> ProviderView {
+    let (models, available) = if listed.len() <= LISTING_LIMIT {
+        (dedup(listed.into_iter().chain(custom.iter().cloned())), vec![])
+    } else {
+        let available = dedup(listed);
+        let more = format!("{} models available — add the ones you want", available.len());
+        status = if status.is_empty() { more } else { format!("{status} · {more}") };
+        (dedup(custom.iter().cloned()), available)
     };
-    let names: Vec<String> = list.lines().skip(1).filter_map(|l| l.split_whitespace().next()).map(String::from).collect();
-    let host = host.to_string();
-    let checks: Vec<_> = names
-        .into_iter()
+    ProviderView { id: id.into(), name: name.into(), kind: kind.into(), connected, status, models, removable: kind == "compatible", available }
+}
+
+/// Anthropic: connected with any usable API key or Claude sign-in.
+fn detect_anthropic(cfg: &ProviderConfig) -> ProviderView {
+    let sources = crate::paw_agent::keys::list(&crate::paw_agent::keys::System);
+    let chosen = sources
+        .iter()
+        .find(|s| s.usable && s.id == cfg.key_source)
+        .or_else(|| sources.iter().find(|s| s.usable));
+    let status = match chosen {
+        Some(s) => s.name(),
+        None => "no usable API key or Claude sign-in found yet".into(),
+    };
+    let models = crate::paw_agent::ANTHROPIC_MODELS.iter().map(|m| m.to_string()).collect();
+    provider_view("anthropic", "Anthropic", "anthropic", chosen.is_some(), status, models, &cfg.custom_models)
+}
+
+/// GitHub Copilot: connected with Paw's sign-in or Copilot CLI's. The
+/// account's models need Paw's own sign-in; otherwise the suggested ones.
+fn detect_copilot(cfg: &ProviderConfig) -> ProviderView {
+    use crate::paw_agent::copilot;
+    let st = copilot::status(&copilot::user_home());
+    // Detection runs on its own thread, outside the async runtime.
+    let listed = if st.signed_in { tauri::async_runtime::block_on(copilot::list_models()) } else { None };
+    let who = match &st.cli {
+        _ if st.signed_in => format!("signed in as {}", st.login.as_deref().filter(|l| !l.is_empty()).unwrap_or("you")),
+        Some(cli) => format!("Copilot CLI's sign-in ({cli})"),
+        None => "not signed in yet".into(),
+    };
+    let connected = st.signed_in || st.cli.is_some();
+    let status = match (&listed, connected) {
+        (Some(_), _) => format!("{who} · the account's chat models"),
+        (None, true) if st.signed_in => format!("{who} · suggested models (couldn't list the account's)"),
+        (None, true) => format!("{who} · suggested models (sign in with GitHub to list the account's)"),
+        (None, false) => who,
+    };
+    let models = listed.unwrap_or_else(|| copilot::MODELS.iter().map(|m| m.to_string()).collect());
+    provider_view(copilot::PROVIDER, "GitHub Copilot", "copilot", connected, status, models, &cfg.custom_models)
+}
+
+/// ChatGPT: connected with Paw's sign-in. Its models are the plan's in Rig's catalog.
+fn detect_chatgpt(cfg: &ProviderConfig) -> ProviderView {
+    use crate::paw_agent::chatgpt;
+    let st = chatgpt::status();
+    let status = match (st.signed_in, st.login) {
+        (true, Some(login)) => format!("signed in as {login}"),
+        (true, None) => "signed in".into(),
+        (false, _) => "not signed in yet".into(),
+    };
+    let listed = if st.signed_in { chatgpt::list_models() } else { vec![] };
+    provider_view(chatgpt::PROVIDER, "ChatGPT", "chatgpt", st.signed_in, status, listed, &cfg.custom_models)
+}
+
+/// OpenRouter: connected with a key (signed in or pasted). Its models are
+/// the ones that can call tools.
+fn detect_openrouter(cfg: &ProviderConfig) -> ProviderView {
+    use crate::paw_agent::openrouter;
+    let connected = crate::paw_agent::keychain::get(openrouter::PROVIDER).is_some();
+    if !connected {
+        return provider_view(openrouter::PROVIDER, "OpenRouter", "openrouter", false, "not connected yet".into(), vec![], &cfg.custom_models);
+    }
+    // Detection runs on its own thread, outside the async runtime.
+    let listed = tauri::async_runtime::block_on(openrouter::list_models());
+    provider_view(openrouter::PROVIDER, "OpenRouter", "openrouter", true, "key saved".into(), listed, &cfg.custom_models)
+}
+
+/// A provider the user added: connected when `<base_url>/models` answers
+/// with a model list (asked with its key, if it has one).
+fn detect_custom(c: &CustomProvider) -> ProviderView {
+    let base = c.base_url.trim();
+    let view = |connected, status: String, listed| provider_view(&c.id, &c.name, "compatible", connected, status, listed, &c.custom_models);
+    if base.is_empty() {
+        return view(false, "no address yet".into(), vec![]);
+    }
+    let key = crate::paw_agent::keychain::get(&c.id);
+    match tauri::async_runtime::block_on(crate::paw_agent::compatible::list_models(base, key.as_deref())) {
+        Ok(listed) if listed.len() <= LISTING_LIMIT => view(true, format!("{} models", listed.len()), listed),
+        Ok(listed) => view(true, String::new(), listed),
+        Err(e) => view(false, format!("couldn't reach {base}: {e}"), vec![]),
+    }
+}
+
+/// Ollama: connected when `ollama list` answers from its address. Only the
+/// models that can call tools are listed.
+fn detect_ollama(cfg: &ProviderConfig) -> ProviderView {
+    let host = if cfg.base_url.trim().is_empty() { crate::paw_agent::DEFAULT_OLLAMA_URL } else { cfg.base_url.trim() };
+    // Its table starts with a NAME header; when the server can't be reached
+    // only an error comes, on stderr.
+    let list = run_with_env("ollama", &["list"], &[("OLLAMA_HOST", host)], Duration::from_secs(15))
+        .filter(|out| out.lines().next().is_some_and(|l| l.starts_with("NAME")));
+    let Some(list) = list else {
+        let status = if which("ollama").is_some() { format!("not running at {host}") } else { "Ollama not found — install it".into() };
+        return provider_view("ollama", "Ollama", "ollama", false, status, vec![], &cfg.custom_models);
+    };
+    let checks: Vec<_> = list
+        .lines()
+        .skip(1)
+        .filter_map(|l| l.split_whitespace().next())
         .map(|m| {
-            let host = host.clone();
+            let (host, m) = (host.to_string(), m.to_string());
             thread::spawn(move || {
                 let tools = crate::paw_agent::ollama_supports_tools(&host, &m);
                 (m, tools)
@@ -657,13 +865,51 @@ fn detect_paw(cfg: &AgentConfig) -> Detection {
             if tools == Some(false) { without.push(m) } else { with.push(m) }
         }
     }
-    d.models = with;
-    d.models_source = if without.is_empty() {
-        "ollama list (models with tool support)".into()
+    let status = if without.is_empty() {
+        format!("running at {host} · models with tool support")
     } else {
-        format!("ollama list (models with tool support; left out: {})", without.join(", "))
+        format!("running at {host} · models with tool support; left out: {}", without.join(", "))
     };
-    d
+    provider_view("ollama", "Ollama", "ollama", true, status, with, &cfg.custom_models)
+}
+
+/// A provider's detection, and its view when the check itself fails.
+type Check<'a> = (ProviderView, Box<dyn FnOnce() -> ProviderView + Send + 'a>);
+
+/// Paw Agent: built in, so always available. It reports each provider, and
+/// its models are the connected providers' as `provider/model`.
+fn detect_paw(providers: &Providers) -> Detection {
+    let failed = |id: &str, name: &str, kind: &str, custom: &[String]| provider_view(id, name, kind, false, "couldn't check".into(), vec![], custom);
+    let p = providers;
+    let mut checks: Vec<Check> = vec![
+        (failed("anthropic", "Anthropic", "anthropic", &p.anthropic.custom_models), Box::new(|| detect_anthropic(&p.anthropic))),
+        (failed("copilot", "GitHub Copilot", "copilot", &p.copilot.custom_models), Box::new(|| detect_copilot(&p.copilot))),
+        (failed("chatgpt", "ChatGPT", "chatgpt", &p.chatgpt.custom_models), Box::new(|| detect_chatgpt(&p.chatgpt))),
+        (failed("openrouter", "OpenRouter", "openrouter", &p.openrouter.custom_models), Box::new(|| detect_openrouter(&p.openrouter))),
+        (failed("ollama", "Ollama", "ollama", &p.ollama.custom_models), Box::new(|| detect_ollama(&p.ollama))),
+    ];
+    for c in &p.custom {
+        checks.push((failed(&c.id, &c.name, "compatible", &c.custom_models), Box::new(move || detect_custom(c))));
+    }
+    let views: Vec<ProviderView> = thread::scope(|s| {
+        let running: Vec<_> = checks.into_iter().map(|(fallback, check)| (fallback, s.spawn(check))).collect();
+        running.into_iter().map(|(fallback, h)| h.join().unwrap_or(fallback)).collect()
+    });
+    let connected: Vec<&ProviderView> = views.iter().filter(|v| v.connected).collect();
+    let models = connected.iter().flat_map(|v| v.models.iter().map(|m| format!("{}/{m}", v.id))).collect();
+    let models_source = if connected.is_empty() {
+        "No provider connected yet".into()
+    } else {
+        connected.iter().map(|v| v.name.as_str()).collect::<Vec<_>>().join(" · ")
+    };
+    Detection {
+        installed: true,
+        version: Some("built-in".into()),
+        models,
+        models_source,
+        providers: views,
+        ..Default::default()
+    }
 }
 
 fn which(binary: &str) -> Option<String> {
@@ -722,6 +968,7 @@ fn json_model(text: &str) -> Option<String> {
     }
 }
 
+/// Deprecated: CLI agents (feature "cli-agents").
 fn discover_models(id: &str, path: &str) -> (Vec<String>, String, Option<String>) {
     let long = Duration::from_secs(15);
     let lines = |s: String| -> Vec<String> {
@@ -766,9 +1013,11 @@ fn discover_models(id: &str, path: &str) -> (Vec<String>, String, Option<String>
     }
 }
 
-fn detect_one(cfg: &AgentConfig) -> Detection {
+/// Paw Agent's detection, or (deprecated: CLI agents, feature "cli-agents")
+/// a CLI's: found on PATH, its version and models.
+fn detect_one(cfg: &AgentConfig, providers: &Providers) -> Detection {
     if cfg.io == "paw" {
-        return detect_paw(cfg);
+        return detect_paw(providers);
     }
     let Some(path) = which(&cfg.binary) else {
         return Detection { models_source: "not installed".into(), ..Default::default() };
@@ -776,15 +1025,21 @@ fn detect_one(cfg: &AgentConfig) -> Detection {
     let version = run_timeout(&path, &["--version"], Duration::from_secs(8))
         .and_then(|s| s.lines().map(str::trim).find(|l| !l.is_empty()).map(String::from));
     let (models, models_source, configured_model) = discover_models(&cfg.id, &path);
-    Detection { installed: true, path: Some(path), version, models, models_source, configured_model }
+    Detection { installed: true, path: Some(path), version, models, models_source, configured_model, providers: vec![] }
 }
 
-fn scan(agents: &[AgentConfig]) -> HashMap<String, Detection> {
+/// Detect every agent. Without the "cli-agents" feature only Paw Agent is
+/// looked at; CLI agents get no entry.
+fn scan(agents: &[AgentConfig], providers: &Providers) -> HashMap<String, Detection> {
     login_path(); // resolve once before fanning out
     let handles: Vec<_> = agents
         .iter()
+        .filter(|a| a.io == "paw" || cfg!(feature = "cli-agents"))
         .cloned()
-        .map(|a| thread::spawn(move || (a.id.clone(), detect_one(&a))))
+        .map(|a| {
+            let providers = providers.clone();
+            thread::spawn(move || (a.id.clone(), detect_one(&a, &providers)))
+        })
         .collect();
     handles.into_iter().filter_map(|h| h.join().ok()).collect()
 }
@@ -799,9 +1054,9 @@ pub fn start_scan(app: AppHandle) {
         }
         *s = true;
     }
-    let agents = reg.settings(&app).agents;
+    let Settings { agents, providers, .. } = reg.settings(&app);
     thread::spawn(move || {
-        let result = scan(&agents);
+        let result = scan(&agents, &providers);
         let reg = app.state::<Registry>();
         *reg.detections.lock().unwrap() = result.clone();
         *reg.scanning.lock().unwrap() = false;
@@ -848,6 +1103,8 @@ fn expand(seg: &str, vals: &HashMap<&str, String>) -> Result<String, String> {
     Ok(out)
 }
 
+/// Deprecated: CLI agents (feature "cli-agents").
+/// A CLI agent's command line from its template.
 pub fn render(template: &str, vals: &HashMap<&str, String>) -> Result<String, String> {
     let mut out = String::new();
     let mut rest = template;
@@ -958,6 +1215,7 @@ pub fn is_scanning(reg: State<'_, Registry>) -> bool {
     *reg.scanning.lock().unwrap()
 }
 
+/// Deprecated: CLI agents (feature "cli-agents").
 /// Build the command line for an agent definition.
 #[tauri::command]
 pub fn render_command(
@@ -968,6 +1226,9 @@ pub fn render_command(
     permission: Option<String>,
     session: Option<String>,
 ) -> Result<String, String> {
+    if !cfg!(feature = "cli-agents") {
+        return Err(crate::agents::CLI_AGENTS_OFF.into());
+    }
     let bin = reg
         .detections
         .lock()
@@ -984,8 +1245,14 @@ pub fn render_command(
     render(&agent.template, &vals)
 }
 
+/// Deprecated: CLI agents (feature "cli-agents").
+/// A built-in agent as the catalog has it. None without the feature (as for
+/// an id the catalog doesn't know).
 #[tauri::command]
 pub fn reset_agent(id: String) -> Option<AgentConfig> {
+    if !cfg!(feature = "cli-agents") {
+        return None;
+    }
     catalog().into_iter().find(|a| a.id == id)
 }
 
@@ -1092,16 +1359,15 @@ mod tests {
     #[test]
     fn paw_agent_in_catalog_and_migrated() {
         let h = catalog().into_iter().find(|a| a.id == "paw").expect("Paw Agent in the catalog");
-        assert_eq!((h.io.as_str(), h.continuity.as_str(), h.provider.as_str()), ("paw", "session", "ollama"));
+        assert_eq!((h.io.as_str(), h.continuity.as_str(), h.provider.as_str()), ("paw", "session", ""));
         assert_eq!(h.approvals.get("edits").map(String::as_str), Some("edits"));
         // Settings saved by this version, read back; and a damaged entry gets its defaults again.
         let json = serde_json::to_string(&h).unwrap();
         let mut saved: AgentConfig = serde_json::from_str(&json).unwrap();
         saved.continuity.clear();
-        saved.provider.clear();
         let mut v = vec![saved];
         migrate_agents(&mut v);
-        assert_eq!((v[0].continuity.as_str(), v[0].provider.as_str()), ("session", "ollama"));
+        assert_eq!((v[0].continuity.as_str(), v[0].provider.as_str()), ("session", ""), "no provider on the agent any more");
         assert!(v[0].session_pattern.contains("session_id"));
         // Settings from before Paw Agent existed still load (no provider/base_url fields).
         let old = r#"{"id":"x","name":"X","binary":"x","template":"{bin} {prompt}","io":"text","enabled":true,"builtin":false}"#;
@@ -1182,6 +1448,142 @@ mod tests {
         assert_eq!(toml_model("model = \"o3\"\n[x]\nmodel=\"no\"").as_deref(), Some("o3"));
         assert_eq!(toml_model("model_provider = \"x\""), None);
     }
+
+    /// Settings from before providers: Paw Agent on Ollama at another address.
+    fn old_paw_settings() -> Settings {
+        let mut paw = paw_agent();
+        paw.provider = "ollama".into();
+        paw.base_url = "http://box:11434".into();
+        paw.key_source = "claude-code-keychain".into();
+        paw.custom_models = vec!["qwen3:8b".into(), "mine".into()];
+        paw.default_model = Some("qwen3:8b".into());
+        let json = serde_json::json!({ "general": { "default_agent": "paw" }, "agents": [paw] });
+        serde_json::from_value(json).unwrap()
+    }
+
+    #[test]
+    fn paw_provider_moves_to_providers_once() {
+        let mut s = old_paw_settings();
+        s.providers.ollama.custom_models = vec!["mine".into()];
+        move_paw_provider(&mut s);
+        let o = &s.providers.ollama;
+        assert_eq!(o.base_url, "http://box:11434");
+        assert_eq!(o.custom_models, ["mine", "qwen3:8b"], "added after the ones there, no duplicates");
+        assert_eq!(s.providers.anthropic.key_source, "claude-code-keychain");
+        assert_eq!((s.providers.anthropic.base_url.as_str(), s.providers.copilot.base_url.as_str()), ("", ""));
+        assert_eq!(s.models.default.as_deref(), Some("ollama/qwen3:8b"));
+        let a = s.agents.iter().find(|a| a.id == "paw").unwrap();
+        assert_eq!((a.provider.as_str(), a.base_url.as_str(), a.key_source.as_str()), ("", "", ""));
+        assert!(a.custom_models.is_empty() && a.default_model.is_none());
+        // Cleared, so a second load changes nothing, even after the user edits providers.
+        s.providers.ollama.base_url = "http://other:11434".into();
+        let before = (s.providers.clone(), s.models.clone());
+        move_paw_provider(&mut s);
+        assert_eq!((s.providers, s.models), before);
+    }
+
+    #[test]
+    fn paw_provider_move_keeps_a_chosen_default() {
+        // Copilot has no address to keep; a default already chosen stays.
+        let mut s = old_paw_settings();
+        s.agents[0].provider = "copilot".into();
+        s.agents[0].default_model = Some("gpt-5.5".into());
+        s.models.default = Some("anthropic/claude-sonnet-5-5".into());
+        move_paw_provider(&mut s);
+        assert_eq!(s.providers.copilot, ProviderConfig { custom_models: vec!["qwen3:8b".into(), "mine".into()], ..Default::default() });
+        assert_eq!(s.providers.ollama, ProviderConfig::default());
+        assert_eq!(s.models.default.as_deref(), Some("anthropic/claude-sonnet-5-5"));
+        // A default model written with its provider keeps it.
+        let mut s = old_paw_settings();
+        s.agents[0].provider = "anthropic".into();
+        s.agents[0].default_model = Some("copilot/gpt-5.5".into());
+        move_paw_provider(&mut s);
+        assert_eq!(s.models.default.as_deref(), Some("copilot/gpt-5.5"));
+        assert_eq!(s.providers.anthropic.base_url, "http://box:11434");
+    }
+
+    #[test]
+    fn settings_without_providers_load_with_defaults() {
+        let s: Settings = serde_json::from_str(r#"{"general":{"default_cwd":"~/src"},"agents":[]}"#).unwrap();
+        assert_eq!(s.providers, Providers::default());
+        assert_eq!(s.models, ModelPrefs::default());
+        assert_eq!(s.general.default_agent.as_deref(), Some("paw"));
+        assert_eq!(General::default().default_agent.as_deref(), Some("paw"));
+        // Partly written keys fill in the rest.
+        let s: Settings = serde_json::from_str(r#"{"providers":{"ollama":{"base_url":"http://box"}},"models":{"hidden":["ollama/x"]}}"#).unwrap();
+        assert_eq!(s.providers.ollama.base_url, "http://box");
+        assert!(s.providers.ollama.custom_models.is_empty() && s.models.default.is_none());
+        assert_eq!(s.models.hidden, ["ollama/x"]);
+        // Settings from before ChatGPT, OpenRouter and added providers.
+        let s: Settings = serde_json::from_str(r#"{"providers":{"anthropic":{},"copilot":{},"ollama":{}}}"#).unwrap();
+        assert_eq!((&s.providers.chatgpt, &s.providers.openrouter), (&ProviderConfig::default(), &ProviderConfig::default()));
+        assert!(s.providers.custom.is_empty());
+        let s: Settings = serde_json::from_str(r#"{"providers":{"custom":[{"id":"groq","base_url":"https://api.groq.com/openai/v1"}]}}"#).unwrap();
+        assert_eq!(s.providers.custom, [CustomProvider { id: "groq".into(), base_url: "https://api.groq.com/openai/v1".into(), ..Default::default() }]);
+        assert_eq!(s.providers.key_ids(), ["anthropic", "openrouter", "groq"]);
+        // And they're written out in full.
+        let v = serde_json::to_value(Settings::default()).unwrap();
+        assert_eq!(v["providers"]["copilot"], serde_json::json!({ "base_url": "", "key_source": "", "custom_models": [] }));
+        assert_eq!(v["providers"]["openrouter"], serde_json::json!({ "base_url": "", "key_source": "", "custom_models": [] }));
+        assert_eq!(v["providers"]["custom"], serde_json::json!([]));
+        assert_eq!(v["models"], serde_json::json!({ "default": null, "hidden": [] }));
+    }
+
+    #[test]
+    fn many_models_are_offered_not_listed() {
+        let ids = |n: usize| (0..n).map(|i| format!("m{i}")).collect::<Vec<_>>();
+        // Up to 25: the provider's models, then the user's own.
+        let v = provider_view("openrouter", "OpenRouter", "openrouter", true, "key saved".into(), ids(25), &["mine".into(), "m0".into()]);
+        assert_eq!(v.models.len(), 26);
+        assert_eq!(v.models.last().map(String::as_str), Some("mine"));
+        assert!(v.available.is_empty());
+        assert_eq!(v.status, "key saved");
+        // More: only the user's own, the rest to pick from.
+        let v = provider_view("openrouter", "OpenRouter", "openrouter", true, "key saved".into(), ids(312), &["m7".into(), "".into()]);
+        assert_eq!(v.models, ["m7"]);
+        assert_eq!(v.available.len(), 312);
+        assert_eq!(v.status, "key saved · 312 models available — add the ones you want");
+        let v = provider_view("groq", "Groq", "compatible", true, String::new(), ids(30), &[]);
+        assert!(v.models.is_empty() && v.removable);
+        assert_eq!(v.status, "30 models available — add the ones you want");
+    }
+
+    #[test]
+    fn detection_serializes_providers() {
+        let view = provider_view("copilot", "GitHub Copilot", "copilot", true, "signed in as octocat".into(), vec!["gpt-5.5".into(), "mine".into()], &["mine".into(), "".into()]);
+        let d = Detection { installed: true, models: vec!["copilot/gpt-5.5".into()], models_source: "GitHub Copilot".into(), providers: vec![view], ..Default::default() };
+        let v = serde_json::to_value(&d).unwrap();
+        assert_eq!(
+            v["providers"][0],
+            serde_json::json!({ "id": "copilot", "name": "GitHub Copilot", "kind": "copilot", "connected": true, "status": "signed in as octocat",
+                "models": ["gpt-5.5", "mine"], "removable": false, "available": [] })
+        );
+        let keys: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
+        assert_eq!(keys, ["installed", "path", "version", "models", "models_source", "configured_model", "providers"]);
+        // CLI agents' detections carry an empty list.
+        assert_eq!(serde_json::to_value(Detection::default()).unwrap()["providers"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn added_providers_without_an_answer_arent_connected() {
+        let c = CustomProvider { id: "box".into(), name: "Box".into(), base_url: " ".into(), custom_models: vec!["m".into()] };
+        let v = detect_custom(&c);
+        assert_eq!((v.id.as_str(), v.name.as_str(), v.kind.as_str()), ("box", "Box", "compatible"));
+        assert_eq!((v.connected, v.removable, v.status.as_str()), (false, true, "no address yet"));
+        assert_eq!(v.models, ["m"], "the user's own models still show");
+        let c = CustomProvider { id: "paw-test-down".into(), name: "Down".into(), base_url: "http://127.0.0.1:9/v1".into(), custom_models: vec![] };
+        let v = detect_custom(&c);
+        assert!(!v.connected && v.status.starts_with("couldn't reach http://127.0.0.1:9/v1: "), "{}", v.status);
+    }
+
+    #[test]
+    fn cli_agents_follow_the_feature() {
+        let on = cfg!(feature = "cli-agents");
+        assert_eq!(reset_agent("claude".into()).is_some(), on);
+        // Without the feature the scan doesn't look at CLIs at all.
+        let clis: Vec<AgentConfig> = catalog().into_iter().filter(|a| a.io != "paw" && a.binary == "goose").collect();
+        assert_eq!(scan(&clis, &Providers::default()).contains_key("goose"), on);
+    }
 }
 
 #[cfg(test)]
@@ -1190,13 +1592,32 @@ mod scan_tests {
     #[test]
     #[ignore]
     fn scan_this_machine() {
-        let mut r: Vec<_> = super::scan(&super::catalog()).into_iter().collect();
+        let mut r: Vec<_> = super::scan(&super::catalog(), &Default::default()).into_iter().collect();
         r.sort_by(|a, b| a.0.cmp(&b.0));
         for (id, d) in r {
             println!("{id:13} installed={} version={:?} models={} via {:?} cfg={:?}",
                 d.installed, d.version, d.models.len(), d.models_source, d.configured_model);
             if !d.models.is_empty() { println!("              {:?}", &d.models[..d.models.len().min(6)]); }
+            for p in &d.providers {
+                println!("              {} ({}) connected={} {:?} models={:?} available={}", p.id, p.kind, p.connected, p.status, p.models, p.available.len());
+            }
         }
+    }
+
+    /// Paw Agent's providers on this Mac, with an added provider that isn't
+    /// there: `cargo test providers_on_this_mac -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn providers_on_this_mac() {
+        let mut p = super::Providers::default();
+        p.custom.push(super::CustomProvider { id: "nowhere".into(), name: "Nowhere".into(), base_url: "http://127.0.0.1:9/v1".into(), custom_models: vec![] });
+        let d = super::detect_paw(&p);
+        let ids: Vec<&str> = d.providers.iter().map(|v| v.id.as_str()).collect();
+        assert_eq!(ids, ["anthropic", "copilot", "chatgpt", "openrouter", "ollama", "nowhere"]);
+        for v in &d.providers {
+            println!("{:10} ({}) connected={} {:?} models={:?} available={}", v.id, v.kind, v.connected, v.status, v.models, v.available.len());
+        }
+        println!("models: {:?}\nfrom: {}", d.models, d.models_source);
     }
 }
 

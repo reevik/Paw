@@ -42,8 +42,9 @@
         <p class="hint">Where new sessions start. <code>~</code> is your home folder; use <code>/cd</code> in a tab to move.</p>
       </div>
 
-      <label for="g-agent">Default agent</label>
-      <div>
+      <!-- Deprecated: CLI agents (CLI_AGENTS). -->
+      <label for="g-agent" class="cli-only">Default agent</label>
+      <div class="cli-only">
         <select id="g-agent"></select>
         <p class="hint">Opened by <code>⌘T</code>, the + button, and when Paw starts.</p>
       </div>
@@ -106,8 +107,9 @@
         <p class="hint" id="g-sessions-hint">A tab's folder (~/.paw/session) stays after you close it, so /sessions can reopen it. Beyond this number the oldest go first. 0 keeps all.</p>
       </div>
 
-      <span>New session menu</span>
-      <div>
+      <!-- Deprecated: CLI agents (CLI_AGENTS). -->
+      <span class="cli-only">New session menu</span>
+      <div class="cli-only">
         <label class="check"><input type="checkbox" id="g-only-installed" /> Only offer agents that are installed</label>
       </div>
     </div>
@@ -269,8 +271,10 @@
     <aside class="alist-wrap">
       <ul id="alist" class="alist"></ul>
       <div class="alist-footer">
-        <button id="a-add" class="icon-btn" title="Add custom agent">+</button>
-        <button id="a-del" class="icon-btn" title="Remove custom agent">−</button>
+        <!-- Deprecated: CLI agents (CLI_AGENTS). -->
+        <button id="a-add" class="icon-btn cli-only" title="Add custom agent">+</button>
+        <button id="a-del" class="icon-btn cli-only" title="Remove custom agent">−</button>
+        <button id="a-addprov" class="btn-ghost small" type="button">Add Provider…</button>
         <span class="grow"></span>
         <button id="a-rescan" class="btn-ghost small"><span class="spin hidden" id="a-spin"></span>Rescan</button>
       </div>
@@ -283,37 +287,55 @@
           <input id="d-name" class="name-input" />
           <div id="d-status" class="astatus"></div>
         </div>
-        <label class="switch" title="Show in New Agent sheet">
+        <!-- Deprecated: CLI agents (CLI_AGENTS). -->
+        <label class="switch" id="d-enabled-wrap" title="Show in New Agent sheet">
           <input type="checkbox" id="d-enabled" /><span></span>
         </label>
       </div>
 
-      <div class="group">
-        <div class="group-head">
-          <h4>Models</h4>
-          <span class="src" id="d-msrc"></span>
+      <div class="group hidden" id="d-model">
+        <div class="form-grid tight">
+          <span>Show in menus</span>
+          <div>
+            <label class="switch"><input type="checkbox" id="d-m-shown" /><span></span></label>
+            <p class="hint">Off leaves it out of the model menus, <code>/model</code> and task steps.</p>
+          </div>
+
+          <span>New sessions</span>
+          <div>
+            <button class="btn-ghost small" type="button" id="d-m-default">Use for new sessions</button>
+            <p class="hint" id="d-m-default-hint"></p>
+          </div>
         </div>
-        <ul class="models" id="d-models"></ul>
-        <form class="add-model" id="d-addmodel">
-          <input id="d-newmodel" placeholder="Add a model id…" />
-          <button class="btn-ghost small" type="submit">Add</button>
+      </div>
+
+      <div class="group hidden" id="d-newprov">
+        <form class="form-grid tight" id="d-np-form" autocomplete="off">
+          <label for="d-np-name">Name</label>
+          <input id="d-np-name" spellcheck="false" placeholder="Groq" />
+
+          <label for="d-np-baseurl">Base URL</label>
+          <input id="d-np-baseurl" spellcheck="false" placeholder="https://api.example.com/v1" />
+
+          <label for="d-np-apikey">API key</label>
+          <input id="d-np-apikey" type="password" spellcheck="false" autocomplete="off" placeholder="Optional (kept in your Keychain)" />
+
+          <span></span>
+          <div>
+            <button class="btn-ghost small" type="submit">Add Provider</button>
+            <p class="hint" id="d-np-status"></p>
+          </div>
         </form>
       </div>
 
       <div class="group hidden" id="d-paw">
-        <div class="group-head"><h4>Provider</h4></div>
+        <div class="group-head"><h4>Connection</h4></div>
         <div class="form-grid tight">
-          <label for="d-provider">Models from</label>
-          <select id="d-provider">
-            <option value="ollama">Ollama — local models on this Mac</option>
-            <option value="anthropic">Anthropic — Claude models with your API key</option>
-            <option value="copilot">GitHub Copilot — models from your Copilot subscription</option>
-          </select>
-
           <label for="d-baseurl" class="d-addr">Address</label>
           <div class="d-addr">
             <input id="d-baseurl" spellcheck="false" />
             <p class="hint" id="d-baseurl-hint"></p>
+            <p class="hint">Only models with tool support are listed (<code>ollama show &lt;model&gt;</code> lists “tools”).</p>
           </div>
 
           <span class="d-copilot-only">Sign-in</span>
@@ -332,28 +354,138 @@
             <p class="hint">Without Paw's own sign-in, Paw Agent uses Copilot CLI's (macOS asks once whether Paw may read it). The sign-in identifies as VS Code's Copilot, as other third-party clients do; GitHub doesn't offer it to other apps and may stop accepting it.</p>
           </div>
 
+          <span class="d-anthropic-only">Login</span>
+          <div class="d-anthropic-only login-tabs">
+            <div class="seg" id="d-login-tabs" role="tablist">
+              <button type="button" role="tab" data-tab="signin">Sign-in</button>
+              <button type="button" role="tab" data-tab="api">API</button>
+            </div>
+            <section class="login-card" data-pane="signin" role="tabpanel">
+              <div class="key-row">
+                <button class="btn-ghost small" type="button" id="d-cl-signin">Sign in with Claude</button>
+                <button class="btn-ghost small hidden" type="button" id="d-cl-cancel">Cancel</button>
+                <button class="btn-ghost small" type="button" id="d-cl-signout">Sign Out</button>
+              </div>
+              <p class="hint hidden" id="d-cl-waiting">Allow Paw on the Claude page that opened. <a href="#" id="d-cl-open">Open it again</a></p>
+              <p class="hint hidden" id="d-cl-status"></p>
+              <ul class="key-sources" id="d-signins"></ul>
+            </section>
+            <section class="login-card hidden" data-pane="api" role="tabpanel">
+              <div class="login-field">
+                <label for="d-apikey">Key</label>
+                <form class="key-row" id="d-keyform" autocomplete="off">
+                  <input id="d-apikey" type="password" spellcheck="false" autocomplete="off" placeholder="sk-ant-… (kept in your Keychain)" />
+                  <button class="btn-ghost small" type="submit">Save</button>
+                  <button class="btn-ghost small" type="button" id="d-keydel">Remove</button>
+                </form>
+                <p class="hint" id="d-keystatus"></p>
+              </div>
+              <div class="login-field">
+                <label for="d-api-baseurl">Address</label>
+                <input id="d-api-baseurl" spellcheck="false" placeholder="https://api.anthropic.com" />
+                <p class="hint">Leave empty for Anthropic's API. Set it for a gateway that speaks Anthropic's API. Sign-ins always use Anthropic's.</p>
+              </div>
+              <ul class="key-sources" id="d-keysources"></ul>
+            </section>
+          </div>
+
+          <span class="d-openrouter-only">Login</span>
+          <div class="d-openrouter-only login-tabs">
+            <div class="seg" id="d-or-tabs" role="tablist">
+              <button type="button" role="tab" data-tab="signin">Sign-in</button>
+              <button type="button" role="tab" data-tab="api">API</button>
+            </div>
+            <section class="login-card" data-pane="signin" role="tabpanel">
+              <div class="key-row">
+                <button class="btn-ghost small" type="button" id="d-or-signin">Sign in with OpenRouter</button>
+                <button class="btn-ghost small hidden" type="button" id="d-or-cancel">Cancel</button>
+                <button class="btn-ghost small" type="button" id="d-or-signout">Sign Out</button>
+              </div>
+              <p class="hint hidden" id="d-or-waiting">Allow Paw on the OpenRouter page that opened. <a href="#" id="d-or-open">Open it again</a></p>
+              <p class="hint" id="d-or-status"></p>
+            </section>
+            <section class="login-card hidden" data-pane="api" role="tabpanel">
+              <div class="login-field">
+                <label for="d-or-apikey">Key</label>
+                <form class="key-row" id="d-or-keyform" autocomplete="off">
+                  <input id="d-or-apikey" type="password" spellcheck="false" autocomplete="off" placeholder="sk-or-… (kept in your Keychain)" />
+                  <button class="btn-ghost small" type="submit">Save</button>
+                  <button class="btn-ghost small" type="button" id="d-or-keydel">Remove</button>
+                </form>
+                <p class="hint" id="d-or-keystatus"></p>
+              </div>
+            </section>
+          </div>
+
+          <span class="d-chatgpt-only">Sign-in</span>
+          <div class="d-chatgpt-only">
+            <div class="key-row">
+              <button class="btn-ghost small" type="button" id="d-gpt-signin">Sign in with ChatGPT</button>
+              <button class="btn-ghost small hidden" type="button" id="d-gpt-cancel">Cancel</button>
+              <button class="btn-ghost small" type="button" id="d-gpt-signout">Sign Out</button>
+            </div>
+            <p class="hint hidden" id="d-gpt-waiting">Allow Paw on the ChatGPT page that opened. <a href="#" id="d-gpt-open">Open it again</a></p>
+            <div class="cp-device hidden" id="d-gpt-device">
+              <p class="hint">Enter this code on the OpenAI page that opened (it's copied):</p>
+              <code class="cp-code" id="d-gpt-code"></code>
+              <p class="hint"><a href="#" id="d-gpt-dev-open">Open the page again</a></p>
+            </div>
+            <p class="hint" id="d-gpt-status"></p>
+            <p class="hint">Uses your ChatGPT plan. It signs in the way Codex does; OpenAI may stop accepting it.</p>
+          </div>
+
+          <label for="d-cu-name" class="d-compatible-only">Name</label>
+          <input id="d-cu-name" class="d-compatible-only" spellcheck="false" />
+
+          <label for="d-cu-baseurl" class="d-compatible-only">Base URL</label>
+          <div class="d-compatible-only">
+            <input id="d-cu-baseurl" spellcheck="false" placeholder="https://api.example.com/v1" />
+            <p class="hint">An OpenAI-compatible API. Paw lists its models from <code>/models</code>.</p>
+          </div>
+
+          <label for="d-cu-apikey" class="d-compatible-only">API key</label>
+          <div class="d-compatible-only">
+            <form class="key-row" id="d-cu-keyform" autocomplete="off">
+              <input id="d-cu-apikey" type="password" spellcheck="false" autocomplete="off" placeholder="Optional (kept in your Keychain)" />
+              <button class="btn-ghost small" type="submit">Save</button>
+              <button class="btn-ghost small" type="button" id="d-cu-keydel">Remove</button>
+            </form>
+            <p class="hint" id="d-cu-keystatus"></p>
+          </div>
+
+          <span class="d-compatible-only"></span>
+          <div class="d-compatible-only">
+            <button class="btn-ghost small danger" type="button" id="d-cu-remove">Remove Provider</button>
+          </div>
+
           <label for="d-keysource" class="d-anthropic-only">Key from</label>
           <div class="d-anthropic-only">
             <select id="d-keysource"></select>
-            <ul class="key-sources" id="d-keysources"></ul>
-            <p class="hint">Paw looks where other tools keep an Anthropic key: your login shell, Claude Code, opencode. It reads the key from there when a session starts and never copies it.</p>
-          </div>
-
-          <label for="d-apikey" class="d-anthropic-only">Paw's own key</label>
-          <div class="d-anthropic-only">
-            <form class="key-row" id="d-keyform" autocomplete="off">
-              <input id="d-apikey" type="password" spellcheck="false" autocomplete="off" placeholder="sk-ant-…" />
-              <button class="btn-ghost small" type="submit">Save</button>
-              <button class="btn-ghost small" type="button" id="d-keydel">Remove</button>
-            </form>
-            <p class="hint" id="d-keystatus"></p>
           </div>
 
           <span>How it works</span>
-          <p class="hint">Paw Agent runs inside Paw: it reads, searches and edits files in the tab's folder and runs commands there, asking first as the tab's approval level says (<code>/approval</code>). Ollama models need tool support (<code>ollama show &lt;model&gt;</code> lists “tools”); the list above only shows those. A model written <code>anthropic/…</code>, <code>copilot/…</code> or <code>ollama/…</code> uses that provider.</p>
+          <p class="hint">Paw Agent runs inside Paw: it reads, searches and edits files in the tab's folder and runs commands there, asking first as the tab's approval level says (<code>/approval</code>). Once a provider is connected, its models show up in the model menus and <code>/model</code>.</p>
         </div>
       </div>
 
+      <div class="group" id="d-models-group">
+        <div class="group-head">
+          <h4>Models</h4>
+          <span class="src" id="d-msrc"></span>
+        </div>
+        <ul class="models" id="d-models"></ul>
+        <div class="avail hidden" id="d-avail">
+          <input id="d-msearch" type="search" spellcheck="false" placeholder="Search models…" />
+          <ul class="models" id="d-mavail"></ul>
+          <p class="hint" id="d-mavail-note"></p>
+        </div>
+        <form class="add-model" id="d-addmodel">
+          <input id="d-newmodel" placeholder="Add a model id…" />
+          <button class="btn-ghost small" type="submit">Add</button>
+        </form>
+      </div>
+
+      <!-- Deprecated: CLI agents (CLI_AGENTS). -->
       <div class="group" id="d-command">
         <div class="group-head"><h4>Command</h4></div>
         <div class="form-grid tight">
@@ -426,7 +558,8 @@
         <ul class="allowed-list" id="d-allowed"></ul>
       </div>
 
-      <div class="detail-footer">
+      <!-- Deprecated: CLI agents (CLI_AGENTS). -->
+      <div class="detail-footer" id="d-footer">
         <button id="d-reset" class="btn-ghost small">Restore Defaults</button>
       </div>
     </div>

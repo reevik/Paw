@@ -9,6 +9,7 @@ mod paths;
 mod registry;
 mod shell;
 mod skills;
+mod specs;
 mod sessions;
 mod stats;
 mod plugins;
@@ -335,7 +336,7 @@ fn main() {
             }
             // First start after the rename: bring Hive's settings along.
             paths::move_to_paw_home(app.handle());
-            // Detect installed agent CLIs in the background right away.
+            // Detect Paw Agent's providers (and, with "cli-agents", agent CLIs) in the background right away.
             registry::start_scan(app.handle().clone());
             create_main_window(app.handle())?;
             #[cfg(target_os = "macos")]
@@ -416,6 +417,9 @@ fn main() {
             sessions::load_session,
             sessions::delete_session,
             attachments::describe_attachment,
+            specs::specs_list,
+            specs::specs_import,
+            specs::specs_save,
             skills::skills_scan,
             skills::skills_pick_folder,
             skills::skills_add_source,
@@ -440,6 +444,16 @@ fn main() {
             paw_agent::paw_copilot_sign_in,
             paw_agent::paw_copilot_cancel_sign_in,
             paw_agent::paw_copilot_sign_out,
+            paw_agent::paw_claude_status,
+            paw_agent::paw_claude_sign_in,
+            paw_agent::paw_claude_cancel_sign_in,
+            paw_agent::paw_claude_sign_out,
+            paw_agent::paw_chatgpt_status,
+            paw_agent::paw_chatgpt_sign_in,
+            paw_agent::paw_chatgpt_cancel_sign_in,
+            paw_agent::paw_chatgpt_sign_out,
+            paw_agent::paw_openrouter_sign_in,
+            paw_agent::paw_openrouter_cancel_sign_in,
             mcp::mcp_list,
             mcp::mcp_add,
             mcp::mcp_remove,

@@ -12,27 +12,43 @@
     <!-- Sidebar: sits on the native vibrancy material -->
     <aside class="sidebar">
       <div class="sidebar-top" data-tauri-drag-region></div>
-      <!-- Skills: what the agents load here, and the catalogue to add more from -->
-      <div class="sidebar-section skills-panel">
-        <div class="skills-head">
-          <div class="section-title">Skills</div>
-          <button id="skills-refresh" class="sk-icon" title="Scan again">
-            <svg viewBox="0 0 16 16"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M13.5 2.5v3h-3"/></svg>
-          </button>
-          <button id="skills-add" class="sk-icon" title="Add a catalogue of skills (folder or Git repository)">
-            <svg viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg>
-          </button>
-        </div>
-        <div id="skills-add-row" class="skills-add hidden">
-          <input id="skills-add-input" placeholder="Git URL or folder path" spellcheck="false" autocomplete="off" />
-          <div class="skills-add-btns">
-            <button id="skills-add-folder">Choose Folder…</button>
-            <button id="skills-add-go" class="primary">Add</button>
+      <!-- Specs, Factories and Tasks: cards like the skills' -->
+      <div class="sidebar-section nav">
+        <section class="sk-sec nav-sec" data-sec="specs">
+          <div class="sk-sec-head" data-sec-toggle>
+            <svg class="sk-chev" viewBox="0 0 12 12"><path d="M3 4.5 6 7.5 9 4.5"/></svg>
+            <span class="sk-sec-title">Specs</span>
+            <span class="sk-count" id="specs-count"></span>
+            <button id="specs-add" class="sk-sec-add" title="Import specs (Markdown files) into a group">+</button>
           </div>
-        </div>
-        <input id="skills-filter" class="skills-filter" placeholder="Filter skills" spellcheck="false" autocomplete="off" />
-        <div id="skills-msg" class="skills-msg hidden"></div>
-        <div id="skills-body" class="skills-body"></div>
+          <div class="sk-sec-body">
+            <form id="specs-add-row" class="skills-add hidden" autocomplete="off">
+              <input id="specs-group" list="specs-groups" placeholder="Group (new or existing)" spellcheck="false" />
+              <datalist id="specs-groups"></datalist>
+              <div class="skills-add-btns">
+                <button type="button" id="specs-add-cancel">Cancel</button>
+                <button type="submit" class="primary">Choose Files…</button>
+              </div>
+            </form>
+            <div id="specs-msg" class="skills-msg hidden"></div>
+            <div id="specs-body"></div>
+          </div>
+        </section>
+        <section class="sk-sec nav-sec" data-sec="factories">
+          <div class="sk-sec-head" data-sec-toggle>
+            <svg class="sk-chev" viewBox="0 0 12 12"><path d="M3 4.5 6 7.5 9 4.5"/></svg>
+            <span class="sk-sec-title">Factories</span>
+          </div>
+          <div class="sk-sec-body"><div class="sk-empty">No factories yet.</div></div>
+        </section>
+        <section class="sk-sec nav-sec" data-sec="sessions">
+          <div class="sk-sec-head" data-sec-toggle>
+            <svg class="sk-chev" viewBox="0 0 12 12"><path d="M3 4.5 6 7.5 9 4.5"/></svg>
+            <span class="sk-sec-title">Sessions</span>
+            <span class="sk-count" id="sessions-count"></span>
+          </div>
+          <div class="sk-sec-body" id="sessions-body"></div>
+        </section>
       </div>
       <div class="sidebar-footer">
         <button id="settings-btn" class="btn-gear" title="Settings (⌘,)">
@@ -47,7 +63,7 @@
       <div class="tabbar" data-tauri-drag-region>
         <div id="tabs" class="tabs"></div>
         <div class="tab-new">
-          <button id="tab-add" class="tab-add" title="New session with the default agent (⌘T)">+</button>
+          <button id="tab-add" class="tab-add" title="New session with the default model (⌘T)">+</button>
           <button id="tab-menu" class="tab-chev" title="New session with…">
             <svg viewBox="0 0 12 12"><path d="M3 4.5 6 7.5 9 4.5"/></svg>
           </button>
@@ -62,8 +78,8 @@
           <button id="sidebar-toggle" class="sidebar-toggle tab-tool" title="Hide sidebar (⌃⌘S)">
             <svg viewBox="0 0 20 16"><rect x="1" y="1" width="18" height="14" rx="3"/><path d="M7 1v14"/><path class="fill" d="M3 4.5h2M3 7h2M3 9.5h2"/></svg>
           </button>
-          <button id="mcp-toggle" class="tab-tool" title="MCP servers of this session (⌃⌘M)">
-            <svg viewBox="0 0 20 16"><path d="M7.5 1.5v3M12.5 1.5v3"/><path d="M5 4.5h10v3.2a5 5 0 0 1-10 0Z"/><path d="M10 12.7v2"/></svg>
+          <button id="panel-toggle" class="tab-tool" title="MCP servers and skills (⌃⌘M)">
+            <svg viewBox="0 0 20 16"><rect x="1" y="1" width="18" height="14" rx="3"/><path d="M13 1v14"/><path class="fill" d="M15 4.5h2M15 7h2M15 9.5h2"/></svg>
           </button>
         </div>
       </div>
@@ -81,25 +97,55 @@
       <div id="panes" class="panes hidden"></div>
     </main>
 
-    <!-- MCP servers of the focused session's agent -->
-    <div id="mcp-resizer" class="sidebar-resizer hidden" title="Drag to resize · double-click to reset"></div>
-    <aside id="mcp-panel" class="mcp-panel hidden">
-      <div class="mcp-top" data-tauri-drag-region></div>
-      <div class="mcp-head">
-        <div class="section-title">MCP servers</div>
-        <button id="mcp-add" class="sk-icon hidden" title="Add an MCP server">
-          <svg viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg>
-        </button>
-        <button id="mcp-refresh" class="sk-icon" title="Read the config again">
-          <svg viewBox="0 0 16 16"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M13.5 2.5v3h-3"/></svg>
-        </button>
-        <button id="mcp-close" class="sk-icon" title="Hide (⌃⌘M)">
+    <!-- Right panel: the focused session's MCP servers, and skills -->
+    <div id="panel-resizer" class="sidebar-resizer hidden" title="Drag to resize · double-click to reset"></div>
+    <aside id="right-panel" class="right-panel hidden">
+      <div class="panel-top" data-tauri-drag-region></div>
+      <div class="panel-head">
+        <div class="panel-tabs" id="panel-tabs" role="tablist">
+          <button type="button" role="tab" data-tab="mcp">MCPs</button>
+          <button type="button" role="tab" data-tab="skills">Skills</button>
+        </div>
+        <span class="sk-grow"></span>
+        <button id="panel-close" class="sk-icon" title="Hide (⌃⌘M)">
           <svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg>
         </button>
       </div>
-      <div id="mcp-sub" class="mcp-sub"></div>
-      <div id="mcp-msg" class="skills-msg hidden"></div>
-      <div id="mcp-body" class="mcp-body"></div>
+      <section class="panel-pane" data-pane="mcp" role="tabpanel">
+        <!-- The tab names the list; the head says whose servers they are. -->
+        <div class="mcp-head">
+          <div id="mcp-sub" class="mcp-sub"></div>
+          <button id="mcp-add" class="sk-icon hidden" title="Add an MCP server">
+            <svg viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg>
+          </button>
+          <button id="mcp-refresh" class="sk-icon" title="Read the config again">
+            <svg viewBox="0 0 16 16"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M13.5 2.5v3h-3"/></svg>
+          </button>
+        </div>
+        <div id="mcp-msg" class="skills-msg hidden"></div>
+        <div id="mcp-body" class="mcp-body"></div>
+      </section>
+      <!-- Skills: what the agents load here, and the catalogue to add more from -->
+      <section class="panel-pane skills-panel hidden" data-pane="skills" role="tabpanel">
+        <div class="skills-head">
+          <input id="skills-filter" class="skills-filter" placeholder="Filter skills" spellcheck="false" autocomplete="off" />
+          <button id="skills-refresh" class="sk-icon" title="Scan again">
+            <svg viewBox="0 0 16 16"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M13.5 2.5v3h-3"/></svg>
+          </button>
+          <button id="skills-add" class="sk-icon" title="Add a catalogue of skills (folder or Git repository)">
+            <svg viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg>
+          </button>
+        </div>
+        <div id="skills-add-row" class="skills-add hidden">
+          <input id="skills-add-input" placeholder="Git URL or folder path" spellcheck="false" autocomplete="off" />
+          <div class="skills-add-btns">
+            <button id="skills-add-folder">Choose Folder…</button>
+            <button id="skills-add-go" class="primary">Add</button>
+          </div>
+        </div>
+        <div id="skills-msg" class="skills-msg hidden"></div>
+        <div id="skills-body" class="skills-body"></div>
+      </section>
     </aside>
   </div>
 
@@ -108,6 +154,14 @@
         <div data-id="terminal" class="terminal">
           <div data-id="task-view" class="task-view hidden"></div>
           <div data-id="task-split" class="tk-split hidden" title="Drag to resize · double-click to reset"></div>
+          <!-- A task tab's lower half: the planner's stream, or the timeline of its steps -->
+          <div data-id="task-lower" class="tk-lower hidden">
+            <div class="tk-views" role="tablist">
+              <button type="button" class="tk-viewbtn on" data-lower="stream" role="tab">Stream</button>
+              <button type="button" class="tk-viewbtn" data-lower="timeline" role="tab">Timeline</button>
+            </div>
+          </div>
+          <div data-id="task-timeline" class="tk-timeline hidden"></div>
           <div data-id="output" class="output"></div>
           <div data-id="xterm-wrap" class="xterm-wrap">
             <div class="xterm-bar">

@@ -9,6 +9,12 @@
 //   - "oneshot" : CLIs that take the prompt as an argument (codex exec,
 //                 ollama run…). Each prompt runs the command once, in the
 //                 same tab, like typing commands into a shell.
+//
+// Every tab runs Paw Agent on a model ("provider/model") from a provider the
+// user connected (Settings › Agents). The CLI agents above are switched off.
+
+/** CLI process agents (Claude Code, Codex, Copilot CLI…). Off: every tab runs Paw Agent. */
+const CLI_AGENTS = false;
 // ---------- the daemon ----------
 // Agents, shells and Paw Agent sessions run in Paw's daemon (src-tauri/src/
 // daemon.rs), which keeps running when this window quits. Its commands go
@@ -54,7 +60,7 @@ function replayEvents(events) {
 // pane being rendered (activePane). Everything else is a normal page id.
 const PANE_IDS = new Set(["session", "terminal", "output", "xterm-wrap", "xterm-title", "xterm-int", "xterm-back",
   "xterm-hosts", "busy", "busy-spin", "busy-text", "busy-time", "ac", "prompt-line", "att-tray", "input",
-  "attach-btn", "mode-pill", "task-split", "sl-left", "sl-path", "sl-path-text", "sl-plugins", "sl-sessions", "eof", "prompt-glyph", "task-view"]);
+  "attach-btn", "mode-pill", "task-split", "task-lower", "task-timeline", "sl-left", "sl-path", "sl-path-text", "sl-plugins", "sl-sessions", "eof", "prompt-glyph", "task-view"]);
 let activePane = null;
 const $ = (id) => (PANE_IDS.has(id) ? activePane?.root.querySelector(`[data-id="${id}"]`) : document.getElementById(id));
 /** The session shown in the pane being rendered (the focused one, normally). */
@@ -66,7 +72,7 @@ let openTabs = [];
 let activeId = null;
 let nextSid = 1;
 let homeDir = "~";
-let settings = { general: { default_cwd: "~", only_installed: true, default_agent: "claude" }, agents: [] };
+let settings = { general: { default_cwd: "~", only_installed: true, default_agent: "paw" }, agents: [] };
 let detections = {};
 let detectionsReady = false;
 
@@ -104,6 +110,8 @@ const sessionMode = (a) =>
 const hasLevels = (a) => isPaw(a) || a.template.includes("{permission}");
 
 function availableAgents() {
+  if (!CLI_AGENTS) return settings.agents.filter(isPaw).slice(0, 1);
+  // Deprecated: CLI agents (CLI_AGENTS).
   return settings.agents
     .filter((a) => a.enabled && (!settings.general.only_installed || detections[a.id]?.installed))
     .sort((a, b) =>
@@ -115,14 +123,100 @@ function defaultAgent() {
   return list.find((a) => a.id === settings.general.default_agent) ?? list[0] ?? null;
 }
 function modelsFor(a) {
+  if (!CLI_AGENTS) return visibleModels();
+  // Deprecated: CLI agents (CLI_AGENTS).
   const list = [...(detections[a.id]?.models ?? [])];
   for (const m of a.custom_models) if (!list.includes(m)) list.push(m);
   if (a.default_model && !list.includes(a.default_model)) list.push(a.default_model);
   return list;
 }
 function defaultModel(a) {
+  if (!CLI_AGENTS) return defaultPawModel();
+  // Deprecated: CLI agents (CLI_AGENTS).
   return a.default_model ?? (needsModel(a) ? modelsFor(a)[0] ?? "" : "");
 }
+
+// ---------- models ----------
+// A model is "provider/model" (anthropic/claude-sonnet-5-5, ollama/qwen3:8b,
+// openrouter/anthropic/claude-sonnet-4.6); the model part may hold "/" itself,
+// so only the first segment is the provider.
+const PROVIDER_NAMES = { anthropic: "Anthropic", copilot: "GitHub Copilot", chatgpt: "ChatGPT", openrouter: "OpenRouter", ollama: "Ollama" };
+/** The provider as Settings › Agents lists it (detections.paw.providers), if it does. */
+const providerView = (p) => (detections.paw?.providers ?? []).find((v) => v.id === p);
+const providerName = (p) => providerView(p)?.name || PROVIDER_NAMES[p] || p;
+/** The provider part of a full model id, or "" for a bare id. */
+function providerOf(model) {
+  const m = String(model ?? "");
+  const i = m.indexOf("/");
+  const p = i > 0 ? m.slice(0, i) : "";
+  return p && (PROVIDER_NAMES[p] || providerView(p)) ? p : "";
+}
+/** A custom (OpenAI-compatible) provider's settings entry, if `p` is one. */
+const customProvider = (p) => (settings.providers?.custom ?? []).find((c) => c.id === p);
+/** The model without its provider: claude-sonnet-5-5. */
+const modelShort = (model) => (providerOf(model) ? String(model).slice(providerOf(model).length + 1) : String(model ?? ""));
+/** Models of the connected providers, minus the ones hidden in Settings. */
+function visibleModels() {
+  const hidden = new Set(settings.models?.hidden ?? []);
+  return (detections.paw?.models ?? []).filter((m) => !hidden.has(m));
+}
+/** New tabs' model: the one picked in Settings if it's there, else the first one. */
+function defaultPawModel() {
+  const list = visibleModels();
+  const d = settings.models?.default;
+  return d && list.includes(d) ? d : list[0] ?? "";
+}
+/** A saved model: a full id stays; a bare one becomes the first model with that
+ *  name; else (or none saved) the default model. */
+function savedModel(model) {
+  if (providerOf(model)) return model;
+  const id = String(model ?? "").trim();
+  return (id && (detections.paw?.models ?? []).find((m) => m.endsWith("/" + id))) || defaultPawModel();
+}
+/** What `/model <id>` and `/new <id>` mean: a full id, or a bare one only one model has. */
+function findModel(arg) {
+  const want = String(arg ?? "").trim();
+  const list = visibleModels();
+  if (list.includes(want)) return want;
+  const hits = list.filter((m) => modelShort(m) === want);
+  return hits.length === 1 ? hits[0] : null;
+}
+/** Visible models by provider, in the providers' order: [[provider, [models]]]. */
+function modelsByProvider() {
+  const byProvider = new Map();
+  for (const m of visibleModels()) {
+    const p = providerOf(m);
+    if (!byProvider.has(p)) byProvider.set(p, []);
+    byProvider.get(p).push(m);
+  }
+  return [...byProvider];
+}
+/** /model: the models by provider, `cur` marked. */
+function modelListHtml(cur) {
+  const groups = modelsByProvider();
+  if (!groups.length) return `<span class="dim">No models yet: connect a provider in</span> ${connectLink()}<span class="dim">.</span>`;
+  const out = [];
+  if (cur && !visibleModels().includes(cur)) out.push(`<span class="ok">● ${esc(cur)}</span>  <span class="dim">this tab's (hidden, or its provider isn't connected)</span>`, "");
+  for (const [p, list] of groups) {
+    if (out.length && out.at(-1) !== "") out.push("");
+    out.push(`<span class="help-h">${esc(providerName(p))}</span>`);
+    for (const m of list) out.push(m === cur ? `<span class="ok">● ${esc(m)}</span>` : `<span class="dim">○</span> ${esc(m)}`);
+  }
+  return out.join("\n");
+}
+/** Why `/model <arg>` found nothing. */
+function modelMiss(arg) {
+  const hits = visibleModels().filter((m) => modelShort(m) === arg.trim());
+  return hits.length > 1 ? `✗ “${arg}” is offered by more than one provider: write ${hits.join(" or ")}` : `✗ no model “${arg}” here`;
+}
+/** "Connect a provider" links open Settings › Agents. */
+const connectLink = (text = "Settings › Agents") => `<a href="#" class="task-link" data-open-prefs="agents">${esc(text)}</a>`;
+document.addEventListener("click", (e) => {
+  const a = e.target.closest?.("[data-open-prefs]");
+  if (!a) return;
+  e.preventDefault();
+  invoke("open_preferences", { tab: a.dataset.openPrefs });
+});
 
 // ---------- sessions ----------
 const isRunning = (S) => S.info?.status === "running";
@@ -191,7 +285,8 @@ function logAgentCommands(S, text) {
     }
   }
 }
-/** Claude Code: the scripts folder is one it may write to, and it's told what it's for. */
+/** Claude Code: the scripts folder is one it may write to, and it's told what it's for.
+ *  Deprecated: CLI agents (CLI_AGENTS). */
 async function scriptsArgs(S) {
   if (S.agent.io !== "claude-stream-json") return "";
   const dir = await sessionDir(S);
@@ -205,7 +300,8 @@ async function scriptsArgs(S) {
  *  tab: open right after it and its steps); task / stepOf (see tasks.js). */
 async function newSession(agentId, opts = {}) {
   closeMenu();
-  const agent = agentId ? settings.agents.find((a) => a.id === agentId) : defaultAgent();
+  // Without CLI agents every tab runs Paw Agent, whatever agent was asked for.
+  const agent = agentId && CLI_AGENTS ? settings.agents.find((a) => a.id === agentId) : defaultAgent();
   if (!agent) {
     invoke("open_preferences", { tab: "agents" });
     return null;
@@ -252,11 +348,11 @@ async function newSession(agentId, opts = {}) {
 function banner(S) {
   if (S.task) return taskBanner(S);
   const d = detections[S.agent.id];
-  const ver = isPaw(S.agent) ? ` <span class="dim">built-in · ${esc({ anthropic: "Anthropic", copilot: "GitHub Copilot" }[S.agent.provider] ?? "Ollama")}</span>`
+  const ver = isPaw(S.agent) ? ` <span class="dim">built-in${providerOf(S.model) ? " · " + esc(providerName(providerOf(S.model))) : ""}</span>`
     : d?.version ? ` <span class="dim">${esc(d.version)}</span>` : "";
   info(S,
     `<b>${esc(S.agent.name)}</b>${ver}\n` +
-    `<span class="dim">model</span> ${esc(S.model || "default")}  <span class="dim">cwd</span> ${esc(tildify(S.cwd))}\n` +
+    `<span class="dim">model</span> ${esc(S.model || (isPaw(S.agent) ? "none" : "default"))}  <span class="dim">cwd</span> ${esc(tildify(S.cwd))}\n` +
     `<span class="dim">${S.mode === "oneshot" ? "Each prompt runs the agent once in this folder." : "Type a prompt to start."} ` +
     `Shell commands (<span class="sh">$</span> ls, git status…) run in your shell. /help for more.</span>`);
 }
@@ -265,6 +361,8 @@ const shq = (s) => (/^[\w\-./:=@+,]+$/.test(s) ? s : "'" + s.replace(/'/g, `'\\'
 
 async function startProc(S, prompt, { resume = false } = {}) {
   if (isPaw(S.agent)) return pawStart(S, { resume });
+  // Deprecated: CLI agents (CLI_AGENTS). Tabs only run Paw Agent while they're off.
+  if (!CLI_AGENTS) { sys(S, "✗ CLI agents are turned off in this build."); refresh(S); return; }
   try {
     // Which session to continue: a long-lived agent only when asked to resume
     // (restart, /model…); a one-shot agent on every prompt after the first.
@@ -309,27 +407,35 @@ async function startProc(S, prompt, { resume = false } = {}) {
 async function stopProc(S, force = false) {
   if (!isRunning(S)) return;
   if (isPaw(S.agent)) await invoke("paw_agent_close", { id: S.proc }).catch(() => {});
-  else await invoke("stop_agent", { id: S.proc, force });
+  else if (CLI_AGENTS) await invoke("stop_agent", { id: S.proc, force }); // Deprecated: CLI agents (CLI_AGENTS).
 }
 
 // ---------- Paw Agent ----------
 // A session lives in the Paw process. Its conversation is saved there after
 // every prompt (by S.session), so restarts and a new Paw continue it.
 async function pawStart(S, { resume = false } = {}) {
+  // A tab opened (or restored) before any provider was connected takes the default model now.
+  if (!S.model) S.model = defaultPawModel();
+  if (!S.model) {
+    info(S, `<span class="dim">No model to run: no provider is connected yet. Connect one in</span> ${connectLink()}<span class="dim">, then type a prompt or /restart.</span>`);
+    refresh(S);
+    return;
+  }
   try {
     const ext = await externalSetup();
     S.skillsSig = ext.signature; // its system prompt lists the skills
     const saved = (settings.allow_rules ?? []).filter((r) => r.agent === S.agent.id && r.folder === S.cwd).map((r) => r.rule);
+    const provider = providerOf(S.model) || "ollama";
     const reply = await invoke("paw_agent_start", { opts: {
       name: `${S.agent.name} — ${basename(S.cwd)}`,
-      provider: S.agent.provider || "ollama",
-      model: S.model || "",
-      base_url: S.agent.base_url || "",
+      provider,
+      model: S.model,
+      base_url: (customProvider(provider) ? customProvider(provider).base_url : settings.providers?.[provider]?.base_url) || "",
       cwd: S.cwd,
       approval: S.approval,
       allow_rules: saved,
       session: resume && S.session ? S.session : null,
-      key_source: S.agent.key_source || "",
+      key_source: settings.providers?.anthropic?.key_source || "",
       paw_session: S.pawId,
     } });
     const { lines, session, ...pinfo } = reply;
@@ -523,7 +629,8 @@ async function sendToAgent(S, text, atts = [], opts = {}) {
   S.msgUsage = new Map();
   S.turnStarted = Date.now();
   renderAttachments();
-  if (S.mode === "oneshot") {
+  // Deprecated: CLI agents (CLI_AGENTS). One-shot CLIs run once per prompt.
+  if (CLI_AGENTS && S.mode === "oneshot") {
     if (isRunning(S)) {
       sys(S, "still running — wait for it to finish, or ⌘. to stop");
       return;
@@ -572,6 +679,7 @@ async function sendToAgent(S, text, atts = [], opts = {}) {
     refresh(S);
     return;
   }
+  // Deprecated: CLI agents (CLI_AGENTS). Claude Code's stream-json and plain stdin.
   const payload = S.mode === "claude"
     ? JSON.stringify({ type: "user", message: { role: "user", content: claudeContent(full, atts) } })
     : withPaths(full, atts);
@@ -624,8 +732,10 @@ function helpHtml(S) {
     out.push(row("$ badge", "shared long output waiting for your next message (× leaves it out)"));
   }
   out.push("", head("Agent"),
-    row("/model [name]", "show or switch the model (conversation continues)"),
-    row("/agent [id]", "switch the agent in this tab (new conversation)"));
+    row("/model [model]", CLI_AGENTS ? "show or switch the model (conversation continues)"
+      : "show the models, or switch to one: provider/model, or its name if only one provider has it (conversation continues)"),
+    // Deprecated: CLI agents (CLI_AGENTS).
+    ...(CLI_AGENTS ? [row("/agent [id]", "switch the agent in this tab (new conversation)")] : []));
   const levels = approvalLevels(S.agent);
   if (levels.length && hasLevels(S.agent)) {
     out.push(row("/approval [level]", `how much ${name} may do on its own: ${levels.join(" · ")}`));
@@ -633,8 +743,8 @@ function helpHtml(S) {
   out.push(
     row("/restart", "restart the agent (conversation continues)"),
     row("/stop", "stop the agent or running command (⌘. · Ctrl-C)"),
-    row("/new [agent]", "open a new tab with a new conversation"),
-    row("/task [what]", `plan a task with ${name} and run its steps on several agents (pasted text counts too)`),
+    row(CLI_AGENTS ? "/new [agent]" : "/new [model]", "open a new tab with a new conversation"),
+    row("/task [what]", `plan a task with ${name} and run its steps on several ${CLI_AGENTS ? "agents" : "models"} (pasted text counts too)`),
     row("/tasks", "list the open tasks and how far each one is (click one to open it)"),
     row("/sessions", "list stored sessions, open and closed; click one to reopen it in a new tab"),
     row("/stats [day|week|month]", "tokens, queries, tasks and time per model: today, this week, this month"),
@@ -647,11 +757,11 @@ function helpHtml(S) {
     row("history [n | -c]", "show the last n shell commands, or clear the history"),
     row("vim, top, ssh…", "full-screen and interactive programs open in a terminal view"),
     "", head("Window"),
-    row("⌘T · ⌘⇧T · ⌘W", "new tab · new tab with another agent · close tab"),
+    row("⌘T · ⌘⇧T · ⌘W", `new tab · new tab with another ${CLI_AGENTS ? "agent" : "model"} · close tab`),
     row("⌘1–9 · ⌘⇧[ ]", "go to tab · previous / next tab"),
     row("⌘D · ⌘⇧D", "split side by side · split stacked"),
     row("⌘⌥ arrows", "move between panes"),
-    row("⌃⌘S · ⌘,", "show / hide the sidebar · settings"),
+    row("⌃⌘S · ⌃⌘M · ⌘,", "show / hide the sidebar (specs, factories, sessions) · the right panel (MCPs, skills) · settings"),
   );
   return out.join("\n");
 }
@@ -678,6 +788,16 @@ async function slashCommand(S, line) {
       return true;
     case "/model": {
       echo();
+      if (!CLI_AGENTS) {
+        if (!arg) { info(S, modelListHtml(S.model)); return true; }
+        const m = findModel(arg);
+        if (!m) { sys(S, modelMiss(arg)); info(S, modelListHtml(S.model)); return true; }
+        S.model = m;
+        await restart(S, `model → ${m} (conversation kept)`);
+        refresh(S);
+        return true;
+      }
+      // Deprecated: CLI agents (CLI_AGENTS).
       if (!arg) {
         const list = needsModel(S.agent) ? modelsFor(S.agent) : ["default", ...modelsFor(S.agent)];
         const cur = S.model || "default";
@@ -694,6 +814,11 @@ async function slashCommand(S, line) {
     }
     case "/agent": {
       echo();
+      if (!CLI_AGENTS) {
+        info(S, `<span class="dim">Tabs run Paw Agent. Pick its model with /model (/model alone lists them).</span>`);
+        return true;
+      }
+      // Deprecated: CLI agents (CLI_AGENTS).
       const list = availableAgents();
       if (!arg) {
         info(S, list.map((a) => (a.id === S.agent.id ? `<span class="ok">● ${esc(a.id)}</span>` : `<span class="dim">○</span> ${esc(a.id)}`) + `  <span class="dim">${esc(a.name)}</span>`).join("\n"));
@@ -742,9 +867,13 @@ async function slashCommand(S, line) {
       echo();
       await interrupt(S);
       return true;
-    case "/new":
-      await newSession(arg || undefined);
+    case "/new": {
+      if (CLI_AGENTS || !arg) { await newSession(arg || undefined); return true; }
+      const m = findModel(arg);
+      if (!m) { echo(); sys(S, modelMiss(arg)); info(S, modelListHtml(null)); return true; }
+      await newSession("paw", { model: m });
       return true;
+    }
     case "/session": {
       echo();
       const dir = await sessionDir(S);
@@ -771,7 +900,7 @@ async function slashCommand(S, line) {
       // badges are part of the goal ("/task" alone: the pasted text is it).
       const pasted = (S.attachments ?? []).filter(isPasted);
       if (pasted.length) { S.attachments = S.attachments.filter((a) => !isPasted(a)); renderAttachments(); }
-      await newTask({ agentId: S.agent.id, cwd: S.cwd, goal: arg, atts: pasted });
+      await newTask({ model: S.model, cwd: S.cwd, goal: arg, atts: pasted });
       return true;
     }
     case "/plugins":
@@ -1808,9 +1937,10 @@ function workspaceSnapshot() {
   };
 }
 
-/** What the tab was about, for /sessions: the task, or the first prompt. */
+/** What the tab was about, for /sessions: the task, the name it was given, or the first prompt. */
 function sessionSummary(S) {
   if (S.task) return S.task.title || S.task.goal?.split("\n")[0] || "";
+  if (S.title) return S.title;
   const first = S.lines.find((l) => l.stream === "stdin" && !l.local && String(l.text ?? "").trim());
   return first ? String(first.text).trim().split("\n")[0].slice(0, 160) : "";
 }
@@ -1830,6 +1960,7 @@ function tabSnapshot(S) {
       summary: sessionSummary(S),
       lastActive: lastActive(S),
       group: S.group ?? undefined,
+      title: S.title ?? undefined,
       agent: S.agent.id,
       cwd: S.cwd,
       model: S.model,
@@ -1998,31 +2129,46 @@ function dropRestoreNotes(S) {
 
 /** Open a tab from its saved state (a restart, or a closed session reopened). */
 async function restoreTab(t, note = null) {
+  const paw = settings.agents.find(isPaw);
+  // Without CLI agents, a CLI agent's tab continues on Paw Agent: its
+  // transcript stays, its CLI conversation can't come along.
+  const fromCli = !CLI_AGENTS && t.agent !== "ollama" && t.agent !== paw?.id;
   // The Ollama agent is gone; Paw Agent runs Ollama models now.
-  const agentId = t.agent === "ollama" ? settings.agents.find(isPaw)?.id : t.agent;
-  const agent = settings.agents.find((a) => a.id === agentId);
+  const agent = fromCli || t.agent === "ollama" ? paw : settings.agents.find((a) => a.id === t.agent);
   if (!agent) return null;
+  // Paw Agent's models come with the scan: matching a bare model id (or
+  // picking the default) needs it.
+  const bare = (m) => !providerOf(m);
+  if (isPaw(agent) && !detectionsReady && (fromCli || bare(t.model) || (t.task?.steps ?? []).some((s) => bare(s.model)))) {
+    await waitForDetections(15000);
+  }
   let cwd = t.cwd;
   try { cwd = await invoke("resolve_dir", { path: cwd, base: homeDir }); } catch { cwd = homeDir; }
   // Tabs from before session folders take their conversation's id (Paw
   // Agent's conversation moved into session/<that id>), or a new one.
   // (its first 8 characters, as the folder is called since ids were shortened).
-  const pawId = t.id ?? (isPaw(agent) && /^[0-9a-f-]{8,64}$/i.test(t.session ?? "") ? t.session.slice(0, 8) : newPawId());
+  const pawId = t.id ?? (isPaw(agent) && !fromCli && /^[0-9a-f-]{8,64}$/i.test(t.session ?? "") ? t.session.slice(0, 8) : newPawId());
+  const model = !isPaw(agent) ? t.model ?? defaultModel(agent) : fromCli ? defaultPawModel() : savedModel(t.model);
   const S = {
     sid: nextSid++, pawId, agent: structuredClone(agent), mode: sessionMode(agent), cwd,
-    model: t.model ?? defaultModel(agent), approval: t.approval ?? approvalFromLegacy(t.perm) ?? defaultApproval(agent),
+    model, approval: t.approval ?? approvalFromLegacy(t.perm) ?? defaultApproval(agent),
     proc: null, info: null, lines: (t.lines ?? []).slice(-WS_LINES), busy: false,
     history: t.history ?? [], histIdx: (t.history ?? []).length, draft: "", unread: 0,
     shell: null, shellBusy: false, inputMode: t.inputMode || settings.general.input_mode || "auto",
-    session: t.session ?? t.claudeSession ?? null,
-    turns: t.turns ?? [],
+    session: fromCli ? null : t.session ?? t.claudeSession ?? null,
+    turns: fromCli ? [] : t.turns ?? [],
+    ...(t.title ? { title: t.title } : {}),
   };
-  // The daemon that ran this tab still runs: re-attach to its agent and shell.
+  const oldName = settings.agents.find((a) => a.id === t.agent)?.name ?? t.agent;
+  const convertedNote = () => fromCli && S.lines.push({ stream: "info", ts: Date.now(),
+    html: `<span class="dim">This tab used ${esc(oldName)}; it continues on ${esc(agent.name)} with ${esc(S.model || "the default model")}.</span>` });
+  // The daemon that ran this tab still runs: re-attach to its agent and shell
+  // (not to a CLI agent's process: the tab runs Paw Agent now).
   const live = t.live && daemon.instance && t.live.instance === daemon.instance ? t.live : null;
   let attach = null;
   if (live) {
     attach = await invoke("daemon_attach", {
-      procs: live.proc != null ? [live.proc] : [], shells: live.shell != null ? [live.shell] : [], after: live.dseq ?? 0,
+      procs: live.proc != null && !fromCli ? [live.proc] : [], shells: live.shell != null ? [live.shell] : [], after: live.dseq ?? 0,
     }).catch(() => null);
   }
   // The last prompt's turn: an answer still coming in goes in its block.
@@ -2055,6 +2201,7 @@ async function restoreTab(t, note = null) {
     dropRestoreNotes(S);
     S.lines.push({ stream: "system", ts: Date.now(),
       text: procAlive?.info.status === "running" ? `— re-attached · ${S.agent.name} kept running while Paw's window was closed —` : "— re-attached —" });
+    convertedNote();
     // What happened meanwhile, once every tab is back (restoreWorkspace).
     S.replay = attach.events ?? [];
     reloadThumbs(S);
@@ -2070,6 +2217,7 @@ async function restoreTab(t, note = null) {
     text: resumable ? `— ${how} · attached to ${S.agent.name} session ${String(S.session).slice(0, 8)} (conversation continues) —`
       : replay ? `— ${how} · ${S.agent.name} gets the ${S.turns.length} earlier turn${S.turns.length > 1 ? "s" : ""} with your next prompt (conversation continues) —`
       : `— ${how} · no earlier conversation to continue —` });
+  convertedNote();
   reloadThumbs(S);
   openShell(S);
   if (S.mode !== "oneshot") {
@@ -2128,6 +2276,7 @@ function allowRulesFor(S) {
   const saved = (settings.allow_rules ?? []).filter((r) => r.agent === S.agent.id && r.folder === S.cwd).map((r) => r.rule);
   return [...new Set([...saved, ...(S.onceAllow ?? [])])];
 }
+// Deprecated: CLI agents (CLI_AGENTS). Allow rules as a CLI's command-line flags.
 function allowArgs(S) {
   const t = S.agent.allow_template;
   if (!t || !t.includes("{rule}")) return "";
@@ -2345,9 +2494,10 @@ function stepFontSize(dir) {
 // ---------- rendering: tabs, sidebar, header ----------
 function tabLabel(S) {
   if (S.task) return taskTabLabel(S);
+  if (S.title) return S.title; // the name the user gave it
   const step = stepOfTab(S)?.st;
   if (step) return step.title;
-  return `${S.agent.name} · ${basename(S.cwd)}`;
+  return `${modelShort(S.model) || S.agent.name} · ${basename(S.cwd)}`;
 }
 
 function renderTabs() {
@@ -2366,7 +2516,8 @@ function renderTabs() {
     const step = stepOfTab(S);
     t.className = "tab" + (sid === activeId ? " active" : paneOf(S) ? " visible" : "") + (S.task ? " task-tab" : step ? " step-tab" : "") + (g ? " in-group" : "");
     if (g) t.style.setProperty("--g", GROUP_COLORS[g.color] ?? GROUP_COLORS.grey);
-    t.title = S.task ? `Task: ${S.task.goal || "new"} — planned by ${S.agent.name}` : step ? `Step of ${step.T.task.title}: ${S.agent.name} — ${tildify(S.cwd)}` : `${S.agent.name} — ${tildify(S.cwd)}`;
+    const runs = S.model ? `${S.agent.name} · ${S.model}` : S.agent.name;
+    t.title = S.task ? `Task: ${S.task.goal || "new"} — planned by ${runs}` : step ? `Step of ${step.T.task.title}: ${runs} — ${tildify(S.cwd)}` : `${runs} — ${tildify(S.cwd)}`;
     const needs = S.task ? taskNeedsYou(S) : 0;
     t.innerHTML = (S.task ? `<span class="task-ico" aria-hidden="true"></span>` : "") +
       `<span class="dot ${S.task ? taskDotState(S) : sessionState(S)}"></span><span class="label">${esc(tabLabel(S))}</span>` +
@@ -2380,6 +2531,7 @@ function renderTabs() {
     t.querySelector(".close").onclick = (e) => { e.stopPropagation(); closeSession(sid); };
     tabs.appendChild(t);
   }
+  renderSessionList();
 }
 
 // ---------- dragging tabs ----------
@@ -2684,8 +2836,8 @@ async function copyText(text) {
 
 function taskFromText(S, text) {
   const goal = text.trim();
-  if (shouldBadge(goal)) return newTask({ agentId: S.agent.id, cwd: S.cwd, goal: "", atts: [pastedAttachment(goal)] });
-  return newTask({ agentId: S.agent.id, cwd: S.cwd, goal });
+  if (shouldBadge(goal)) return newTask({ model: S.model, cwd: S.cwd, goal: "", atts: [pastedAttachment(goal)] });
+  return newTask({ model: S.model, cwd: S.cwd, goal });
 }
 
 // A right-click (or ⌃-click) inside the selection keeps it: WebKit would
@@ -2727,6 +2879,8 @@ function tabMenu(S, x, y) {
     items.push({ label: `Add to “${groupName(g) || "unnamed group"}”`, dot: GROUP_COLORS[g.color], run: () => addToGroup(S, g.id) });
   }
   if (S.group) items.push({ label: "Remove from group", run: () => removeFromGroup(S) });
+  // A task tab is named by its plan.
+  if (!S.task) items.unshift({ label: "Rename…", run: () => renameSession(S) }, "-");
   items.push("-", { label: "Close tab", sub: "⌘W", run: () => closeSession(S.sid) });
   contextMenu(x, y, items);
 }
@@ -2743,13 +2897,303 @@ function groupMenu(g, x, y) {
   ]);
 }
 
-// The sidebar shows skills; project skills depend on the active session's folder.
+// The right panel's skills and MCP servers follow the focused session: project
+// skills depend on its folder, servers on its agent and folder.
 const focusedS = () => sessions.get(focusedPane?.sid);
 function renderSidebar() {
   const cwd = focusedS()?.cwd ?? null;
   if (cwd !== skills.cwd) scanSkills();
   syncMcp();
 }
+
+// ---------- sidebar: Specs, Factories, Sessions ----------
+// Each section folds; which are folded is remembered.
+const navClosed = new Set((() => { try { return JSON.parse(localStorage.getItem("paw.nav.closed") || "[]"); } catch { return []; } })());
+function applyNavClosed() {
+  document.querySelectorAll(".nav-sec").forEach((s) => s.classList.toggle("closed", navClosed.has(s.dataset.sec)));
+}
+function setNavClosed(sec, closed) {
+  closed ? navClosed.add(sec) : navClosed.delete(sec);
+  try { localStorage.setItem("paw.nav.closed", JSON.stringify([...navClosed])); } catch {}
+  applyNavClosed();
+}
+document.querySelector(".sidebar .nav").addEventListener("click", (e) => {
+  const head = e.target.closest("[data-sec-toggle]");
+  if (!head || e.target.closest("button, input")) return;
+  const sec = head.closest(".nav-sec").dataset.sec;
+  setNavClosed(sec, !navClosed.has(sec));
+});
+applyNavClosed();
+
+/** Edit `el`'s text in place: `done(text)` gets the trimmed text, or null when cancelled. */
+function editInPlace(el, value, done) {
+  const input = document.createElement("input");
+  input.className = "inplace-input";
+  input.value = value;
+  input.spellcheck = false;
+  el.replaceWith(input);
+  input.focus();
+  input.select();
+  let over = false;
+  const finish = (keep) => {
+    if (over) return;
+    over = true;
+    const text = keep ? input.value.trim() : null;
+    input.blur(); // so whatever redraws next isn't held back by a focused field
+    done(text);
+  };
+  input.onkeydown = (e) => {
+    e.stopPropagation();
+    if (e.key === "Enter") { e.preventDefault(); finish(true); }
+    if (e.key === "Escape") { e.preventDefault(); finish(false); }
+  };
+  input.onblur = () => finish(true);
+  input.onclick = input.onpointerdown = input.ondblclick = (e) => e.stopPropagation();
+}
+
+/** Name a session in place: in the sidebar's list when it shows, else on its tab. Empty: its usual name. */
+function renameSession(S) {
+  renderTabs();
+  const el = sidebarVisible()
+    ? $("sessions-body").querySelector(`.nav-item[data-sid="${S.sid}"] .nav-name`)
+    : $("tabs").querySelector(`.tab[data-sid="${S.sid}"] .label`);
+  if (!el) return;
+  editInPlace(el, tabLabel(S), (name) => {
+    if (name != null) {
+      delete S.title;
+      if (name && name !== tabLabel(S)) S.title = name;
+      saveWorkspaceSoon();
+    }
+    renderTabs();
+  });
+}
+
+// Sessions: the open tabs, in tab order, under their tab groups.
+const STATE_TEXT = { running: "Working", ready: "Ready", idle: "Idle", starting: "Starting", failed: "Failed", stopped: "Stopped", exited: "Exited" };
+function sessionStatus(S) {
+  if (S.task) {
+    const n = taskNeedsYou(S);
+    return n ? `${n} step${n > 1 ? "s" : ""} waiting for you` : `Task · ${S.task.state}`;
+  }
+  const st = sessionState(S);
+  return `${STATE_TEXT[st] ?? st} · ${tildify(S.cwd)}`;
+}
+function sessionRow(S) {
+  const row = document.createElement("div");
+  row.className = "nav-item" + (S.sid === activeId ? " active" : "");
+  row.title = `${S.agent.name} — ${tildify(S.cwd)}`;
+  row.dataset.sid = S.sid;
+  const needs = S.task ? taskNeedsYou(S) : 0;
+  row.innerHTML = `<span class="dot ${S.task ? taskDotState(S) : sessionState(S)}"></span>` +
+    `<span class="nav-text"><span class="nav-name">${esc(tabLabel(S))}</span><span class="nav-status">${esc(sessionStatus(S))}</span></span>` +
+    (needs ? `<span class="tab-badge">${needs}</span>` : "") + (S.unread ? `<span class="tab-unread"></span>` : "");
+  row.onclick = () => select(S.sid);
+  row.oncontextmenu = (e) => { e.preventDefault(); tabMenu(S, e.clientX, e.clientY); };
+  return row;
+}
+function renderSessionList() {
+  const body = $("sessions-body");
+  const open = openTabs.map((sid) => sessions.get(sid)).filter(Boolean);
+  $("sessions-count").textContent = open.length || "";
+  body.innerHTML = open.length ? "" : `<div class="sk-empty">No open sessions.</div>`;
+  const byGroup = new Map(); // tab group id ("" for none) → its tabs, where its first tab is
+  for (const S of open) {
+    const gid = S.group && groups.has(S.group) ? S.group : "";
+    if (!byGroup.has(gid)) byGroup.set(gid, []);
+    byGroup.get(gid).push(S);
+  }
+  for (const [gid, members] of byGroup) {
+    const wrap = document.createElement("div");
+    wrap.className = "nav-group";
+    if (gid) {
+      const g = groups.get(gid);
+      const head = document.createElement("div");
+      head.className = "nav-sub";
+      head.innerHTML = `<span class="g-dot" style="background:${GROUP_COLORS[g.color] ?? GROUP_COLORS.grey}"></span><span class="sk-sec-title">${esc(groupName(g))}</span>`;
+      head.oncontextmenu = (e) => { e.preventDefault(); groupMenu(g, e.clientX, e.clientY); };
+      wrap.appendChild(head);
+    }
+    for (const S of members) wrap.appendChild(sessionRow(S));
+    body.appendChild(wrap);
+  }
+}
+
+// Specs: Markdown files in named groups, linked where they are. Clicking one
+// attaches it to the focused session's prompt; drag one onto another group
+// (or between specs) to move it.
+const specs = { groups: [], dragged: false };
+function specsMsg(text, error = false) {
+  const m = $("specs-msg");
+  m.textContent = text;
+  m.classList.toggle("error", error);
+  m.classList.toggle("hidden", !text);
+}
+/** The groups as specs_save takes them. */
+const specsData = () => specs.groups.map((g) => ({ name: g.name, specs: g.specs.map((s) => s.path) }));
+async function specsCall(cmd, args) {
+  const before = JSON.stringify(specs.groups);
+  try {
+    specs.groups = await invoke(cmd, args);
+    specsMsg("");
+  } catch (e) { specsMsg(String(e), true); }
+  // Unchanged (a refresh on focus, mostly): leave the list, and a rename, as they are.
+  if (cmd === "specs_list" && JSON.stringify(specs.groups) === before && $("specs-body").childElementCount) return;
+  renderSpecs();
+}
+const loadSpecs = () => specsCall("specs_list");
+const saveSpecs = (groups) => specsCall("specs_save", { groups });
+
+function renderSpecs() {
+  $("specs-count").textContent = specs.groups.reduce((n, g) => n + g.specs.length, 0) || "";
+  $("specs-groups").innerHTML = specs.groups.map((g) => `<option value="${esc(g.name)}">`).join("");
+  const body = $("specs-body");
+  if (!specs.groups.length) { body.innerHTML = `<div class="sk-empty">Import Markdown specs with +.</div>`; return; }
+  const item = (s, si) => `<div class="nav-item${s.missing ? " missing" : ""}" data-spec="${si}" title="${esc(tildify(s.path))}${s.missing ? " — not there any more" : " — click to attach it to the session"}">
+      <svg class="nav-ico" viewBox="0 0 12 12"><path d="M3 1.5h4l2.5 2.5v6.5h-6.5z"/><path d="M7 1.5v2.5h2.5"/></svg>
+      <span class="nav-text"><span class="nav-name">${esc(s.title)}</span></span>
+      <button class="sk-x" data-spec-remove title="Remove from the group (the file stays)">×</button></div>`;
+  body.innerHTML = specs.groups.map((g, gi) => `<div class="nav-group" data-group="${gi}">
+      <div class="nav-sub" title="Double-click to rename"><span class="sk-sec-title">${esc(g.name)}</span>
+        <button class="sk-sec-add" data-spec-import title="Import specs into ${esc(g.name)}">+</button>
+        <button class="sk-x" data-group-remove title="Remove the group (the files stay)">×</button></div>
+      ${g.specs.length ? g.specs.map(item).join("") : `<div class="sk-empty">Drag specs here, or import with +.</div>`}
+    </div>`).join("");
+}
+
+async function attachSpec(spec) {
+  const S = focusedS();
+  if (!S) return specsMsg("Open a session to attach a spec to.", true);
+  if (spec.missing) return specsMsg(`${tildify(spec.path)} isn't there any more.`, true);
+  try {
+    const a = await invoke("describe_attachment", { path: spec.path });
+    inPane(S, () => { addAttachments(S, [a]); $("input").focus(); });
+    specsMsg("");
+  } catch (e) { specsMsg(String(e), true); }
+}
+
+function renameSpecGroup(gi) {
+  const title = $("specs-body").querySelector(`[data-group="${gi}"] .nav-sub .sk-sec-title`);
+  if (!title) return;
+  editInPlace(title, specs.groups[gi].name, (name) => {
+    if (!name || name === specs.groups[gi].name) return renderSpecs();
+    const data = specsData();
+    data[gi].name = name;
+    saveSpecs(data);
+  });
+}
+
+/** Drag a spec with the pointer (as tabs drag): onto a group, or before a spec. */
+function startSpecDrag(e, el) {
+  if (e.button !== 0 || e.target.closest("button")) return;
+  const from = { gi: +el.closest(".nav-group").dataset.group, si: +el.dataset.spec };
+  const [x0, y0] = [e.clientX, e.clientY];
+  let ghost = null, target = null;
+  const groupAt = (x, y) => document.elementFromPoint(x, y)?.closest?.("#specs-body .nav-group") ?? null;
+  const move = (ev) => {
+    if (!ghost) {
+      if (Math.hypot(ev.clientX - x0, ev.clientY - y0) < 5) return;
+      ghost = el.cloneNode(true);
+      ghost.classList.add("nav-ghost");
+      ghost.style.width = el.offsetWidth + "px";
+      document.querySelector(".sidebar").appendChild(ghost);
+      el.classList.add("dragging");
+    }
+    ghost.style.transform = `translate(${ev.clientX - 14}px, ${ev.clientY - 12}px)`;
+    const g = groupAt(ev.clientX, ev.clientY);
+    if (g !== target) { target?.classList.remove("drop"); target = g; target?.classList.add("drop"); }
+  };
+  const up = (ev) => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    window.removeEventListener("pointercancel", up);
+    if (!ghost) return; // a click
+    specs.dragged = true;
+    setTimeout(() => (specs.dragged = false));
+    ghost.remove();
+    el.classList.remove("dragging");
+    target?.classList.remove("drop");
+    if (!target || ev.type === "pointercancel") return;
+    const to = +target.dataset.group;
+    const over = document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.("#specs-body .nav-item[data-spec]");
+    const data = specsData();
+    const [path] = data[from.gi].specs.splice(from.si, 1);
+    let at = data[to].specs.length;
+    if (over && over.closest(".nav-group") === target) {
+      at = +over.dataset.spec;
+      if (to === from.gi && at > from.si) at--;
+    }
+    if (to === from.gi && at === from.si) return;
+    data[to].specs.splice(at, 0, path);
+    saveSpecs(data);
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
+  window.addEventListener("pointercancel", up);
+}
+
+$("specs-body").addEventListener("pointerdown", (e) => {
+  const el = e.target.closest(".nav-item[data-spec]");
+  if (el) startSpecDrag(e, el);
+});
+$("specs-body").addEventListener("click", (e) => {
+  if (specs.dragged) return;
+  const group = e.target.closest(".nav-group");
+  if (!group) return;
+  const gi = +group.dataset.group;
+  if (e.target.closest("[data-spec-import]")) return specsCall("specs_import", { group: specs.groups[gi].name });
+  if (e.target.closest("[data-group-remove]")) {
+    const g = specs.groups[gi];
+    if (g.specs.length && !confirm(`Remove the group “${g.name}”? Its ${g.specs.length} spec${g.specs.length > 1 ? "s stay" : " stays"} on disk.`)) return;
+    return saveSpecs(specsData().filter((_, i) => i !== gi));
+  }
+  const item = e.target.closest(".nav-item[data-spec]");
+  if (!item) return;
+  const si = +item.dataset.spec;
+  if (e.target.closest("[data-spec-remove]")) {
+    const data = specsData();
+    data[gi].specs.splice(si, 1);
+    return saveSpecs(data);
+  }
+  attachSpec(specs.groups[gi].specs[si]);
+});
+$("specs-body").addEventListener("dblclick", (e) => {
+  const head = e.target.closest(".nav-sub");
+  if (head && !e.target.closest("button, input")) renameSpecGroup(+head.closest(".nav-group").dataset.group);
+});
+$("specs-body").addEventListener("contextmenu", (e) => {
+  const head = e.target.closest(".nav-sub");
+  if (!head) return;
+  e.preventDefault();
+  const gi = +head.closest(".nav-group").dataset.group;
+  contextMenu(e.clientX, e.clientY, [
+    { label: "Rename", run: () => renameSpecGroup(gi) },
+    { label: "Import Specs…", run: () => specsCall("specs_import", { group: specs.groups[gi].name }) },
+    "-",
+    { label: "Remove Group", run: () => saveSpecs(specsData().filter((_, i) => i !== gi)) },
+  ]);
+});
+$("specs-add").onclick = () => {
+  const row = $("specs-add-row");
+  setNavClosed("specs", false);
+  row.classList.toggle("hidden");
+  if (!row.classList.contains("hidden")) $("specs-group").focus();
+};
+$("specs-add-cancel").onclick = () => $("specs-add-row").classList.add("hidden");
+$("specs-add-row").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const group = $("specs-group").value.trim();
+  if (!group) { $("specs-group").focus(); return specsMsg("Name the group the specs go into.", true); }
+  await specsCall("specs_import", { group });
+  $("specs-group").value = "";
+  $("specs-add-row").classList.add("hidden");
+});
+$("specs-group").addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { e.preventDefault(); $("specs-add-row").classList.add("hidden"); }
+});
+// Linked files change outside Paw: titles and missing ones are read again.
+window.addEventListener("focus", loadSpecs);
+loadSpecs();
+renderSessionList();
 
 function renderHeader() {
   const S = curS();
@@ -2858,6 +3302,7 @@ function refreshExternal() {
 const externalSetup = () => (skills.ext ? Promise.resolve(skills.ext) : extPromise ?? refreshExternal());
 const nativeSkills = (S) => isPaw(S.agent) || (S.agent.skills_template ?? "").includes("{skills}");
 
+// Deprecated: CLI agents (CLI_AGENTS). A CLI's flag that loads the skills folder.
 async function skillsArgs(S) {
   if (!nativeSkills(S)) return "";
   const ext = await externalSetup();
@@ -3088,8 +3533,11 @@ $("skills-body").addEventListener("click", async (e) => {
   const btn = e.target.closest("[data-act]");
   if (btn) { skillAction(btn.dataset.act, item.dataset.name, item.dataset.path); return; }
   if (String(window.getSelection())) return; // selecting text, not toggling
+  // One skill's details at a time: opening another closes the last.
   const key = item.dataset.key;
-  skills.expanded.has(key) ? skills.expanded.delete(key) : skills.expanded.add(key);
+  const wasOpen = skills.expanded.has(key);
+  skills.expanded.clear();
+  if (!wasOpen) skills.expanded.add(key);
   renderSkills();
 });
 $("skills-filter").addEventListener("input", renderSkills);
@@ -3124,22 +3572,41 @@ window.addEventListener("focus", () => {
 // Adding, removing or switching a server writes there; running tabs of that
 // agent pick it up (an idle one restarts on the same conversation, a busy
 // one after its turn; one-shot agents read their config on every prompt).
-const mcp = { open: false, key: null, report: null, adding: null, busy: false, seq: 0 };
-try { mcp.open = localStorage.getItem("paw.mcp") === "1"; } catch {}
+const mcp = { key: null, report: null, adding: null, busy: false, seq: 0 };
 const TRANSPORT_TAG = { stdio: "local", http: "HTTP", sse: "SSE" };
 
-function setMcpOpen(open) {
-  mcp.open = open;
-  $("mcp-panel").classList.toggle("hidden", !open);
-  $("mcp-resizer").classList.toggle("hidden", !open);
-  $("mcp-toggle").classList.toggle("on", open);
-  try { localStorage.setItem("paw.mcp", open ? "1" : "0"); } catch {}
-  if (open) { mcp.key = null; syncMcp(); }
+// ---------- right panel ----------
+// One panel, two tabs: the focused tab's MCP servers, and skills.
+const panel = { open: false, tab: "mcp" };
+try {
+  panel.open = localStorage.getItem("paw.panel") === "1";
+  panel.tab = localStorage.getItem("paw.panelTab") === "skills" ? "skills" : "mcp";
+} catch {}
+const mcpShown = () => panel.open && panel.tab === "mcp";
+
+/** Show the panel's state; nothing is loaded. */
+function applyPanel() {
+  $("right-panel").classList.toggle("hidden", !panel.open);
+  $("panel-resizer").classList.toggle("hidden", !panel.open);
+  $("panel-toggle").classList.toggle("on", panel.open);
+  for (const b of $("panel-tabs").querySelectorAll("button")) {
+    b.classList.toggle("active", b.dataset.tab === panel.tab);
+    b.setAttribute("aria-selected", String(b.dataset.tab === panel.tab));
+  }
+  document.querySelectorAll("#right-panel [data-pane]").forEach((p) => p.classList.toggle("hidden", p.dataset.pane !== panel.tab));
+}
+
+function setPanel(open, tab = panel.tab) {
+  panel.open = open;
+  panel.tab = tab;
+  applyPanel();
+  try { localStorage.setItem("paw.panel", open ? "1" : "0"); localStorage.setItem("paw.panelTab", tab); } catch {}
+  if (mcpShown()) { mcp.key = null; syncMcp(); }
 }
 
 /** The focused tab changed (or its folder): show its agent's servers. */
 function syncMcp() {
-  if (!mcp.open) return;
+  if (!mcpShown()) return;
   const S = focusedS();
   const key = S ? `${S.agent.id}|${S.cwd}` : "";
   if (key === mcp.key) return;
@@ -3301,14 +3768,16 @@ $("mcp-body").addEventListener("submit", (e) => {
   mcpChange(async (c) => { await invoke("mcp_add", { ...c, scope: f.dataset.scope, server }); mcp.adding = null; return f.dataset.scope; },
     `Added ${server.name.trim()}`);
 });
-$("mcp-toggle").onclick = () => setMcpOpen(!mcp.open);
-$("mcp-close").onclick = () => setMcpOpen(false);
+$("panel-toggle").onclick = () => setPanel(!panel.open);
+$("panel-close").onclick = () => setPanel(false);
+$("panel-tabs").addEventListener("click", (e) => {
+  const tab = e.target.closest("button")?.dataset.tab;
+  if (tab) setPanel(true, tab);
+});
 $("mcp-refresh").onclick = () => loadMcp();
 $("mcp-add").onclick = () => { mcp.adding = !mcp.adding; renderMcp(); };
 // At load only the visibility: the first renderSidebar() fills it in.
-$("mcp-panel").classList.toggle("hidden", !mcp.open);
-$("mcp-resizer").classList.toggle("hidden", !mcp.open);
-$("mcp-toggle").classList.toggle("on", mcp.open);
+applyPanel();
 
 // ---------- rendering: terminal output ----------
 // Bottom-anchored: new lines appear right above the prompt and push older ones up.
@@ -3511,7 +3980,8 @@ function redactSecrets(text) {
 // click. Anything else stays markdown.
 const CLI_STEP = /^ (?![-*+>#|\d])(\S{1,3}) +(\S+)(?: +(.*?))?\s*$/;
 
-/** The node to place for Copilot stdout line `node` (null: it went into the open step). */
+/** The node to place for Copilot stdout line `node` (null: it went into the open step).
+ *  Deprecated: CLI agents (CLI_AGENTS). */
 function cliStep(out, node) {
   const text = node.mdSrc[0];
   const last = out.lastElementChild;
@@ -3599,7 +4069,7 @@ function renderLine(S, l) {
   }
   if (l.stream === "stdout" && S.mode === "oneshot") {
     const d = mdRun(l.text);
-    d.cli = S.agent.id === "copilot";
+    d.cli = CLI_AGENTS && S.agent.id === "copilot"; // Deprecated: CLI agents (CLI_AGENTS).
     return d;
   }
   if (l.stream === "stdout" && l.text.startsWith("{")) {
@@ -3719,6 +4189,7 @@ function recordQuery(S, ended, ev = null) {
     ms: ev?.duration_ms ?? Date.now() - S.turnStarted, input: u.input, output: u.output, cost: ev?.total_cost_usd ?? 0,
   } }).catch(() => {});
   pluginEvent("turn", { tab: pluginTab(S), ok: !!ended.ok, ms: ev?.duration_ms ?? Date.now() - S.turnStarted, input: u.input, output: u.output, model: modelOf(S), agent: S.agent.name });
+  taskUsage(S, u);
   S.turnStarted = null;
 }
 
@@ -3796,8 +4267,12 @@ setInterval(() => { spinFrame++; for (const P of panes.values()) withPane(P, ren
 // Paw sending the earlier turns along ("replay").
 function captureSession(S, l) {
   if (l.stream !== "stdout" && l.stream !== "stderr") return;
-  S.runLines?.push(l.text);
-  if (l.stream === "stdout" && S.mode === "oneshot") S.runOut?.push(PawThemes.stripAnsi(l.text));
+  // Deprecated: CLI agents (CLI_AGENTS). A one-shot run's output, for its turn's answer and errors.
+  if (CLI_AGENTS) {
+    S.runLines?.push(l.text);
+    if (l.stream === "stdout" && S.mode === "oneshot") S.runOut?.push(PawThemes.stripAnsi(l.text));
+  }
+  // Paw Agent's init line carries its conversation id too.
   const pat = S.agent.continuity === "session" && S.agent.session_pattern;
   if (pat) {
     try {
@@ -3806,8 +4281,9 @@ function captureSession(S, l) {
       if (m?.[1]) S.resuming = false;
     } catch { /* bad pattern in settings */ }
   }
+  // Deprecated: CLI agents (CLI_AGENTS). Paw keeps the conversation of agents without sessions.
   const turn = S.turns?.at(-1);
-  if (S.agent.continuity === "replay" && turn?.open && l.stream === "stdout") {
+  if (CLI_AGENTS && S.agent.continuity === "replay" && turn?.open && l.stream === "stdout") {
     turn.assistant += PawThemes.stripAnsi(l.text) + "\n";
   }
 }
@@ -3815,6 +4291,7 @@ function captureSession(S, l) {
 // Copilot CLI ends every `-p` run with a stats block on stderr (Changes,
 // AI Credits, Tokens, Resume — Resume last). Shown as one dim line instead
 // of four error lines; captureSession has already taken the session id.
+// Deprecated: CLI agents (CLI_AGENTS).
 const COPILOT_STAT = /^(Changes|AI Credits|Tokens|Resume)\s+(.*)$/;
 /** Whether stderr line `l` is part of Copilot's closing stats (handled here). */
 function foldCopilotStats(S, l) {
@@ -3882,7 +4359,8 @@ function onAgentOutput(l) {
   // One-shot runs end every prompt; a clean exit is not news.
   if (S.mode === "oneshot" && l.stream === "system" && l.text === "Process exited with code 0") return;
   captureSession(S, l);
-  if (S.agent.id === "copilot" && S.mode === "oneshot" && l.stream === "stderr" && foldCopilotStats(S, l)) return;
+  // Deprecated: CLI agents (CLI_AGENTS).
+  if (CLI_AGENTS && S.agent.id === "copilot" && S.mode === "oneshot" && l.stream === "stderr" && foldCopilotStats(S, l)) return;
   if (S.mode === "claude" && l.stream === "stdout") {
     logAgentCommands(S, l.text);
     trackUsage(S, l.text);
@@ -4133,7 +4611,7 @@ async function splitPane(dir) {
   }
   renderLayout();
   focusPane(NP);
-  await newSession(S?.agent.id, { cwd: S?.cwd });
+  await newSession(S?.agent.id, { cwd: S?.cwd, model: CLI_AGENTS ? undefined : S?.model || undefined });
 }
 
 /** Remove a pane from the layout (its session is already gone or elsewhere). */
@@ -4323,13 +4801,44 @@ function agentAvatar(a) {
   return `<span class="mini-avatar">${esc(ini || "?")}</span>`;
 }
 
+/** Menu rows for every visible model, under its provider's name; ⌘T marks the default. */
+function modelMenuItems(menu) {
+  const groups = modelsByProvider();
+  if (!groups.length) {
+    if (!detectionsReady) { menu.appendChild(div("menu-empty", "Looking for models…")); return; }
+    const b = document.createElement("button");
+    b.className = "menu-item";
+    b.innerHTML = `<span class="mini-avatar ghost">⚙</span><span class="mi-name">Connect a provider in Settings…</span>`;
+    b.onclick = () => { closeMenu(); invoke("open_preferences", { tab: "agents" }); };
+    menu.appendChild(b);
+    return;
+  }
+  const def = defaultPawModel();
+  const box = div("menu-models");
+  for (const [p, list] of groups) {
+    box.appendChild(div("menu-head", esc(providerName(p))));
+    for (const m of list) {
+      const b = document.createElement("button");
+      b.className = "menu-item";
+      b.title = m;
+      b.innerHTML = `${agentAvatar({ name: providerName(p) })}<span class="mi-name">${esc(modelShort(m))}</span>` +
+        `<span class="mi-sub">${m === def ? "⌘T" : ""}</span>`;
+      b.onclick = () => newSession("paw", { model: m });
+      box.appendChild(b);
+    }
+  }
+  menu.appendChild(box);
+}
+
 function openMenu() {
   const menu = $("menu");
   const list = availableAgents();
   const def = defaultAgent();
   menu.innerHTML = "";
-  if (!list.length) menu.appendChild(div("menu-empty", detectionsReady ? "No agents available" : "Detecting agents…"));
-  for (const [i, a] of list.entries()) {
+  if (!CLI_AGENTS) modelMenuItems(menu);
+  // Deprecated: CLI agents (CLI_AGENTS).
+  else if (!list.length) menu.appendChild(div("menu-empty", detectionsReady ? "No agents available" : "Detecting agents…"));
+  for (const [i, a] of (CLI_AGENTS ? list : []).entries()) {
     if (i > 0 && isPaw(list[i - 1]) && !isPaw(a)) menu.appendChild(div("menu-sep")); // Paw Agent, then the CLI agents
     const b = document.createElement("button");
     b.className = "menu-item";
@@ -4340,7 +4849,7 @@ function openMenu() {
     menu.appendChild(b);
   }
   menu.appendChild(div("menu-sep"));
-  if (list.some((a) => sessionMode(a) !== "stdin")) {
+  if (CLI_AGENTS ? list.some((a) => sessionMode(a) !== "stdin") : visibleModels().length) {
     const tk = document.createElement("button");
     tk.className = "menu-item";
     tk.innerHTML = `<span class="mini-avatar ghost">◇</span><span class="mi-name">New task…</span><span class="mi-sub">plan, then run</span>`;
@@ -4368,6 +4877,30 @@ $("menu").addEventListener("mousedown", (e) => e.preventDefault());
 function renderWelcome() {
   const box = $("welcome-agents");
   box.innerHTML = "";
+  if (!CLI_AGENTS) {
+    const groups = modelsByProvider();
+    if (!groups.length) {
+      box.appendChild(div("welcome-empty", detectionsReady
+        ? `No models yet. <a id="w-settings">Connect a provider in Settings…</a>`
+        : "Looking for models…"));
+      const l = document.getElementById("w-settings");
+      if (l) l.onclick = () => invoke("open_preferences", { tab: "agents" });
+      return;
+    }
+    for (const [p, list] of groups) {
+      box.appendChild(div("welcome-head", esc(providerName(p))));
+      for (const m of list) {
+        const b = document.createElement("button");
+        b.className = "welcome-agent";
+        b.title = m;
+        b.innerHTML = `${agentAvatar({ name: providerName(p) })}<span>${esc(modelShort(m))}</span>`;
+        b.onclick = () => newSession("paw", { model: m });
+        box.appendChild(b);
+      }
+    }
+    return;
+  }
+  // Deprecated: CLI agents (CLI_AGENTS).
   const list = availableAgents();
   if (!list.length) {
     box.appendChild(div("welcome-empty", detectionsReady
@@ -4404,11 +4937,11 @@ try { setSidebar(localStorage.getItem("paw.sidebar") !== "0", false); } catch { 
 
 // ---------- side panels give way to the prompt ----------
 // Clicking into the prompt box, or typing in it, closes the sidebar and the
-// MCP panel. Only the user's own click or keystroke counts: Paw moves focus to
+// right panel. Only the user's own click or keystroke counts: Paw moves focus to
 // the prompt by itself all the time, and that must not close anything.
 function closeSidePanels() {
   if (sidebarVisible()) setSidebar(false);
-  if (mcp.open) setMcpOpen(false);
+  if (panel.open) setPanel(false);
 }
 document.addEventListener("pointerdown", (e) => { if (e.target.closest?.(".prompt-line")) closeSidePanels(); }, true);
 document.addEventListener("input", (e) => { if (e.isTrusted && e.target.matches?.('textarea[data-id="input"]')) closeSidePanels(); }, true);
@@ -4456,22 +4989,22 @@ makeResizer(
   () => setSidebarWidth(SIDEBAR_W.normal),
 );
 
-// ---------- MCP panel width ----------
+// ---------- right panel width ----------
 // Its left edge drags like the sidebar's; never wider than half the window.
-const MCP_W = { min: 240, max: 640, normal: 300 };
-function setMcpWidth(w, save = true) {
-  const max = Math.min(MCP_W.max, Math.floor(window.innerWidth / 2));
-  const px = Math.round(Math.min(max, Math.max(MCP_W.min, w)));
-  document.querySelector(".app").style.setProperty("--mcp-w", px + "px");
-  if (save) try { localStorage.setItem("paw.mcpWidth", String(px)); } catch {}
+const PANEL_W = { min: 240, max: 640, normal: 300 };
+function setPanelWidth(w, save = true) {
+  const max = Math.min(PANEL_W.max, Math.floor(window.innerWidth / 2));
+  const px = Math.round(Math.min(max, Math.max(PANEL_W.min, w)));
+  document.querySelector(".app").style.setProperty("--panel-w", px + "px");
+  if (save) try { localStorage.setItem("paw.panelWidth", String(px)); } catch {}
   return px;
 }
-try { const w = Number(localStorage.getItem("paw.mcpWidth")); if (w) setMcpWidth(w, false); } catch {}
+try { const w = Number(localStorage.getItem("paw.panelWidth")); if (w) setPanelWidth(w, false); } catch {}
 makeResizer(
-  $("mcp-resizer"),
-  (x) => $("mcp-panel").getBoundingClientRect().right - x,
-  setMcpWidth,
-  () => setMcpWidth(MCP_W.normal),
+  $("panel-resizer"),
+  (x) => $("right-panel").getBoundingClientRect().right - x,
+  setPanelWidth,
+  () => setPanelWidth(PANEL_W.normal),
 );
 
 $("tab-add").onclick = () => newSession();
@@ -4481,7 +5014,7 @@ $("settings-btn").onclick = () => invoke("open_preferences", {});
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") closeMenu();
   if (!e.metaKey) return;
-  if (e.ctrlKey && (e.key === "m" || e.key === "M")) { e.preventDefault(); setMcpOpen(!mcp.open); return; }
+  if (e.ctrlKey && (e.key === "m" || e.key === "M")) { e.preventDefault(); setPanel(!panel.open); return; }
   // ⌘+ (also ⌘= without shift) / ⌘− / ⌘0: the transcript's font size.
   if (!e.ctrlKey && !e.altKey && ["=", "+", "-", "_", "0"].includes(e.key)) {
     e.preventDefault();
@@ -4513,12 +5046,14 @@ setInterval(() => {
 }, 1000);
 
 // ---------- boot ----------
+/** One wait for the first scan, shared by everyone asking (restored tabs, boot). */
+let detectionsWait = null;
 function waitForDetections(timeoutMs) {
   if (detectionsReady) return Promise.resolve();
-  return new Promise((resolve) => {
+  return (detectionsWait ??= new Promise((resolve) => {
     const t = setTimeout(resolve, timeoutMs);
     listen("agents:detected", () => { clearTimeout(t); resolve(); });
-  });
+  }));
 }
 
 (async () => {
@@ -4591,9 +5126,10 @@ function waitForDetections(timeoutMs) {
   });
   if (restored) { saveWorkspaceSoon(); return; }
 
-  // Like a terminal: open a tab with the default agent on launch.
+  // Like a terminal: open a tab with the default model on launch (no model
+  // yet: the welcome screen says how to connect a provider).
   select(null);
   await waitForDetections(15000);
-  if (!sessions.size && defaultAgent()) newSession();
+  if (!sessions.size && defaultAgent() && (CLI_AGENTS || defaultPawModel())) newSession();
   else renderWelcome();
 })();

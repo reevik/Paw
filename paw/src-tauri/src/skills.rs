@@ -726,13 +726,17 @@ sometimes with scripts or reference files next to it.";
 /// The skills index for Paw Agent: every skill it can use (project, user,
 /// external and system), each once, with the path of its SKILL.md, which the
 /// agent reads with its read tool when a request matches.
-pub fn agent_skills_index(app: &AppHandle, cwd: &Path) -> String {
+/// The index with only some skills (a factory node names its own); None: all.
+pub fn agent_skills_index_of(app: &AppHandle, cwd: &Path, only: Option<&[String]>) -> String {
     let mut all: Vec<Skill> = project_skills(cwd).0;
     all.extend(user_skills());
     all.extend(external_skills(app).0);
     all.extend(system_skills());
     let mut seen = std::collections::HashSet::new();
     all.retain(|s| !s.paths.is_empty() && seen.insert(s.name.to_lowercase()));
+    if let Some(only) = only {
+        all.retain(|s| only.iter().any(|n| n.eq_ignore_ascii_case(&s.name)));
+    }
     external_setup_for(&all, None).index
 }
 

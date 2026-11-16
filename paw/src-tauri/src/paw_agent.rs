@@ -326,6 +326,15 @@ pub struct SessionConfig {
     /// The session's `scripts/` folder: helper scripts that aren't part of
     /// the project go there (auto mode treats it like the working folder).
     pub scripts: Option<PathBuf>,
+    /// Only these built-in tools (a factory node can narrow them); None: all.
+    pub tool_names: Option<Vec<String>>,
+}
+
+impl SessionConfig {
+    /// Does the session have this built-in tool?
+    pub fn has_tool(&self, name: &str) -> bool {
+        self.tools && self.tool_names.as_ref().map_or(true, |t| t.iter().any(|x| x == name))
+    }
 }
 
 pub struct Session {
@@ -504,14 +513,27 @@ impl Session {
             if let Some(p) = &self.cfg.path_env {
                 launcher = launcher.with_env("PATH", p.clone());
             }
-            b = b
-                .tool(Read { workspace: ws.clone(), base: base.clone(), confine: false, seen: self.seen.clone() })
-                .tool(Edit { workspace: ws.clone(), base: base.clone(), confine: false, seen: self.seen.clone() })
-                .tool(Write { workspace: ws.clone(), base: base.clone(), confine: false, seen: self.seen.clone() })
-                .tool(Search { workspace: ws.clone(), base: base.clone(), confine: false })
-                .tool(List { workspace: ws.clone(), base, confine: false })
-                .tool(Shell { workspace: ws, launcher, live: None, spill: None, cut: Some(OutputLimit::default()), confine: false })
-                .add_hook(GateHook { sess: self.clone() });
+            // A factory node may have only some of the built-in tools.
+            let has = |t: &str| self.cfg.has_tool(t);
+            if has("read") {
+                b = b.tool(Read { workspace: ws.clone(), base: base.clone(), confine: false, seen: self.seen.clone() });
+            }
+            if has("edit") {
+                b = b.tool(Edit { workspace: ws.clone(), base: base.clone(), confine: false, seen: self.seen.clone() });
+            }
+            if has("write") {
+                b = b.tool(Write { workspace: ws.clone(), base: base.clone(), confine: false, seen: self.seen.clone() });
+            }
+            if has("search") {
+                b = b.tool(Search { workspace: ws.clone(), base: base.clone(), confine: false });
+            }
+            if has("list") {
+                b = b.tool(List { workspace: ws.clone(), base, confine: false });
+            }
+            if has("shell") {
+                b = b.tool(Shell { workspace: ws, launcher, live: None, spill: None, cut: Some(OutputLimit::default()), confine: false });
+            }
+            b = b.add_hook(GateHook { sess: self.clone() });
             let mcp: Vec<rig_core::tool::DynamicTool> =
                 self.cfg.mcp.tools.iter().cloned().filter_map(|t| rig_core::tool::DynamicTool::try_from(t).ok()).collect();
             if !mcp.is_empty() {
@@ -828,7 +850,7 @@ impl PawAgents {
             cfg,
         });
         self.sessions.lock().unwrap().insert(id, sess.clone());
-        let tools: Vec<&str> = if sess.cfg.tools { vec!["read", "edit", "write", "search", "list", "shell"] } else { vec![] };
+        let tools: Vec<&str> = ["read", "edit", "write", "search", "list", "shell"].into_iter().filter(|t| sess.cfg.has_tool(t)).collect();
         let mut lines = vec![(
             "stdout",
             event(json!({
@@ -1197,6 +1219,15 @@ pub struct StartOpts {
     /// The tab's id: its folder `~/.paw/session/<id>` keeps the conversation.
     #[serde(default)]
     pub paw_session: Option<String>,
+    /// Only these built-in tools (read, edit, write, search, list, shell); unset: all.
+    #[serde(default)]
+    pub tools: Option<Vec<String>>,
+    /// Only these skills (by name); unset: all.
+    #[serde(default)]
+    pub skills: Option<Vec<String>>,
+    /// Only these MCP servers (by name); unset: every one that's on.
+    #[serde(default)]
+    pub mcp: Option<Vec<String>>,
 }
 
 fn valid_conversation_id(s: &str) -> bool {
@@ -1237,6 +1268,7 @@ pub async fn paw_agent_start(
     let scripts2 = scripts.clone();
     let (cwd2, provider2, model2, base2, approval2, source2) =
         (cwd.clone(), provider.clone(), model.clone(), base_url.clone(), approval.clone(), opts.key_source.clone());
+    let only_skills = opts.skills.clone();
     // Keys, the sign-ins, `ollama show` and the skill folders: off the async threads.
     let (cred, copilot_source, tools, preamble) = tauri::async_runtime::spawn_blocking(move || {
         let cred = match provider2.as_str() {
@@ -1249,7 +1281,7 @@ pub async fn paw_agent_start(
         };
         let copilot_source = (provider2 == copilot::PROVIDER).then(|| copilot::source(&copilot::user_home())).transpose()?;
         let tools = provider2 != "ollama" || ollama_supports_tools(&base2, &model2).unwrap_or(true);
-        let skills = crate::skills::agent_skills_index(&app2, &cwd2);
+        let skills = crate::skills::agent_skills_index_of(&app2, &cwd2, only_skills.as_deref());
         Ok::<_, String>((cred, copilot_source, tools, build_preamble(&cwd2, &approval2, tools, &skills, scripts2.as_deref())))
     })
     .await
@@ -1267,7 +1299,11 @@ pub async fn paw_agent_start(
     // Paw Agent's MCP servers (Settings-free: the MCP panel keeps the list).
     let path_env = crate::registry::login_path().to_string();
     let mcp = if tools {
-        let servers = crate::mcp::paw_servers(crate::paths::config_dir(&app).as_deref());
+        let mut servers = crate::mcp::paw_servers(crate::paths::config_dir(&app).as_deref());
+        // A factory node may use only some of them.
+        if let Some(only) = &opts.mcp {
+            servers.retain(|s| only.iter().any(|n| n.eq_ignore_ascii_case(&s.name)));
+        }
         crate::mcp::connect_all(&servers, &cwd, Some(&path_env)).await
     } else {
         crate::mcp::McpSetup::default()
@@ -1303,6 +1339,7 @@ pub async fn paw_agent_start(
         path_env: Some(path_env),
         mcp,
         scripts,
+        tool_names: opts.tools,
     };
     let id = procs.alloc_id();
     let sink: Arc<dyn Sink> = Arc::new(TauriSink { app, seq: Mutex::default() });

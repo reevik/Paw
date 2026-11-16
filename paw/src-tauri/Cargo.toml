@@ -34,6 +34,8 @@ rmcp = { version = "3.10", features = ["client", "transport-child-process", "tra
 toml_edit = "0.22"
 http = "1"
 ring = "0.17"
+serde_yaml = "0.9"
+regex = "1"
 rig-rmcp = "0.46.0"
 
 [dev-dependencies]

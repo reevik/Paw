@@ -15,6 +15,7 @@ mod stats;
 mod plugins;
 mod menubar;
 mod daemon;
+mod factories;
 
 use agents::AgentManager;
 use history::History;
@@ -332,6 +333,8 @@ fn main() {
                 app.set_activation_policy(tauri::ActivationPolicy::Accessory);
                 menubar::setup(app.handle())?;
                 daemon::start_daemon(app.handle());
+                // Factories run here, whether a window is open or not.
+                app.manage(factories::runner::Runner::new(app.handle()));
                 return Ok(());
             }
             // First start after the rename: bring Hive's settings along.

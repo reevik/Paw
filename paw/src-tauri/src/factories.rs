@@ -1,0 +1,527 @@
+//! Factories: pipelines of agent nodes, described in YAML files in
+//! `~/.paw/factories/<id>.yaml`, run by the background process.
+//!
+//! A factory's nodes form a graph through `needs`: nodes that don't need each
+//! other run side by side, a node with several inputs waits for all of them
+//! (`join: all`) or the first (`join: any`), and `when` makes a branch (the node
+//! runs only if an earlier node's answer matches). A `wait` node holds the run
+//! until a command succeeds. Each agent node runs Paw Agent with its own model,
+//! skills, built-in tools and MCP servers.
+//!
+//! This file reads and checks factory files; `runner` (below) runs them.
+
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+pub mod runner;
+
+/// The tools Paw Agent has built in; a node may name a subset.
+pub const BUILTIN_TOOLS: &[&str] = &["read", "edit", "write", "search", "list", "shell"];
+pub const MAX_NODES: usize = 40;
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Factory {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    /// The folder the nodes work in (default: home).
+    #[serde(default)]
+    pub folder: String,
+    /// The model nodes run on unless they name one ("provider/model").
+    #[serde(default)]
+    pub model: String,
+    /// Approval level for nodes that change files (default: auto).
+    #[serde(default)]
+    pub approval: String,
+    /// What starts a run besides Run now (part 2: schedule, watch, webhook, file).
+    #[serde(default)]
+    pub trigger: Option<Trigger>,
+    pub nodes: Vec<Node>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Trigger {
+    /// Run every so often ("15m", "1h").
+    #[serde(default)]
+    pub every: Option<String>,
+    /// Run at a time of day ("09:00").
+    #[serde(default)]
+    pub at: Option<String>,
+    /// A command checked every `every`; the run starts when it succeeds.
+    #[serde(default)]
+    pub watch: Option<String>,
+    /// Start when something posts to the local webhook (true, or a secret).
+    #[serde(default)]
+    pub webhook: Option<serde_yaml::Value>,
+    /// Start when a file or folder changes.
+    #[serde(default)]
+    pub file: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Join {
+    #[default]
+    All,
+    Any,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct When {
+    /// The node whose answer decides.
+    pub from: String,
+    /// Run when the answer matches this (a regular expression, case-insensitive).
+    #[serde(default)]
+    pub matches: Option<String>,
+    /// Run when the answer doesn't match this.
+    #[serde(default)]
+    pub not_matches: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Node {
+    pub id: String,
+    #[serde(default)]
+    pub title: String,
+    /// What the node is for (shown beside the graph).
+    #[serde(default)]
+    pub description: String,
+    /// The instructions the agent gets.
+    #[serde(default)]
+    pub prompt: String,
+    #[serde(default)]
+    pub needs: Vec<String>,
+    #[serde(default)]
+    pub join: Join,
+    #[serde(default)]
+    pub when: Option<When>,
+    #[serde(default)]
+    pub model: String,
+    /// false: the node only reads (Paw Agent's read-only level).
+    #[serde(default = "yes")]
+    pub edits: bool,
+    #[serde(default)]
+    pub approval: String,
+    /// Skills the node may use (by name); unset: all of them.
+    #[serde(default)]
+    pub skills: Option<Vec<String>>,
+    /// Built-in tools the node may use; unset: all of them.
+    #[serde(default)]
+    pub tools: Option<Vec<String>>,
+    /// MCP servers the node may use (by name); unset: all that are on.
+    #[serde(default)]
+    pub mcp: Option<Vec<String>>,
+    /// A wait node: this command, run until it succeeds.
+    #[serde(default)]
+    pub wait: Option<String>,
+    /// How often a wait node checks (default 30s).
+    #[serde(default)]
+    pub every: Option<String>,
+    /// Give up after this long (wait nodes, and agent nodes' turns).
+    #[serde(default)]
+    pub timeout: Option<String>,
+}
+
+fn yes() -> bool {
+    true
+}
+
+impl Node {
+    pub fn is_wait(&self) -> bool {
+        self.wait.is_some()
+    }
+    pub fn label(&self) -> &str {
+        if self.title.trim().is_empty() { &self.id } else { self.title.trim() }
+    }
+}
+
+/// "30s", "2m", "1h", "1h30m", "90" (seconds).
+pub fn parse_duration(s: &str) -> Option<Duration> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    if let Ok(n) = s.parse::<u64>() {
+        return Some(Duration::from_secs(n));
+    }
+    let (mut total, mut num) = (0u64, String::new());
+    for c in s.chars() {
+        if c.is_ascii_digit() {
+            num.push(c);
+            continue;
+        }
+        let n: u64 = num.parse().ok()?;
+        num.clear();
+        total += n * match c {
+            's' => 1,
+            'm' => 60,
+            'h' => 3600,
+            'd' => 86_400,
+            _ => return None,
+        };
+    }
+    if !num.is_empty() {
+        return None;
+    }
+    (total > 0).then(|| Duration::from_secs(total))
+}
+
+pub fn valid_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+fn regex(pattern: &str) -> Result<regex::Regex, String> {
+    regex::RegexBuilder::new(pattern).case_insensitive(true).build().map_err(|e| e.to_string())
+}
+
+/// Does `when` let its node run, given the answer of `when.from`?
+pub fn when_holds(when: &When, answer: &str) -> bool {
+    let yes = when.matches.as_deref().map_or(true, |p| regex(p).is_ok_and(|r| r.is_match(answer)));
+    let no = when.not_matches.as_deref().is_some_and(|p| regex(p).is_ok_and(|r| r.is_match(answer)));
+    yes && !no
+}
+
+/// Nodes in an order where each comes after what it needs (None: a circle).
+pub fn topo_order(nodes: &[Node]) -> Option<Vec<usize>> {
+    let index: HashMap<&str, usize> = nodes.iter().enumerate().map(|(i, n)| (n.id.as_str(), i)).collect();
+    let mut state = vec![0u8; nodes.len()]; // 0 new, 1 visiting, 2 done
+    let mut out = Vec::with_capacity(nodes.len());
+    fn visit(i: usize, nodes: &[Node], index: &HashMap<&str, usize>, state: &mut [u8], out: &mut Vec<usize>) -> bool {
+        match state[i] {
+            1 => return false,
+            2 => return true,
+            _ => {}
+        }
+        state[i] = 1;
+        for n in &nodes[i].needs {
+            if let Some(&j) = index.get(n.as_str()) {
+                if !visit(j, nodes, index, state, out) {
+                    return false;
+                }
+            }
+        }
+        state[i] = 2;
+        out.push(i);
+        true
+    }
+    for i in 0..nodes.len() {
+        if !visit(i, nodes, &index, &mut state, &mut out) {
+            return None;
+        }
+    }
+    Some(out)
+}
+
+/// Every node a node depends on, directly or not.
+fn ancestors(nodes: &[Node], id: &str) -> HashSet<String> {
+    let by_id: HashMap<&str, &Node> = nodes.iter().map(|n| (n.id.as_str(), n)).collect();
+    let mut seen = HashSet::new();
+    let mut todo: Vec<&str> = by_id.get(id).map(|n| n.needs.iter().map(String::as_str).collect()).unwrap_or_default();
+    while let Some(x) = todo.pop() {
+        if seen.insert(x.to_string()) {
+            if let Some(n) = by_id.get(x) {
+                todo.extend(n.needs.iter().map(String::as_str));
+            }
+        }
+    }
+    seen
+}
+
+/// Read and check a factory file's text. Errors say what to fix, with the node.
+pub fn parse(text: &str) -> Result<Factory, String> {
+    let f: Factory = serde_yaml::from_str(text).map_err(|e| e.to_string())?;
+    check(&f)?;
+    Ok(f)
+}
+
+pub fn check(f: &Factory) -> Result<(), String> {
+    if f.name.trim().is_empty() {
+        return Err("The factory needs a name.".into());
+    }
+    if f.nodes.is_empty() {
+        return Err("The factory has no nodes.".into());
+    }
+    if f.nodes.len() > MAX_NODES {
+        return Err(format!("A factory can have up to {MAX_NODES} nodes."));
+    }
+    let mut ids = HashSet::new();
+    for n in &f.nodes {
+        if !valid_id(&n.id) {
+            return Err(format!("Node id “{}”: use letters, digits, - and _ only.", n.id));
+        }
+        if !ids.insert(n.id.as_str()) {
+            return Err(format!("Two nodes are called “{}”.", n.id));
+        }
+    }
+    for n in &f.nodes {
+        let at = |what: String| format!("Node “{}”: {what}", n.id);
+        for need in &n.needs {
+            if !ids.contains(need.as_str()) {
+                return Err(at(format!("it needs “{need}”, which isn't a node.")));
+            }
+            if need == &n.id {
+                return Err(at("it can't need itself.".into()));
+            }
+        }
+        match (&n.wait, n.prompt.trim().is_empty()) {
+            (Some(cmd), _) if cmd.trim().is_empty() => return Err(at("its wait command is empty.".into())),
+            (None, true) => return Err(at("it needs a prompt (or a wait command).".into())),
+            _ => {}
+        }
+        if n.join == Join::Any && n.needs.len() < 2 {
+            return Err(at("join: any needs at least two nodes in needs.".into()));
+        }
+        if let Some(w) = &n.when {
+            if !ids.contains(w.from.as_str()) {
+                return Err(at(format!("its condition reads “{}”, which isn't a node.", w.from)));
+            }
+            if !n.needs.contains(&w.from) && !ancestors(&f.nodes, &n.id).contains(&w.from) {
+                return Err(at(format!("its condition reads “{}”, so it has to need that node (directly or through another).", w.from)));
+            }
+            if w.matches.is_none() && w.not_matches.is_none() {
+                return Err(at("its condition needs matches or not_matches.".into()));
+            }
+            for p in [&w.matches, &w.not_matches].into_iter().flatten() {
+                regex(p).map_err(|e| at(format!("its condition “{p}” isn't a valid pattern ({e}).")))?;
+            }
+        }
+        if let Some(tools) = &n.tools {
+            if let Some(t) = tools.iter().find(|t| !BUILTIN_TOOLS.contains(&t.as_str())) {
+                return Err(at(format!("there's no built-in tool “{t}” (use {}).", BUILTIN_TOOLS.join(", "))));
+            }
+        }
+        for (what, v) in [("every", &n.every), ("timeout", &n.timeout)] {
+            if let Some(v) = v {
+                if parse_duration(v).is_none() {
+                    return Err(at(format!("{what}: “{v}” isn't a duration (like 30s, 2m, 1h).")));
+                }
+            }
+        }
+        for a in [&n.approval, &f.approval] {
+            if !a.is_empty() && !["ask", "edits", "auto", "plan", "full"].contains(&a.as_str()) {
+                return Err(format!("Approval “{a}” isn't one of ask, edits, auto, plan or full."));
+            }
+        }
+    }
+    if topo_order(&f.nodes).is_none() {
+        return Err("The nodes need each other in a circle.".into());
+    }
+    if let Some(t) = &f.trigger {
+        if let Some(v) = &t.every {
+            if parse_duration(v).is_none() {
+                return Err(format!("Trigger every: “{v}” isn't a duration (like 15m, 1h)."));
+            }
+        }
+        if t.watch.is_some() && t.every.is_none() {
+            return Err("A watch trigger also needs every: how often to check.".into());
+        }
+    }
+    Ok(())
+}
+
+/// A factory file as found on disk: checked, or with what's wrong with it.
+#[derive(Debug, Clone, Serialize)]
+pub struct Found {
+    pub id: String,
+    pub path: PathBuf,
+    pub factory: Option<Factory>,
+    pub error: Option<String>,
+    pub modified: u64,
+}
+
+pub fn dir(paw_home: &Path) -> PathBuf {
+    paw_home.join("factories")
+}
+
+/// Every `*.yaml` / `*.yml` file in the factories folder, by file name.
+pub fn load_all(dir: &Path) -> Vec<Found> {
+    let mut out: Vec<Found> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let path = e.path();
+            let ext = path.extension()?.to_str()?;
+            if ext != "yaml" && ext != "yml" {
+                return None;
+            }
+            let id = path.file_stem()?.to_str()?.to_string();
+            Some(load(&id, &path))
+        })
+        .collect();
+    out.sort_by(|a, b| a.id.cmp(&b.id));
+    out
+}
+
+pub fn load(id: &str, path: &Path) -> Found {
+    let modified = std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_millis() as u64);
+    let (factory, error) = match std::fs::read_to_string(path).map_err(|e| e.to_string()).and_then(|t| parse(&t)) {
+        Ok(f) => (Some(f), None),
+        Err(e) => (None, Some(e)),
+    };
+    Found { id: id.to_string(), path: path.to_path_buf(), factory, error, modified }
+}
+
+/// A new factory file from the template; its id (the file name).
+pub fn create(name: &str) -> Result<String, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("Give the factory a name.".into());
+    }
+    let mut base: String = name.to_lowercase().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+    base = base.split('-').filter(|p| !p.is_empty()).collect::<Vec<_>>().join("-");
+    if base.is_empty() {
+        base = "factory".into();
+    }
+    base.truncate(48);
+    let d = crate::paths::home().map(|h| dir(&h)).ok_or("Paw can't find its folder (~/.paw).")?;
+    std::fs::create_dir_all(&d).map_err(|e| e.to_string())?;
+    let mut id = base.clone();
+    for n in 2.. {
+        if !d.join(format!("{id}.yaml")).exists() && !d.join(format!("{id}.yml")).exists() {
+            break;
+        }
+        id = format!("{base}-{n}");
+    }
+    std::fs::write(d.join(format!("{id}.yaml")), template(&name.replace('"', "'"))).map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
+/// The file a new factory starts from.
+pub fn template(name: &str) -> String {
+    format!(
+        r#"# A Paw factory: nodes that agents work through, in order or side by side.
+# Docs: https://github.com/reevik/Paw/blob/main/docs/factories.md
+name: {name}
+description: What this factory does.
+folder: ~
+# model: anthropic/claude-sonnet-5-5   # the default for every node
+
+nodes:
+  - id: research
+    title: Look into it
+    description: Reads around and reports what it finds.
+    prompt: Describe what this node should find out.
+    edits: false
+
+  - id: work
+    title: Do the work
+    needs: [research]
+    prompt: Describe the change to make, using what research found.
+
+  - id: review
+    title: Review the change
+    needs: [work]
+    edits: false
+    prompt: Check the change and list anything that's wrong.
+"#
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const GOOD: &str = r#"
+name: Error spike responder
+folder: ~/proj
+trigger:
+  watch: "./check-errors.sh"
+  every: 2m
+nodes:
+  - id: triage
+    prompt: Classify the spike
+    edits: false
+    skills: [log-reading]
+    mcp: [grafana]
+  - id: hotfix
+    needs: [triage]
+    when: { from: triage, matches: "severity: (high|critical)" }
+    prompt: Fix it
+    tools: [read, edit, search, shell]
+  - id: report
+    needs: [triage]
+    prompt: Write a note
+  - id: notify
+    needs: [hotfix, report]
+    join: any
+    prompt: Summarize
+  - id: settle
+    needs: [notify]
+    wait: "curl -sf localhost:8080/health"
+    every: 30s
+    timeout: 10m
+"#;
+
+    #[test]
+    fn a_good_factory_reads() {
+        let f = parse(GOOD).unwrap();
+        assert_eq!(f.nodes.len(), 5);
+        assert!(!f.nodes[0].edits);
+        assert!(f.nodes[1].edits, "edits defaults to true");
+        assert_eq!(f.nodes[3].join, Join::Any);
+        assert!(f.nodes[4].is_wait());
+        assert_eq!(f.trigger.unwrap().every.as_deref(), Some("2m"));
+    }
+
+    #[test]
+    fn mistakes_are_named() {
+        let bad = |from: &str, to: &str| parse(&GOOD.replace(from, to)).unwrap_err();
+        assert!(bad("needs: [triage]\n    when", "needs: [nope]\n    when").contains("“nope”"));
+        assert!(bad("tools: [read, edit", "tools: [read, hack").contains("no built-in tool “hack”"));
+        assert!(bad("every: 30s", "every: soon").contains("isn't a duration"));
+        assert!(bad("matches: \"severity: (high|critical)\"", "matches: \"(\"").contains("valid pattern"));
+        assert!(bad("  - id: report\n    needs: [triage]", "  - id: report\n    needs: [notify]").contains("circle"));
+        assert!(bad("id: report", "id: hotfix").contains("Two nodes"));
+        assert!(bad("    prompt: Summarize\n", "\n").contains("needs a prompt"));
+        assert!(bad("edits: false\n    skills", "editz: false\n    skills").contains("editz"), "unknown keys are caught");
+    }
+
+    #[test]
+    fn a_condition_must_read_an_earlier_node() {
+        let text = GOOD.replace("when: { from: triage", "when: { from: report");
+        assert!(parse(&text).unwrap_err().contains("has to need that node"));
+    }
+
+    #[test]
+    fn conditions_and_durations() {
+        let w = When { from: "t".into(), matches: Some("critical|high".into()), not_matches: Some("false alarm".into()) };
+        assert!(when_holds(&w, "Severity: CRITICAL"));
+        assert!(!when_holds(&w, "low"));
+        assert!(!when_holds(&w, "critical, but a false alarm"));
+        assert_eq!(parse_duration("1h30m"), Some(Duration::from_secs(5400)));
+        assert_eq!(parse_duration("45"), Some(Duration::from_secs(45)));
+        assert_eq!(parse_duration("2x"), None);
+    }
+
+    #[test]
+    fn the_template_is_a_valid_factory() {
+        let f = parse(&template("My factory")).unwrap();
+        assert_eq!(f.name, "My factory");
+        assert_eq!(topo_order(&f.nodes).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn files_load_with_their_errors() {
+        let d = std::env::temp_dir().join(format!("paw-factories-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("good.yaml"), GOOD).unwrap();
+        std::fs::write(d.join("broken.yml"), "name: x\nnodes: []\n").unwrap();
+        std::fs::write(d.join("notes.txt"), "not a factory").unwrap();
+        let found = load_all(&d);
+        std::fs::remove_dir_all(&d).ok();
+        assert_eq!(found.iter().map(|f| f.id.as_str()).collect::<Vec<_>>(), ["broken", "good"]);
+        assert!(found[0].error.as_deref().unwrap().contains("no nodes"));
+        assert!(found[1].factory.is_some());
+    }
+}

@@ -282,7 +282,7 @@ nodes:             # required; ids use letters, digits, - and _
     timeout: 10m
 Nodes that don't need each other run side by side. A node whose inputs were all skipped is skipped too.
 Asking the user: every agent node has an ask_user tool: it asks the user a question (with choices if useful) in Paw, notifies them, and waits for the answer. For a plan or result the user should sign off, use approve: true on that node (with loop: { back_to: <node>, max: N } and no until, a rejection sends it back with the user's reasons). Never make nodes wait for answer files, poll with sleep loops or call osascript for this.
-Files: each run has its own folder for files nodes share (each node is told where); keep plans and state there, not in a fixed folder, since runs can go in parallel. For the project folder, the user picks it with Run in… (or a webhook's ?folder=); don't ask for it with files.
+Files: each run has its own folder for files nodes share (each node is told where); keep plans and state there, not in a fixed folder, since runs can go in parallel. A run works in the factory's folder, or in the one a webhook (?folder=) or Paw Agent (run_factory) gave it. When a factory needs something from the user to start (which project, what to do), make its first node ask with ask_user: the user answers in the view or in that node's session. Don't ask for it with files.
 A run goes once through the nodes. To react to events (a new commit, an alert, a file), prefer a trigger over a long wait node: a watch trigger whose command succeeds once per new event starts one run per event. Use repeat for a pipeline that should loop. Triggers start at most parallel runs of a factory at once; what fires beyond that waits its turn. The file name is the factory's id; each run is kept in ~/.paw/factories/<id>/<execution-id>/.`;
 
 function factoryPrompt(S, text) {
@@ -349,7 +349,7 @@ function renderFactoryView(S, host) {
   $("task-split")?.classList.remove("hidden");
   applyBoardSizes(host);
   if (host.dataset.dragging) return;
-  // Typing in a form (Run in…, an answer, an approval): don't redraw it under the cursor.
+  // Typing an answer or an approval: don't redraw it under the cursor.
   if (host.querySelector("[data-fact-in]:focus")) return;
   if (!factoryState.loaded) {
     if (!factoryState.loading) loadFactories();
@@ -366,7 +366,6 @@ function renderFactoryView(S, host) {
     (going > 1 ? ` · ${going} runs going` : "");
   const buttons = [
     f?.factory && `<button class="tk-btn primary" data-fact="run" title="Start a run in ${esc(f.factory.folder?.trim() || "~")}${going ? " (alongside the runs going)" : ""}">Run now</button>`,
-    f?.factory && `<button class="tk-btn${S.factory.form ? " on" : ""}" data-fact="runin" title="Start a run in another project folder, or with a task">Run in…</button>`,
     run?.state === "running" && `<button class="tk-btn" data-fact="stop" title="Stop this run (${esc(shortRunId(run.id))})">Stop</button>`,
     triggerOf(S.factory.id) && `<button class="tk-btn" data-fact="pause" title="${triggerOf(S.factory.id).paused ? "Let the trigger start runs again" : "Stop the trigger from starting runs (Run now still works)"}">${triggerOf(S.factory.id).paused ? "Resume trigger" : "Pause trigger"}</button>`,
     f && `<button class="tk-btn" data-fact="edit" title="${esc(tildify(f.path))}">Edit file</button>`,
@@ -378,7 +377,7 @@ function renderFactoryView(S, host) {
       <span class="tk-title fa-title" title="${esc([`id: ${S.factory.id}`, f?.factory?.description].filter(Boolean).join("\n"))}"><span class="fa-ico" aria-hidden="true"></span>${esc(f?.factory?.name || S.factory.id)}</span>
       <span class="tk-state st-${esc(state)}">${esc(stateText)}</span>
       ${picker}<span class="grow"></span>${buttons}
-    </div>${S.factory.form && f?.factory ? runFormHtml(S, f.factory) : ""}${run?.note ? `<div class="tk-note">${esc(run.note)}</div>` : ""}`;
+    </div>${run?.note ? `<div class="tk-note">${esc(run.note)}</div>` : ""}`;
   let body;
   if (!f && !run) {
     body = `<div class="tk-empty">There's no factory “${esc(S.factory.id)}” in ${esc(tildify(factoryState.dir))} any more.</div>`;
@@ -765,22 +764,6 @@ async function factoryClick(S, e, P) {
   try {
     switch (b.dataset.fact) {
       case "run": await startFactoryRun(S, P, null, null); break;
-      case "runin": S.factory.form = !S.factory.form; withPane(P, renderTaskView); break;
-      case "formcancel": S.factory.form = false; withPane(P, renderTaskView); break;
-      case "choose": {
-        const dir = await invoke("skills_pick_folder", { title: "Run the factory in" });
-        if (dir) { S.factory.formFolder = tildify(dir); withPane(P, renderTaskView); }
-        break;
-      }
-      case "runstart": {
-        const folder = (S.factory.formFolder ?? "").trim();
-        const task = (S.factory.formTask ?? "").trim();
-        await startFactoryRun(S, P, folder || null, task || null);
-        S.factory.form = false;
-        S.factory.formTask = "";
-        withPane(P, renderTaskView);
-        break;
-      }
       case "rundir": if (run) await invoke("open_folder", { path: runDir(run) }); break;
       case "zoom-in": case "zoom-out": setZoom(S, withPane(P, () => $("task-view")), b.dataset.fact.slice(5)); break;
       case "zoom-100": setZoom(S, withPane(P, () => $("task-view")), 1); break;
@@ -831,11 +814,13 @@ async function factoryClick(S, e, P) {
   withPane(P, renderTaskView);
 }
 
-/** The run picker. */
-/** Start a run (in a project folder, with a task, or neither) and show it. */
+/** Start a run and show it, with its first node picked: its session is a
+ *  click away (Open session), for a factory whose first node talks with you. */
 async function startFactoryRun(S, P, folder, task) {
   const id = await invoke("factory_run", { factory: S.factory.id, payload: task, folder, model: defaultPawModel() || null });
   S.factory.run = id; // show this run, even with others going
+  const def = factoryById(S.factory.id)?.factory;
+  S.factory.selected = def?.nodes.find((n) => !(n.needs ?? []).length)?.id ?? def?.nodes[0]?.id ?? null;
   saveWorkspaceSoon();
   await loadFactories();
   if (!factoryState.runs.has(id)) {
@@ -845,24 +830,10 @@ async function startFactoryRun(S, P, folder, task) {
   withPane(P, renderTaskView);
 }
 
-/** Run in…: a project folder and a task for one run. */
-function runFormHtml(S, def) {
-  const folder = S.factory.formFolder ?? (def.folder?.trim() || "~");
-  return `<div class="fa-runform">
-    <label class="tk-lbl">Project folder</label>
-    <div class="fa-row"><input class="tk-in" data-fact-in="folder" value="${esc(folder)}" placeholder="~/Developer/my-app" spellcheck="false"><button class="tk-btn" data-fact="choose">Choose…</button></div>
-    <label class="tk-lbl">Task <span class="tk-dim">optional: every node gets it</span></label>
-    <textarea class="tk-in" data-fact-in="task" rows="2" placeholder="What this run is for, e.g. “Release 1.4 with the new importer”">${esc(S.factory.formTask ?? "")}</textarea>
-    <div class="fa-row"><span class="tk-dim">Runs of this factory go side by side, each with its own execution id.</span><span class="grow"></span><button class="tk-btn" data-fact="formcancel">Cancel</button><button class="tk-btn primary" data-fact="runstart">Start run</button></div>
-  </div>`;
-}
-
-/** Typing in the Run in… form (kept across redraws). */
+/** Typing an answer or an edit in the side panel (kept across redraws). */
 function factoryInput(S, e) {
   const k = e.target.dataset?.factIn;
-  if (k === "folder") S.factory.formFolder = e.target.value;
-  else if (k === "task") S.factory.formTask = e.target.value;
-  else if (k) (S.factory.drafts ??= {})[k] = e.target.value;
+  if (k) (S.factory.drafts ??= {})[k] = e.target.value;
 }
 
 function factoryChange(S, e, P) {

@@ -12,7 +12,7 @@ A factory opens in a tab that looks like a plan's:
 - **Zoom:** the bar in the graph's corner zooms out (−) and in (+), back to **100%** (click the percentage), or to **Fit**, which shows the whole graph and keeps fitting it as the view changes size. ⌘-scroll or a trackpad pinch zooms around the pointer, and ⌘+, ⌘− and ⌘0 zoom the graph while the pointer is over it. Each factory tab remembers its zoom.
 - **Click a node** to see its description, prompt, model, skills, tools, MCP servers and condition. During a run you also see its activity and result. What a node needs from you shows at the top of its side panel: a tool call to allow, a question to answer, or its answer to approve (see [Talking to the nodes](#talking-to-the-nodes)).
 - **Open session** opens a node's conversation in a tab: live while it works, and saved once it's done.
-- **Run now** starts a run in the background, in the factory's folder. **Run in…** starts one in another project folder, optionally with a task that every node gets. Runs go side by side, so you can start several. **Stop** stops the run you're looking at. **Retry** and **Skip** work on a failed node. The run picker lists the runs, going and earlier ones, with their folder and execution id.
+- **Run now** starts a run in the background, in the factory's folder, and picks its first node: when that node talks with you (it asks what to do, or which project), **Open session** opens the conversation. Runs go side by side, so you can start several. **Stop** stops the run you're looking at. **Retry** and **Skip** work on a failed node. The run picker lists the runs, going and earlier ones, with their folder and execution id.
 - **Edit file** opens the YAML file in your editor. You can also ask Paw Agent in the prompt box below to change the factory, for example "add a node that posts the note to Slack".
 
 ## The file
@@ -137,7 +137,9 @@ A node can need you in three ways. Each time it glows amber, shows **needs you**
 
 **Open session** on a node opens its conversation in a tab. While the node works you see it live, and when it asks you something you can answer there too. Once it's done the tab shows its saved conversation (every round). Closing the tab doesn't stop the node.
 
-Nodes are told to ask rather than wait for files. Each run also has its own `files/` folder for the plans and notes its nodes share (below), and for the project folder there's **Run in…**.
+Nodes are told to ask rather than wait for files. Each run also has its own `files/` folder for the plans and notes its nodes share (below).
+
+**Starting with a conversation.** A factory that needs something from you to start (which project, what to do) doesn't need a form: make its first node ask with `ask_user` until it knows. Press **Run now**, and the first node is picked; **Open session** opens the conversation with it, or answer its questions in the side panel. A factory that needs nothing from you just runs.
 
 ## Triggers
 
@@ -208,4 +210,4 @@ Every run (an execution) gets an **execution id**, a UUID, and a folder of its o
 
 `run.json` is written while the run goes, so a restart doesn't lose it. The factory view's side panel shows a run's execution id, and **Open its folder** opens it. The last 30 runs of each factory are kept.
 
-A factory can run several times at once, for different projects or tasks: each run works in its own folder (**Run in…**, or a webhook's `?folder=`) and gets its own task. Runs in different folders change files at the same time; in the same folder they take turns. Run now always starts a run. Triggers and `repeat` start at most `parallel` at once, and a repeating run starts again in its own folder.
+A factory can run several times at once, for different projects or tasks: each run works in its own folder (a webhook's `?folder=`, or Paw Agent's `run_factory`) and gets its own task. A factory can also ask in its first node which project a run is for, and pass the answer on to its other nodes through the run's `files/` folder. Runs in different folders change files at the same time; in the same folder they take turns. Run now always starts a run. Triggers and `repeat` start at most `parallel` at once, and a repeating run starts again in its own folder.

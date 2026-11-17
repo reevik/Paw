@@ -37,8 +37,19 @@ function initFactories() {
   listen("factory:run", ({ payload }) => {
     const run = payload?.run;
     if (!run?.id) return;
+    const before = factoryState.runs.get(run.id);
     factoryState.runs.set(run.id, run);
     renderFactoryTabs();
+    // The node tabs of this run: a new question shows in the conversation too.
+    for (const T of sessions.values()) {
+      if (T.nodeOf?.run !== run.id) continue;
+      const r = run.nodes.find((n) => n.id === T.nodeOf.node);
+      const was = before?.nodes.find((n) => n.id === T.nodeOf.node);
+      if (r?.question && r.question.request !== was?.question?.request) {
+        sys(T, `? ${r.question.question}${r.question.choices?.length ? `  (${r.question.choices.join(" · ")})` : ""}`);
+      }
+      refresh(T);
+    }
   });
   listen("factory:triggers", ({ payload }) => {
     if (!payload?.triggers) return;
@@ -262,6 +273,7 @@ nodes:             # required; ids use letters, digits, - and _
     tools: [read, search, list]  # only these built-in tools: read, edit, write, search, list, shell
     mcp: [server]              # only these MCP servers (default all that are on)
     timeout: 20m
+    approve: true              # when it's done, the run waits for the user to approve its answer (they may edit it) or reject it; rejecting stops the run, or with a loop goes back for another round with their reasons
     loop: { back_to: fix, until: { matches: "verdict: approved" }, max: 3 }   # send the run back to an earlier node (or this one) until this node's answer matches; the nodes on the way run again and back_to gets this answer as feedback; on_max: continue goes on after the last round instead of failing
   - id: settle                 # a wait node: no prompt; holds the run until the command succeeds
     needs: [triage]
@@ -269,6 +281,8 @@ nodes:             # required; ids use letters, digits, - and _
     every: 30s
     timeout: 10m
 Nodes that don't need each other run side by side. A node whose inputs were all skipped is skipped too.
+Asking the user: every agent node has an ask_user tool: it asks the user a question (with choices if useful) in Paw, notifies them, and waits for the answer. For a plan or result the user should sign off, use approve: true on that node (with loop: { back_to: <node>, max: N } and no until, a rejection sends it back with the user's reasons). Never make nodes wait for answer files, poll with sleep loops or call osascript for this.
+Files: each run has its own folder for files nodes share (each node is told where); keep plans and state there, not in a fixed folder, since runs can go in parallel. For the project folder, the user picks it with Run in… (or a webhook's ?folder=); don't ask for it with files.
 A run goes once through the nodes. To react to events (a new commit, an alert, a file), prefer a trigger over a long wait node: a watch trigger whose command succeeds once per new event starts one run per event. Use repeat for a pipeline that should loop. Triggers start at most parallel runs of a factory at once; what fires beyond that waits its turn. The file name is the factory's id; each run is kept in ~/.paw/factories/<id>/<execution-id>/.`;
 
 function factoryPrompt(S, text) {
@@ -314,7 +328,7 @@ function factoryPlan(S) {
     const lp = loopOf.get(n.id);
     const max = lp ? Math.min(Math.max(lp.loop.max ?? 3, 1), 20) : 0;
     return {
-      badge: lp && run ? `round ${Math.max(r?.round ?? 1, 1)}/${max}` : "",
+      badge: [lp && run && `round ${Math.max(r?.round ?? 1, 1)}/${max}`, r?.question && "asks you", r?.gate && "approve?"].filter(Boolean).join(" · "),
       id: n.id,
       title: n.title?.trim() || n.id,
       needs: n.needs ?? [],
@@ -335,8 +349,8 @@ function renderFactoryView(S, host) {
   $("task-split")?.classList.remove("hidden");
   applyBoardSizes(host);
   if (host.dataset.dragging) return;
-  // Typing in the Run in… form: don't redraw it under the cursor.
-  if (host.querySelector(".fa-runform input:focus, .fa-runform textarea:focus")) return;
+  // Typing in a form (Run in…, an answer, an approval): don't redraw it under the cursor.
+  if (host.querySelector("[data-fact-in]:focus")) return;
   if (!factoryState.loaded) {
     if (!factoryState.loading) loadFactories();
     host.innerHTML = `<div class="tk-empty"><span class="spin-ch">${SPIN[spinFrame % SPIN.length]}</span> Reading the factory…</div>`;
@@ -433,7 +447,7 @@ function drawFactoryEdges(g, S, plan = factoryPlan(S)) {
     const st = plan.run?.nodes.find((x) => x.id === n.id);
     const max = Math.min(Math.max(n.loop.max ?? 3, 1), 20);
     const live = (st?.round ?? 1) > 1 && plan.run?.state === "running" ? " live" : "";
-    const label = `until ${n.loop.until?.matches ?? `not ${n.loop.until?.not_matches ?? ""}`} · max ${max}${plan.run ? ` · round ${Math.max(st?.round ?? 1, 1)}` : ""}`;
+    const label = `${n.loop.until ? `until ${n.loop.until.matches ?? `not ${n.loop.until.not_matches ?? ""}`}` : "until you approve"} · max ${max}${plan.run ? ` · round ${Math.max(st?.round ?? 1, 1)}` : ""}`;
     svg.insertAdjacentHTML("beforeend", `<path class="fa-loop-line fa-back${live}" d="${d}"/><path class="fa-loop-head fa-back" d="M${x2 - 4},${bot(to) + 11} L${x2},${bot(to) + 4} L${x2 + 4},${bot(to) + 11}"/><text class="fa-loop-label" x="${(Math.min(xa, x2) + Math.max(xa, x2)) / 2}" y="${y - 4}" text-anchor="middle">${esc(label.length > 60 ? label.slice(0, 59) + "…" : label)}</text>`);
   }
   if (!repeats(plan.def)) return;
@@ -525,6 +539,9 @@ function factorySideHtml(S, plan, f) {
   const time = stepTime(st);
   parts.push(`<div class="tk-dim"><span class="tk-dot v-${esc(v)}"></span>${node.wait ? "wait node" : esc(stepModelName(st))} · ${esc(STEP_STATE_TEXT[v] ?? v)}${time && v !== "waiting" ? ` · ${esc(time)}` : ""}${!node.wait && node.edits === false ? " · reads only" : ""}</div>`);
   if (node.description?.trim()) parts.push(`<div class="fa-desc">${esc(node.description.trim())}</div>`);
+  // What it waits for from you comes first.
+  if (r?.question) parts.push(questionHtml(S, run, r));
+  if (r?.gate) parts.push(gateHtml(S, run, r, node));
   // How it's wired.
   const title = (id) => def.nodes.find((n) => n.id === id)?.title?.trim() || id;
   if (node.needs?.length) {
@@ -536,10 +553,12 @@ function factorySideHtml(S, plan, f) {
   }
   if (node.loop) {
     const max = Math.min(Math.max(node.loop.max ?? 3, 1), 20);
-    parts.push(`<label class="tk-lbl">Loops</label><div>Back to ${esc(title(node.loop.back_to))} until its answer ${esc(untilText(node.loop.until))}, at most ${max} round${max === 1 ? "" : "s"}${node.loop.on_max === "continue" ? "; then it goes on anyway" : "; then it fails"}.${r ? ` <span class="tk-dim">Round ${Math.max(r.round ?? 1, 1)} of ${max}.</span>` : ""}</div>`);
+    const until = node.loop.until ? `until its answer ${esc(untilText(node.loop.until))}` : "each time you reject its answer";
+    parts.push(`<label class="tk-lbl">Loops</label><div>Back to ${esc(title(node.loop.back_to))} ${until}, at most ${max} round${max === 1 ? "" : "s"}${node.loop.on_max === "continue" ? "; then it goes on anyway" : "; then it fails"}.${r ? ` <span class="tk-dim">Round ${Math.max(r.round ?? 1, 1)} of ${max}.</span>` : ""}</div>`);
   }
+  if (node.approve) parts.push(`<label class="tk-lbl">Approval</label><div>When it's done, its answer waits for you: approve it (you can edit it first) or reject it${node.loop ? " for another round" : ", which stops the run"}.</div>`);
   if (r?.feedback) {
-    parts.push(`<details class="tk-fold" open><summary>Sent back by ${esc(title(r.feedback.from))} in round ${r.feedback.round}</summary><div class="tk-md">${renderMarkdown(clipEnd(r.feedback.text, 4000))}</div></details>`);
+    parts.push(`<details class="tk-fold" open><summary>Sent back by ${esc(r.feedback.text.startsWith("Rejected by you") ? "you" : title(r.feedback.from))} in round ${r.feedback.round}</summary><div class="tk-md">${renderMarkdown(clipEnd(r.feedback.text, 4000))}</div></details>`);
   }
   if (node.wait) {
     parts.push(`<label class="tk-lbl">Waits until this succeeds</label><div class="tk-pre">${esc(node.wait)}</div><div class="tk-dim">Checks every ${esc(node.every || "30s")}${node.timeout ? `, gives up after ${esc(node.timeout)}` : ""}${r?.checks ? ` · checked ${r.checks} time${r.checks === 1 ? "" : "s"}` : ""}</div>`);
@@ -560,19 +579,43 @@ function factorySideHtml(S, plan, f) {
   }
   const btns = [
     run && ["failed", "stopped"].includes(v) && `<button class="tk-btn primary" data-fact="retry">Retry</button>`,
+    run && !node.wait && r?.started_at && `<button class="tk-btn" data-fact="session" title="Its conversation in a tab${r.state === "running" || r.state === "needs" ? ": live, and you can answer it there" : ""}">Open session</button>`,
     run && ["failed", "stopped", "waiting"].includes(v) && run.state !== "done" && `<button class="tk-btn" data-fact="skip">Skip</button>`,
   ].filter(Boolean);
   if (btns.length) parts.push(`<div class="tk-row">${btns.join("")}</div>`);
   if (r?.note) parts.push(`<div class="tk-dim">${esc(r.note)}</div>`);
   if (r?.error) parts.push(`<label class="tk-lbl">What went wrong</label><div class="tk-err">${esc(r.error)}</div>`);
-  if (r?.result && r.state === "done") parts.push(`<label class="tk-lbl">${node.wait ? "Output" : "Result"}</label><div class="tk-md">${renderMarkdown(clipEnd(r.result, 6000))}</div>`);
-  if (r?.log?.length && r.state !== "done") {
+  if (r?.result && r.state === "done" && !r.gate) parts.push(`<label class="tk-lbl">${node.wait ? "Output" : "Result"}</label><div class="tk-md">${renderMarkdown(clipEnd(r.result, 6000))}</div>`);
+  if (r?.log?.length && (r.state !== "done" || r.gate)) {
     parts.push(`<label class="tk-lbl">Activity</label><div class="fa-log">${r.log.slice(-40).map((l) =>
-      `<div class="fa-log-${esc(l.kind)}">${l.kind === "tool" ? "→ " : l.kind === "ask" ? "? " : ""}${esc(l.text)}</div>`).join("")}</div>`);
+      `<div class="fa-log-${esc(l.kind)}">${l.kind === "tool" ? "→ " : l.kind === "ask" ? "? " : l.kind === "you" ? "you: " : ""}${esc(l.text)}</div>`).join("")}</div>`);
   }
   if (r?.input_tokens || r?.output_tokens) parts.push(`<div class="tk-dim">↑ ${esc(fmtTokens(r.input_tokens ?? 0))} ↓ ${esc(fmtTokens(r.output_tokens ?? 0))} tokens</div>`);
   if (!node.wait) parts.push(`<details class="tk-fold"${run ? "" : " open"}><summary>Prompt</summary><div class="tk-pre">${esc(node.prompt ?? "")}</div></details>`);
   return parts.join("");
+}
+
+/** A draft you're typing for a node (an answer, an edit), kept across redraws. */
+const draftKey = (run, r, k) => `${run.id}/${r.id}/${k}`;
+const draftOf = (S, key, dflt = "") => (S.factory.drafts ??= {})[key] ?? dflt;
+
+/** A node's agent asks you something (ask_user). */
+function questionHtml(S, run, r) {
+  const q = r.question;
+  const choices = (q.choices ?? []).map((c, i) => `<button class="tk-btn" data-fact="answer" data-choice="${i}">${esc(c)}</button>`).join("");
+  return `<div class="fa-ask"><div><b>${esc(r.id)} asks you</b></div><div class="tk-md">${renderMarkdown(String(q.question ?? ""))}</div>
+    ${choices ? `<div class="tk-row fa-choices">${choices}</div>` : ""}
+    <textarea class="tk-in" rows="3" data-fact-in="${esc(draftKey(run, r, "answer"))}" placeholder="${choices ? "Or write your answer…" : "Your answer…"}">${esc(draftOf(S, draftKey(run, r, "answer")))}</textarea>
+    <div class="tk-row"><button class="tk-btn primary" data-fact="answer">Send answer</button><span class="tk-dim">or answer in its session</span></div></div>`;
+}
+
+/** A node's answer waiting for your approval (approve: true). */
+function gateHtml(S, run, r, node) {
+  return `<div class="fa-ask fa-gate"><div><b>Its answer waits for your approval</b></div>
+    <div class="tk-dim">Edit it if you like: the next nodes get it as you approve it.</div>
+    <textarea class="tk-in fa-gate-text" rows="10" data-fact-in="${esc(draftKey(run, r, "gate"))}">${esc(draftOf(S, draftKey(run, r, "gate"), r.result ?? ""))}</textarea>
+    <input class="tk-in" data-fact-in="${esc(draftKey(run, r, "why"))}" value="${esc(draftOf(S, draftKey(run, r, "why")))}" placeholder="Why you reject it (${node.loop ? "goes back as feedback" : "the run stops"})">
+    <div class="tk-row"><button class="tk-btn primary" data-fact="gate-approve">Approve</button><button class="tk-btn danger" data-fact="gate-reject">Reject${node.loop ? "" : " and stop"}</button></div></div>`;
 }
 
 function factorySummaryHtml(S, plan, f) {
@@ -640,6 +683,26 @@ async function factoryClick(S, e, P) {
         break;
       }
       case "rundir": if (run) await invoke("open_folder", { path: runDir(run) }); break;
+      case "answer": {
+        const r = run?.nodes.find((n) => n.id === S.factory.selected);
+        if (!r?.question) break;
+        const key = draftKey(run, r, "answer");
+        const text = b.dataset.choice != null ? r.question.choices?.[+b.dataset.choice] : draftOf(S, key).trim();
+        if (!text) { b.closest(".fa-ask")?.querySelector("textarea")?.focus(); break; }
+        await invoke("factory_answer", { run: run.id, node: r.id, text });
+        delete S.factory.drafts[key];
+        break;
+      }
+      case "gate-approve": case "gate-reject": {
+        const r = run?.nodes.find((n) => n.id === S.factory.selected);
+        if (!r?.gate) break;
+        const approve = b.dataset.fact === "gate-approve";
+        const text = approve ? draftOf(S, draftKey(run, r, "gate"), r.result ?? "") : draftOf(S, draftKey(run, r, "why"));
+        await invoke("factory_decide", { run: run.id, node: r.id, approve, text: text || null });
+        for (const k of ["gate", "why"]) delete S.factory.drafts?.[draftKey(run, r, k)];
+        break;
+      }
+      case "session": if (run && S.factory.selected) await openNodeSession(S, run.id, S.factory.selected); break;
       case "stop": if (run?.state === "running") await invoke("factory_stop", { run: run.id }); break;
       case "pause": {
         const t = triggerOf(S.factory.id);
@@ -697,6 +760,7 @@ function factoryInput(S, e) {
   const k = e.target.dataset?.factIn;
   if (k === "folder") S.factory.formFolder = e.target.value;
   else if (k === "task") S.factory.formTask = e.target.value;
+  else if (k) (S.factory.drafts ??= {})[k] = e.target.value;
 }
 
 function factoryChange(S, e, P) {
@@ -705,6 +769,83 @@ function factoryChange(S, e, P) {
   saveWorkspaceSoon();
   withPane(P, renderTaskView);
   return true;
+}
+
+// ---------- a node's session in a tab ----------
+/** Open (or go to) a node's conversation in a tab: live while it runs (you can
+ *  answer its questions there), its saved conversation once it's done. */
+async function openNodeSession(F, runId, nodeId) {
+  const open = [...sessions.values()].find((T) => T.nodeOf?.run === runId && T.nodeOf?.node === nodeId);
+  if (open) { select(open.sid); return open; }
+  const run = factoryState.runs.get(runId);
+  const node = run?.def.nodes.find((n) => n.id === nodeId);
+  if (!run || !node) return null;
+  const T = await newSession("paw", { cwd: runFolder(run), nodeOf: { factory: run.factory, run: runId, node: nodeId }, after: F });
+  if (!T) return null;
+  T.title = `${node.title?.trim() || nodeId} · ${run.def.name}`;
+  await loadNodeSession(T);
+  renderTabs();
+  return T;
+}
+
+/** Fill a node's tab: attach to its agent while it works, else read its saved conversation. */
+async function loadNodeSession(T) {
+  const { run: runId, node: nodeId } = T.nodeOf;
+  const run = factoryState.runs.get(runId) ?? await invoke("factory_get", { run: runId }).catch(() => null);
+  const r = run?.nodes.find((n) => n.id === nodeId);
+  const live = r && (r.state === "running" || r.state === "needs") && !r.gate && r.agent != null;
+  if (live) {
+    const att = await invoke("daemon_attach", { procs: [r.agent], shells: [], after: 0 }).catch(() => null);
+    if (att?.procs?.[String(r.agent)]) {
+      T.proc = r.agent;
+      T.info = att.procs[String(r.agent)].info;
+      procToSid.set(T.proc, T.sid);
+      T.busy = !!att.procs[String(r.agent)].working;
+      sys(T, `— ${nodeId} in run ${shortRunId(runId)}: live. When it asks you something, type your answer here. —`);
+      replayEvents(att.events ?? []);
+      if (r.question) sys(T, `? ${r.question.question}`);
+      refresh(T);
+      return;
+    }
+  }
+  const convs = await invoke("factory_conversation", { run: runId, node: nodeId }).catch((e) => { sys(T, `✗ ${e}`); return []; });
+  sys(T, `— ${nodeId} in run ${shortRunId(runId)}${r ? ` (${r.state === "needs" && r.gate ? "waiting for your approval" : r.state})` : ""}: its saved conversation; read only. —`);
+  convs.forEach((lines, i) => {
+    if (convs.length > 1) sys(T, `— round ${i + 1} —`);
+    for (const text of lines) {
+      // The prompts it got show as yours do; the rest as the agent's events.
+      const prompt = text.startsWith('{"type":"user"') && !text.includes('"tool_result"');
+      pushLine(T, { stream: prompt ? "stdin" : "stdout", text, ts: Date.now() });
+    }
+  });
+  if (!convs.length) sys(T, "Nothing saved for it yet.");
+  refresh(T);
+}
+
+/** The run's state of the node a tab shows. */
+const nodeRunOf = (T) => factoryState.runs.get(T.nodeOf.run)?.nodes.find((n) => n.id === T.nodeOf.node) ?? null;
+
+function nodePlaceholder(T) {
+  const r = nodeRunOf(T);
+  if (r?.question) return "Answer its question… (⏎ sends it to the node)";
+  if (r?.gate) return "Its answer waits for your approval in the factory's view";
+  if (r?.state === "running" || r?.state === "needs") return "It's working: when it asks you something, answer here";
+  return "Read only: this node has finished";
+}
+
+/** A prompt typed in a node's tab: the answer to its question, if it asks one. */
+async function nodeSessionSend(T, text) {
+  const run = factoryState.runs.get(T.nodeOf.run);
+  const r = run?.nodes.find((n) => n.id === T.nodeOf.node);
+  if (r?.question) {
+    pushLine(T, { stream: "stdin", text, ts: Date.now() });
+    try { await invoke("factory_answer", { run: run.id, node: r.id, text }); }
+    catch (e) { sys(T, `✗ ${e}`); }
+    return;
+  }
+  sys(T, r && (r.state === "running" || r.state === "needs")
+    ? "It's working: you can write here when it asks you something (it shows in the factory's view too)."
+    : "This node has finished: its session is read only. Retry it in the factory's view to run it again.");
 }
 
 // ---------- /factories ----------

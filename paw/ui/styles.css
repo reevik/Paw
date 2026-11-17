@@ -1245,6 +1245,12 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
   background: color-mix(in srgb, var(--t-yellow) 9%, transparent);
 }
 .fa-ask .tk-row { margin-top: 8px; }
+.fa-ask textarea, .fa-ask input { width: 100%; margin-top: 7px; box-sizing: border-box; }
+.fa-ask textarea { resize: vertical; min-height: 44px; }
+.fa-ask .fa-gate-text { font: 12px/1.45 var(--mono); min-height: 120px; }
+.fa-ask .tk-md { margin-top: 4px; }
+.fa-choices { flex-wrap: wrap; gap: 6px; }
+.fa-log-you { color: var(--accent); }
 .fa-log { font: 11.5px/1.5 var(--t-font, var(--mono)); max-height: 220px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
 .fa-log > div { padding: 1px 0; }
 .fa-log-tool { color: var(--t-dim); }

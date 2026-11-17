@@ -9,7 +9,8 @@ Factory files live in `~/.paw/factories/<id>.yaml`: the file name is the factory
 A factory opens in a tab that looks like a task:
 
 - **The graph:** nodes in the order they run. A dashed line is a branch: the node after it runs only if the condition holds.
-- **Click a node** to see its description, prompt, model, skills, tools, MCP servers and condition. During a run you also see its activity and result. When the node waits for your approval, the side panel shows **Allow**, **Always allow** and **Deny**.
+- **Click a node** to see its description, prompt, model, skills, tools, MCP servers and condition. During a run you also see its activity and result. What a node needs from you shows at the top of its side panel: a tool call to allow, a question to answer, or its answer to approve (see [Talking to the nodes](#talking-to-the-nodes)).
+- **Open session** opens a node's conversation in a tab: live while it works, and saved once it's done.
 - **Run now** starts a run in the background, in the factory's folder. **Run in…** starts one in another project folder, optionally with a task that every node gets. Runs go side by side, so you can start several. **Stop** stops the run you're looking at. **Retry** and **Skip** work on a failed node. The run picker lists the runs, going and earlier ones, with their folder and execution id.
 - **Edit file** opens the YAML file in your editor. You can also ask Paw Agent in the prompt box below to change the factory, for example "add a node that posts the note to Slack".
 
@@ -79,6 +80,7 @@ nodes:
 | `mcp` | Only these MCP servers, by name. |
 | `timeout` | Give up after this long (`30s`, `20m`, `1h`). |
 | `loop` | Send the run back to an earlier node until this node's answer meets `until`, for at most `max` rounds. |
+| `approve` | `true`: when it's done, the run waits for you to approve its answer (you can edit it) or reject it. |
 
 ### Loops
 
@@ -105,6 +107,26 @@ When the answer doesn't meet `until`, `back_to`, the looping node and every node
 ### Approvals
 
 Nodes run without a window, so pick approval levels that let them work on their own. `auto` (the default for nodes that change files) allows edits inside the folder and safe commands. When a node does need you, it shows **needs you** and a badge in the sidebar. Its approval waits in the factory view until you answer it.
+
+## Talking to the nodes
+
+A node can need you in three ways. Each time it glows amber, shows **needs you** and a badge in the sidebar, and you get a notification, even with the window closed.
+
+- **A question.** Every agent node has an `ask_user` tool: when it needs a decision or a detail only you have, it asks, with choices when there are a few. The question shows in the node's side panel with a box for your answer (or click a choice). Its agent waits for it, then goes on in the same conversation.
+- **Its answer, to approve.** A node with `approve: true` holds the run when it's done. Its answer shows in an editable box: **Approve** passes it on as you left it, **Reject** (with a reason) stops the run, or with a loop sends the node back for another round with your reason as feedback.
+- **A tool call, to allow,** when its approval level asks (above).
+
+```yaml
+  - id: plan
+    prompt: Write an implementation plan for the task.
+    edits: false
+    approve: true                      # you approve the plan, or reject it with your reasons
+    loop: { back_to: plan, max: 3 }    # a rejection sends it back (no until: you decide each round)
+```
+
+**Open session** on a node opens its conversation in a tab. While the node works you see it live, and when it asks you something you can answer there too. Once it's done the tab shows its saved conversation (every round). Closing the tab doesn't stop the node.
+
+Nodes are told to ask rather than wait for files. Each run also has its own `files/` folder for the plans and notes its nodes share (below), and for the project folder there's **Run in…**.
 
 ## Triggers
 
@@ -169,6 +191,7 @@ Every run (an execution) gets an **execution id**, a UUID, and a folder of its o
 ```
 ~/.paw/factories/<factory-id>/<execution-id>/
   run.json              # the run: its copy of the factory, each node's state, answers and activity
+  files/                # files the run's nodes share: plans, notes, state (each node is told where)
   nodes/<node-id>/      # each agent node's conversations, scripts and files
 ```
 

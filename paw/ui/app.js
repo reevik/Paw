@@ -26,6 +26,7 @@ const DAEMON_COMMANDS = new Set([
   "spawn_agent", "send_input", "close_input", "stop_agent", "remove_agent", "list_agents", "agent_output",
   "shell_open", "shell_run", "shell_write", "shell_interrupt", "shell_close", "shell_write_raw", "shell_resize", "shell_raw_exit",
   "paw_agent_start", "paw_agent_send", "paw_agent_note", "paw_agent_cancel", "paw_agent_close", "paw_agent_approve",
+  "factory_answer", "factory_decide", "factory_conversation",
   "tray_update", "daemon_attach",
   "factory_list", "factory_get", "factory_run", "factory_stop", "factory_retry", "factory_skip", "factory_new", "factory_pause",
 ]);
@@ -225,6 +226,8 @@ const agentBusy = (S) => isRunning(S) && (S.mode === "claude" ? S.busy : S.mode 
 const isBusy = (S) => agentBusy(S) || !!S.shellBusy;
 
 function sessionState(S) {
+  // A factory node's tab: how its node is doing (it has no agent of its own).
+  if (S.nodeOf) { const r = nodeRunOf(S); return r?.question || r?.gate ? "ready" : r?.state === "running" ? "running" : "idle"; }
   if (isBusy(S)) return "running";
   if (S.mode === "oneshot") return S.info && S.info.status === "failed" ? "failed" : "idle";
   if (!S.info) return "starting";
@@ -335,6 +338,7 @@ async function newSession(agentId, opts = {}) {
   if (opts.task) S.task = opts.task;
   if (opts.factory) S.factory = opts.factory;
   if (opts.stepOf) S.stepOf = opts.stepOf;
+  if (opts.nodeOf) S.nodeOf = opts.nodeOf; // a factory node's session: its agent is the node's
   sessions.set(S.sid, S);
   openTabs.splice(opts.after ? tabInsertIndex(opts.after) : openTabs.length, 0, S.sid);
   // A task and its steps are a group; a step joins its task's.
@@ -343,11 +347,12 @@ async function newSession(agentId, opts = {}) {
   banner(S);
   if (opts.background) { renderTabs(); saveWorkspaceSoon(); } else select(S.sid);
   openShell(S);
-  if (S.mode !== "oneshot") await startProc(S);
+  if (S.mode !== "oneshot" && !S.nodeOf) await startProc(S);
   return S;
 }
 
 function banner(S) {
+  if (S.nodeOf) return;
   if (S.task) return taskBanner(S);
   if (S.factory) return factoryBanner(S);
   const d = detections[S.agent.id];
@@ -363,6 +368,7 @@ function banner(S) {
 const shq = (s) => (/^[\w\-./:=@+,]+$/.test(s) ? s : "'" + s.replace(/'/g, `'\\''`) + "'");
 
 async function startProc(S, prompt, { resume = false } = {}) {
+  if (S.nodeOf) { refresh(S); return; } // a factory node's tab runs no agent of its own
   if (isPaw(S.agent)) return pawStart(S, { resume });
   // Deprecated: CLI agents (CLI_AGENTS). Tabs only run Paw Agent while they're off.
   if (!CLI_AGENTS) { sys(S, "✗ CLI agents are turned off in this build."); refresh(S); return; }
@@ -504,7 +510,8 @@ async function closeSession(sid) {
   keepClosedSession(S);
   dropWaiting(S);
   if (S.working) { S.working = false; setTimeout(pumpAgents, 0); }
-  if (S.proc != null) invoke(isPaw(S.agent) ? "paw_agent_close" : "remove_agent", { id: S.proc }).catch(() => {});
+  // A factory node's agent belongs to its run: closing the tab leaves it be.
+  if (S.proc != null && !S.nodeOf) invoke(isPaw(S.agent) ? "paw_agent_close" : "remove_agent", { id: S.proc }).catch(() => {});
   disposeTerm(S);
   if (S.shell != null) { invoke("shell_close", { id: S.shell }); shellToSid.delete(S.shell); }
   const P = paneOf(S);
@@ -609,6 +616,7 @@ function dropWaiting(S) {
 }
 
 async function sendToAgent(S, text, atts = [], opts = {}) {
+  if (S.nodeOf) return nodeSessionSend(S, text);
   // Too many agents working: this prompt waits its turn.
   if (!opts.slot && !S.working && atCapacity()) {
     waitingPrompts.push({ S, text, atts, opts, since: Date.now() });
@@ -1997,9 +2005,10 @@ function tabSnapshot(S) {
       task: taskSnapshot(S) ?? undefined,
       factory: S.factory ?? undefined,
       stepOf: S.stepOf ?? undefined,
+      nodeOf: S.nodeOf ?? undefined,
       // Its processes in the daemon: a window that starts again re-attaches.
       live: daemon.instance && (S.proc != null || S.shell != null) ? {
-        instance: daemon.instance, proc: S.proc, shell: S.shell, dseq: S.dseq ?? 0,
+        instance: daemon.instance, proc: S.nodeOf ? null : S.proc, shell: S.shell, dseq: S.dseq ?? 0,
         busy: !!S.busy, busySince: S.busySince ?? null, working: !!S.working, turnStarted: S.turnStarted ?? null,
         shellBusy: !!S.shellBusy, shellCmd: S.shellCmd ?? null, shellSince: S.shellSince ?? null,
       } : undefined,
@@ -2200,6 +2209,7 @@ async function restoreTab(t, note = null) {
   if (t.task) S.task = restoreTask(t.task, { live: !!attach });
   if (t.factory) S.factory = t.factory;
   if (t.stepOf) S.stepOf = t.stepOf;
+  if (t.nodeOf) S.nodeOf = t.nodeOf;
   if (t.group) S.group = t.group;
   sessions.set(S.sid, S);
   openTabs.push(S.sid);
@@ -2221,6 +2231,13 @@ async function restoreTab(t, note = null) {
     S.shellBusy = live.shellBusy;
     S.shellCmd = live.shellCmd;
     S.shellSince = live.shellSince;
+  }
+  // A factory node's tab: its conversation again (live, or as saved).
+  if (S.nodeOf) {
+    S.lines = [];
+    if (S.shell == null) openShell(S);
+    loadNodeSession(S);
+    return S;
   }
   if (procAlive || S.shell != null) {
     dropRestoreNotes(S);
@@ -3299,7 +3316,7 @@ function renderHeader() {
     stdin: isRunning(S) ? "Write to stdin…" : "Process ended — ⏎ restarts it and sends",
     oneshot: isRunning(S) ? "Running… (⌘. to stop)" : `Prompt for ${S.agent.name}…`,
   }[S.mode];
-  $("input").placeholder = S.shellBusy ? "Input for the running command…  (Ctrl-C interrupts)" : S.task ? taskPlaceholder(S) : ph;
+  $("input").placeholder = S.shellBusy ? "Input for the running command…  (Ctrl-C interrupts)" : S.task ? taskPlaceholder(S) : S.nodeOf ? nodePlaceholder(S) : ph;
   updateGlyph();
   $("sl-left").textContent = [S.agent.name, S.model || "default model"].join("  ·  ") + "  ·";
   $("sl-path-text").textContent = shortPath(S.cwd);
@@ -4500,6 +4517,7 @@ listen("agent:status", ({ payload: pinfo }) => {
   const S = sessions.get(procToSid.get(pinfo.id));
   if (!S || S.proc !== pinfo.id) return; // ignore processes this tab has moved on from
   S.info = pinfo;
+  if (S.nodeOf && pinfo.status !== "running") sys(S, "— the node's session ended; this tab is read only now —");
   let ended = null; // a turn that ended with the process, for tasks
   if (pinfo.status !== "running") {
     const wasBusy = S.busy;

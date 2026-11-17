@@ -66,6 +66,7 @@ fn config(dir: &Path, approval: &str, conversation: &str) -> SessionConfig {
         mcp: Default::default(),
         scripts: None,
         tool_names: None,
+        ask: false,
     }
 }
 

@@ -183,6 +183,11 @@ pub struct Node {
     /// condition, for at most `max` rounds.
     #[serde(default, rename = "loop")]
     pub repeat_until: Option<Loop>,
+    /// When it's done, the run waits for you to approve its answer (you may
+    /// edit it first) or reject it (with a loop: another round with your
+    /// feedback; without one, the run stops).
+    #[serde(default)]
+    pub approve: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
@@ -191,7 +196,9 @@ pub struct Loop {
     /// The node the run goes back to (this one, or one it needs).
     pub back_to: String,
     /// The loop ends when this node's answer matches (or doesn't match) this.
-    pub until: Until,
+    /// A node with `approve` may leave it out: then you decide each round.
+    #[serde(default)]
+    pub until: Option<Until>,
     /// At most this many rounds, the first one included (default 3).
     #[serde(default)]
     pub max: Option<u32>,
@@ -215,9 +222,10 @@ impl Loop {
     pub fn max_rounds(&self) -> u32 {
         self.max.unwrap_or(3).clamp(1, LOOP_MAX)
     }
-    /// Does the answer end the loop?
+    /// Does the answer end the loop? (Without `until`: yes; you decide.)
     pub fn done(&self, answer: &str) -> bool {
-        when_holds(&When { from: String::new(), matches: self.until.matches.clone(), not_matches: self.until.not_matches.clone() }, answer)
+        let Some(u) = &self.until else { return true };
+        when_holds(&When { from: String::new(), matches: u.matches.clone(), not_matches: u.not_matches.clone() }, answer)
     }
 }
 
@@ -395,6 +403,9 @@ pub fn check(f: &Factory) -> Result<(), String> {
             (None, true) => return Err(at("it needs a prompt (or a wait command).".into())),
             _ => {}
         }
+        if n.approve && n.wait.is_some() {
+            return Err(at("approve is for agent nodes, not wait nodes.".into()));
+        }
         if n.join == Join::Any && n.needs.len() < 2 {
             return Err(at("join: any needs at least two nodes in needs.".into()));
         }
@@ -416,10 +427,14 @@ pub fn check(f: &Factory) -> Result<(), String> {
             if l.back_to != n.id && !ancestors(&f.nodes, &n.id).contains(&l.back_to) {
                 return Err(at(format!("its loop goes back to “{}”, which has to be this node or one it needs (directly or not).", l.back_to)));
             }
-            if l.until.matches.is_none() && l.until.not_matches.is_none() {
-                return Err(at("its loop needs until: { matches: … } or { not_matches: … }.".into()));
+            match &l.until {
+                None if !n.approve => return Err(at("its loop needs until: { matches: … } or { not_matches: … } (or approve: true, so you decide each round).".into())),
+                Some(u) if u.matches.is_none() && u.not_matches.is_none() => {
+                    return Err(at("its loop's until needs matches or not_matches.".into()));
+                }
+                _ => {}
             }
-            for p in [&l.until.matches, &l.until.not_matches].into_iter().flatten() {
+            for p in l.until.iter().flat_map(|u| [&u.matches, &u.not_matches]).flatten() {
                 regex(p).map_err(|e| at(format!("its loop's “{p}” isn't a valid pattern ({e}).")))?;
             }
             if l.max.is_some_and(|m| m == 0 || m > LOOP_MAX) {
@@ -735,7 +750,11 @@ nodes:
         assert_eq!(loop_region(&f.nodes, "fix", "review"), ["fix", "test", "review"], "plan isn't on the way back");
         assert_eq!(loop_region(&f.nodes, "review", "review"), ["review"]);
         assert!(parse(&base("loop: { back_to: ship, until: { matches: x } }")).unwrap_err().contains("has to be this node or one it needs"));
-        assert!(parse(&base("loop: { back_to: fix, until: {} }")).unwrap_err().contains("needs until"));
+        assert!(parse(&base("loop: { back_to: fix, until: {} }")).unwrap_err().contains("until needs matches"));
+        assert!(parse(&base("loop: { back_to: fix }")).unwrap_err().contains("or approve: true"));
+        let f = parse(&base("approve: true, loop: { back_to: fix }")).unwrap();
+        assert!(f.nodes[3].repeat_until.as_ref().unwrap().done("anything"), "you decide each round");
+        assert!(parse("name: x\nnodes:\n  - { id: w, wait: 'true', approve: true }\n").unwrap_err().contains("approve is for agent nodes"));
         assert!(parse(&base("loop: { back_to: fix, until: { matches: x }, max: 0 }")).unwrap_err().contains("1 to 20"));
         assert!(parse(&base("loop: { back_to: fix, until: { matches: x }, on_max: retry }")).unwrap_err().contains("fail or continue"));
     }

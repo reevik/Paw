@@ -12,8 +12,9 @@
 //! Claude Code stream-json event (`system` init, `assistant` text, thinking
 //! and tool_use, `user` tool_result, `result`), so the transcript renders,
 //! groups and folds them like Claude Code's. Two events are its own:
-//! `paw:delta` (the text the model is writing, as it streams) and
-//! `paw:approval` (a tool call that waits for the user).
+//! `paw:delta` (the text the model is writing, as it streams),
+//! `paw:approval` (a tool call that waits for the user) and `paw:question`
+//! (a factory node's `ask_user`: a question that waits for the user's answer).
 //!
 //! Tool calls go through a hook that applies the tab's approval level:
 //! reading is always allowed; `plan` refuses writes and commands; `edits`
@@ -188,6 +189,20 @@ pub struct ApprovalRequest {
     pub ask: Ask,
 }
 
+/// A question a factory node asks the user (its `ask_user` tool).
+#[derive(Debug, Clone, Serialize)]
+pub struct QuestionRequest {
+    /// The session (the node's agent).
+    pub id: u32,
+    pub request: u64,
+    pub question: String,
+    /// Answers to pick from, if the agent offered some (the user may still write another).
+    pub choices: Vec<String>,
+}
+
+/// The tool a factory node asks the user with.
+pub const ASK_TOOL: &str = "ask_user";
+
 /// Where a session's events go: the webview, or a test.
 pub trait Sink: Send + Sync + 'static {
     /// An `agent:output` line ("stdout" lines carry stream-json events).
@@ -196,6 +211,8 @@ pub trait Sink: Send + Sync + 'static {
     fn delta(&self, id: u32, text: &str);
     fn approval(&self, req: &ApprovalRequest);
     fn status(&self, info: &AgentInfo);
+    /// A question for the user (factory nodes only).
+    fn question(&self, _q: &QuestionRequest) {}
 }
 
 pub struct TauriSink {
@@ -225,6 +242,10 @@ impl Sink for TauriSink {
     fn status(&self, info: &AgentInfo) {
         use tauri::Emitter;
         let _ = self.app.emit("agent:status", info);
+    }
+    fn question(&self, q: &QuestionRequest) {
+        use tauri::Emitter;
+        let _ = self.app.emit("paw:question", q);
     }
 }
 
@@ -328,6 +349,8 @@ pub struct SessionConfig {
     pub scripts: Option<PathBuf>,
     /// Only these built-in tools (a factory node can narrow them); None: all.
     pub tool_names: Option<Vec<String>>,
+    /// It may ask the user (`ask_user`): a factory node, which has no tab to talk in.
+    pub ask: bool,
 }
 
 impl SessionConfig {
@@ -349,6 +372,8 @@ pub struct Session {
     /// Terminal output shared since the last prompt; it goes in front of the next one.
     notes: Mutex<Vec<String>>,
     pending: Mutex<HashMap<u64, oneshot::Sender<bool>>>,
+    /// Questions (`ask_user`) waiting for the user's answer.
+    questions: Mutex<HashMap<u64, oneshot::Sender<String>>>,
     /// Present while a prompt runs; sending (or dropping) it stops the turn.
     cancel: Mutex<Option<oneshot::Sender<()>>>,
     seen: Seen,
@@ -455,6 +480,16 @@ impl Session {
         rx.await.unwrap_or(false)
     }
 
+    /// Ask the user a question (`ask_user`); their answer, or None when the
+    /// turn ended first.
+    async fn ask_user(&self, question: String, choices: Vec<String>) -> Option<String> {
+        let request = NEXT_REQUEST.fetch_add(1, Ordering::Relaxed);
+        let (tx, rx) = oneshot::channel();
+        self.questions.lock().unwrap().insert(request, tx);
+        self.sink.question(&QuestionRequest { id: self.id, request, question, choices });
+        rx.await.ok()
+    }
+
     /// Auto mode's reviewer: one short call to the tab's model about an
     /// action the rules couldn't decide. `None` allows it; otherwise the
     /// reason to ask the user.
@@ -534,13 +569,57 @@ impl Session {
                 b = b.tool(Shell { workspace: ws, launcher, live: None, spill: None, cut: Some(OutputLimit::default()), confine: false });
             }
             b = b.add_hook(GateHook { sess: self.clone() });
-            let mcp: Vec<rig_core::tool::DynamicTool> =
+            let mut mcp: Vec<rig_core::tool::DynamicTool> =
                 self.cfg.mcp.tools.iter().cloned().filter_map(|t| rig_core::tool::DynamicTool::try_from(t).ok()).collect();
+            if self.cfg.ask {
+                mcp.push(self.ask_tool());
+            }
             if !mcp.is_empty() {
                 b = b.dynamic_tools(mcp);
             }
         }
         b.build()
+    }
+}
+
+impl Session {
+    /// `ask_user`: a question that waits for the user's answer.
+    fn ask_tool(self: &Arc<Self>) -> rig_core::tool::DynamicTool {
+        use rig_core::tool::{DynamicTool, ToolExecutionError, ToolOutput};
+        let me = self.clone();
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "question": { "type": "string", "description": "The question, complete enough to answer without other context: what you need, and why." },
+                "choices": { "type": "array", "items": { "type": "string" }, "description": "Answers to pick from, when there are a few clear options (the user may still write another)." }
+            },
+            "required": ["question"]
+        });
+        DynamicTool::new_with_context(
+            rig_core::message::ToolName::new(ASK_TOOL).expect("a name"),
+            "Ask the user a question and wait for the answer. Use it when you need a decision, an approval or information only the user has \
+             (which project, whether a plan is right, which review comments to act on). Don't guess, and don't wait for files or poll: ask. \
+             The answer comes back as this tool's result; it may take a while.",
+            schema,
+            move |_ctx, args| {
+                let me = me.clone();
+                Box::pin(async move {
+                    let question = args.get("question").and_then(Value::as_str).map(str::trim).unwrap_or("").to_string();
+                    if question.is_empty() {
+                        return Err(ToolExecutionError::invalid_args("Give the question."));
+                    }
+                    let choices: Vec<String> = args
+                        .get("choices")
+                        .and_then(Value::as_array)
+                        .map(|a| a.iter().filter_map(Value::as_str).map(|c| c.trim().to_string()).filter(|c| !c.is_empty()).take(8).collect())
+                        .unwrap_or_default();
+                    match me.ask_user(question, choices).await {
+                        Some(answer) => Ok(ToolOutput::text(format!("The user answered:\n{answer}"))),
+                        None => Err(ToolExecutionError::cancelled("The question wasn't answered: the request ended first.")),
+                    }
+                })
+            },
+        )
     }
 }
 
@@ -557,6 +636,10 @@ impl AgentHook for GateHook {
 
     async fn on_dispatch(&self, _ctx: &HookContext, ev: DispatchEvent<'_>) -> DispatchAction {
         let Some(tool) = ev.tool_name().map(str::to_string) else { return DispatchAction::proceed() };
+        // Asking the user changes nothing.
+        if tool == ASK_TOOL && self.sess.cfg.ask {
+            return DispatchAction::proceed();
+        }
         let args: Value = ev.tool_args().and_then(|a| serde_json::from_str(a).ok()).unwrap_or(Value::Null);
         // MCP tools their server marks read-only run like `read`.
         if self.sess.cfg.mcp.read_only.contains(&tool) {
@@ -712,8 +795,9 @@ async fn run_turn(sess: Arc<Session>, prompt: String, mut cancel: oneshot::Recei
     };
     // Dropping the stream ends whatever it was doing (a request, a command).
     drop(stream);
-    // Approvals still open belong to this turn.
+    // Approvals and questions still open belong to this turn.
     sess.pending.lock().unwrap().clear();
+    sess.questions.lock().unwrap().clear();
     if !matches!(outcome, Outcome::Done(_)) {
         st.flush_text(&sess);
     }
@@ -841,6 +925,7 @@ impl PawAgents {
             history: Mutex::new(history),
             notes: Mutex::new(notes),
             pending: Mutex::default(),
+            questions: Mutex::default(),
             cancel: Mutex::default(),
             seen: Seen::default(),
             sink: sink.clone(),
@@ -929,6 +1014,13 @@ impl PawAgents {
         }
     }
 
+    /// The user's answer to a question (`ask_user`).
+    pub fn answer(&self, id: u32, request: u64, text: String) -> Result<(), String> {
+        let sess = self.get(id).ok_or("This Paw Agent session has ended")?;
+        let tx = sess.questions.lock().unwrap().remove(&request).ok_or("That question is no longer waiting")?;
+        tx.send(text).map_err(|_| "That question is no longer waiting".to_string())
+    }
+
     /// The user's decision on an approval card: "once", "always" or "deny".
     pub fn approve(&self, id: u32, request: u64, decision: &str, rule: Option<String>) -> Result<(), String> {
         let sess = self.get(id).ok_or("This Paw Agent session has ended")?;
@@ -948,6 +1040,41 @@ impl PawAgents {
         };
         tx.send(allow).map_err(|_| "That request is no longer waiting".to_string())
     }
+}
+
+/// A saved conversation as the `agent:output` lines a tab shows (the same
+/// stream-json events a live session sends), for reading a finished one.
+pub fn conversation_lines(path: &Path) -> Vec<String> {
+    let (messages, _) = load_history(path);
+    let mut out = vec![];
+    for m in messages {
+        match m {
+            Message::User { content } => {
+                for c in content {
+                    match c {
+                        rig_core::message::UserContent::Text(t) if !t.text.trim().is_empty() => out.push(event(json!({
+                            "type": "user",
+                            "message": { "role": "user", "content": [{ "type": "text", "text": t.text }] }
+                        }))),
+                        rig_core::message::UserContent::ToolResult(r) => out.push(tool_result_event(&r.call.to_string(), &tool_result_text(&r.content), r.is_error)),
+                        _ => {}
+                    }
+                }
+            }
+            Message::Assistant(a) => {
+                for c in a.content {
+                    match c {
+                        AssistantContent::Text(t) if !t.text.trim().is_empty() => out.push(text_event(t.text.trim())),
+                        AssistantContent::Reasoning(r) if !r.text.trim().is_empty() => out.push(thinking_event(&r.text)),
+                        AssistantContent::ToolCall(call) => out.push(tool_use_event(&call.id.to_string(), &call.function.name, Value::Object(call.function.arguments.clone()))),
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 /// A provider's name; an added provider's id stands for its name.
@@ -1254,6 +1381,9 @@ pub struct StartOpts {
     /// `~/.paw/session/<id>` (a factory node's, inside its run's folder).
     #[serde(skip)]
     pub dir: Option<PathBuf>,
+    /// It may ask the user (`ask_user`): a factory node.
+    #[serde(skip)]
+    pub ask: bool,
 }
 
 fn valid_conversation_id(s: &str) -> bool {
@@ -1370,6 +1500,7 @@ pub async fn paw_agent_start(
         mcp,
         scripts,
         tool_names: opts.tools,
+        ask: opts.ask,
     };
     let id = procs.alloc_id();
     let sink: Arc<dyn Sink> = Arc::new(TauriSink { app, seq: Mutex::default() });

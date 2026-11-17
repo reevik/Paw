@@ -28,6 +28,7 @@ const INPUT_BUDGET: usize = 8_000;
 const RUNS_KEPT: usize = 30; // per factory
 const CHECK_LIMIT: Duration = Duration::from_secs(120); // one wait-node check
 const INTERRUPTED: &str = "Paw stopped while this ran.";
+const REJECTED: &str = "Rejected by you";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogLine {
@@ -78,6 +79,12 @@ pub struct NodeRun {
     /// What sent it back (the looping node's answer), and its own answer then.
     #[serde(default)]
     pub feedback: Option<Feedback>,
+    /// A question its agent asked you (`ask_user`: request, question, choices).
+    #[serde(default)]
+    pub question: Option<Value>,
+    /// Done, and its answer waits for your approval (`approve: true`).
+    #[serde(default)]
+    pub gate: bool,
     #[serde(skip)]
     last_answer: String,
 }
@@ -210,6 +217,11 @@ fn active(state: &str) -> bool {
     state == "running" || state == "needs"
 }
 
+/// An agent at work: running or asking, not a finished node waiting for approval.
+fn working(n: &NodeRun) -> bool {
+    active(&n.state) && !n.gate
+}
+
 /// What `pump` decided to start (started outside the lock).
 enum Start {
     Agent { run: String, node: String, opts: Box<StartOpts>, prompt: String, timeout: Option<Duration> },
@@ -333,7 +345,55 @@ impl Runner {
                 }
             }
         });
+        let r = runner.clone();
+        app.listen_any("paw:question", move |e| {
+            if let Ok(v) = serde_json::from_str::<Value>(e.payload()) {
+                if let Some(id) = v["id"].as_u64() {
+                    r.on_question(id as u32, v);
+                }
+            }
+        });
         runner
+    }
+
+    /// Your answer to a node's question: it goes back to its agent, which goes on.
+    pub fn answer(self: &Arc<Self>, run: &str, node: &str, text: &str) -> Result<(), String> {
+        let text = text.trim();
+        if text.is_empty() {
+            return Err("Write an answer.".into());
+        }
+        let (agent, request) = {
+            let st = self.state.lock().unwrap();
+            let n = st.runs.iter().find(|r| r.id == run).and_then(|r| r.node(node)).ok_or("No such node.")?;
+            let q = n.question.as_ref().ok_or("That node isn't asking anything now.")?;
+            (n.agent.ok_or("That node's agent has ended.")?, q["request"].as_u64().ok_or("That question can't be answered.")?)
+        };
+        self.app.state::<PawAgents>().answer(agent, request, text.to_string())?;
+        {
+            let mut st = self.state.lock().unwrap();
+            if let Some(n) = st.runs.iter_mut().find(|r| r.id == run).and_then(|r| r.node_mut(node)) {
+                n.question = None;
+                if n.state == "needs" && n.approval.is_none() {
+                    n.state = "running".into();
+                }
+                log(n, "you", &clip(text, LOG_CHARS));
+            }
+        }
+        self.changed(run, true);
+        Ok(())
+    }
+
+    /// Your decision on a node's answer (`approve: true`): approve it (as you
+    /// may have edited it), or reject it with feedback: another round when the
+    /// node has a loop, else the run stops.
+    pub fn decide(self: &Arc<Self>, run: &str, node: &str, approve: bool, text: Option<String>) -> Result<(), String> {
+        {
+            let mut st = self.state.lock().unwrap();
+            let r = st.runs.iter_mut().find(|r| r.id == run).ok_or("No such run.")?;
+            decide_in(r, node, approve, text)?;
+        }
+        self.pump_all();
+        Ok(())
     }
 
     /// The factory files and the runs (without logs).
@@ -366,6 +426,22 @@ impl Runner {
     /// Is a run of this factory going in this project folder ("" : its own)?
     pub fn running_in(&self, factory: &str, folder: &str) -> bool {
         self.state.lock().unwrap().runs.iter().any(|r| r.factory == factory && active_run(r) && r.folder == folder)
+    }
+
+    /// A node's conversations (one per round, oldest first) as the lines a tab shows.
+    pub fn conversation(&self, run: &str, node: &str) -> Result<Vec<Vec<String>>, String> {
+        let factory = self.get(run).map(|r| r.factory).ok_or("No such run.")?;
+        let dir = run_dir(&factory, run).ok_or("No such run.")?.join("nodes").join(node).join("conversations");
+        let mut files: Vec<(std::time::SystemTime, PathBuf)> = std::fs::read_dir(&dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "json"))
+            .map(|p| (std::fs::metadata(&p).and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH), p))
+            .collect();
+        files.sort();
+        Ok(files.iter().map(|(_, p)| crate::paw_agent::conversation_lines(p)).collect())
     }
 
     pub fn get(&self, run: &str) -> Option<Run> {
@@ -474,9 +550,11 @@ impl Runner {
             let mut st = self.state.lock().unwrap();
             let r = st.runs.iter_mut().find(|r| r.id == run).ok_or("No such run.")?;
             let n = r.node_mut(node).ok_or("No such node.")?;
-            if active(&n.state) {
+            if working(n) {
                 return Err("That node is running; stop the run first.".into());
             }
+            n.gate = false;
+            n.question = None;
             f(n);
             r.state = "running".into();
             r.ended_at = None;
@@ -493,12 +571,12 @@ impl Runner {
         let starts = {
             let mut st = self.state.lock().unwrap();
             // Agent nodes at work (or starting) in every run count against the limit.
-            let mut busy = st.runs.iter().flat_map(|r| r.nodes.iter().zip(&r.def.nodes)).filter(|(n, d)| active(&n.state) && !d.is_wait()).count();
+            let mut busy = st.runs.iter().flat_map(|r| r.nodes.iter().zip(&r.def.nodes)).filter(|(n, d)| working(n) && !d.is_wait()).count();
             // Folders a node is changing files in: one such node per folder at a time.
             let mut editing: HashSet<PathBuf> = st
                 .runs
                 .iter()
-                .filter(|r| r.nodes.iter().zip(&r.def.nodes).any(|(n, d)| active(&n.state) && d.edits && !d.is_wait()))
+                .filter(|r| r.nodes.iter().zip(&r.def.nodes).any(|(n, d)| working(n) && d.edits && !d.is_wait()))
                 .map(folder_of)
                 .collect();
             let mut starts = vec![];
@@ -646,8 +724,14 @@ impl Runner {
                 }
             }
             let agent = n.agent;
+            n.question = None;
             // A node with a loop: go on, or send the run back for another round.
             loop_back(r, node);
+            // A node you approve: its answer waits for you.
+            gate(r, node);
+            if r.node(node).is_some_and(|n| n.gate) {
+                notify(&who(r, node), "Done: its answer waits for your approval.");
+            }
             if let Some(a) = agent {
                 st.agents.remove(&a);
             }
@@ -669,7 +753,7 @@ impl Runner {
             let mut st = self.state.lock().unwrap();
             let Some((run, node)) = st.agents.get(&id).cloned() else { return };
             let Some(n) = st.runs.iter_mut().find(|r| r.id == run).and_then(|r| r.node_mut(&node)) else { return };
-            if n.state == "needs" {
+            if n.state == "needs" && n.question.is_none() && !n.gate {
                 n.state = "running".into(); // its approval was answered
                 n.approval = None;
             }
@@ -733,6 +817,25 @@ impl Runner {
             let what = request["label"].as_str().or(request["tool"].as_str()).unwrap_or("a tool").to_string();
             log(n, "ask", &format!("Waiting for your approval: {what}"));
             n.approval = Some(request);
+            if let Some(r) = st.runs.iter().find(|r| r.id == run) {
+                notify(&who(r, &node), &format!("Waiting for your approval: {what}"));
+            }
+            run
+        };
+        self.changed(&run, true);
+    }
+
+    fn on_question(self: &Arc<Self>, id: u32, q: Value) {
+        let run = {
+            let mut st = self.state.lock().unwrap();
+            let Some((run, node)) = st.agents.get(&id).cloned() else { return };
+            let Some(n) = st.runs.iter_mut().find(|r| r.id == run).and_then(|r| r.node_mut(&node)) else { return };
+            n.state = "needs".into();
+            log(n, "ask", &format!("Asks you: {}", q["question"].as_str().unwrap_or("")));
+            n.question = Some(q.clone());
+            if let Some(r) = st.runs.iter().find(|r| r.id == run) {
+                notify(&who(r, &node), q["question"].as_str().unwrap_or("A question for you"));
+            }
             run
         };
         self.changed(&run, true);
@@ -843,10 +946,13 @@ fn pump_in(r: &mut Run, limit: usize, busy: &mut usize, editing: &mut HashSet<Pa
     // Start what's ready: one node changing files in a folder at a time, within Agents at once.
     let mut starts = vec![];
     let folder = folder_of(r);
-    if r.nodes.iter().zip(&r.def.nodes).any(|(n, d)| active(&n.state) && d.edits && !d.is_wait()) {
+    if r.nodes.iter().zip(&r.def.nodes).any(|(n, d)| working(n) && d.edits && !d.is_wait()) {
         editing.insert(folder.clone());
     }
     let dir = run_dir(&r.factory, &r.id);
+    if let Some(d) = &dir {
+        let _ = std::fs::create_dir_all(d.join("files"));
+    }
     for &i in &order {
         let def = r.def.nodes[i].clone();
         if r.nodes[i].state != "waiting" || !ready_now(r, &def) {
@@ -920,6 +1026,7 @@ fn pump_in(r: &mut Run, limit: usize, busy: &mut usize, editing: &mut HashSet<Pa
                 skills: def.skills.clone(),
                 mcp: def.mcp.clone(),
                 dir: dir.as_ref().map(|d| d.join("nodes").join(&def.id)),
+                ask: true,
             }),
         });
     }
@@ -931,9 +1038,75 @@ fn pump_in(r: &mut Run, limit: usize, busy: &mut usize, editing: &mut HashSet<Pa
         let failed = r.nodes.iter().any(|n| n.state == "failed");
         r.state = if failed { "failed" } else { "stopped" }.into();
         r.ended_at = Some(now_ms());
-        r.note = if failed { "A node failed. Retry it, skip it, or fix the factory and run it again.".into() } else { String::new() };
+        r.note = if failed {
+            "A node failed. Retry it, skip it, or fix the factory and run it again.".into()
+        } else if let Some(n) = r.nodes.iter().find(|n| n.state == "stopped" && n.note.starts_with(REJECTED)) {
+            format!("{}: {}", n.id, n.note)
+        } else {
+            String::new()
+        };
     }
     starts
+}
+
+/// Your decision on a node waiting for approval (see `Runner::decide`).
+fn decide_in(r: &mut Run, node: &str, approve: bool, text: Option<String>) -> Result<(), String> {
+    let text = text.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
+    let n = r.node_mut(node).ok_or("No such node.")?;
+    if !n.gate {
+        return Err("That node isn't waiting for your approval.".into());
+    }
+    n.gate = false;
+    if approve {
+        n.state = "done".into();
+        if let Some(t) = &text {
+            if t != n.result.trim() {
+                n.result = clip_end(t, RESULT_CHARS);
+                log(n, "you", "Approved, with your changes to its answer.");
+            } else {
+                log(n, "you", "Approved.");
+            }
+        } else {
+            log(n, "you", "Approved.");
+        }
+    } else {
+        let feedback = text.unwrap_or_else(|| "(no reason given)".into());
+        log(n, "you", &clip(&format!("Rejected: {feedback}"), LOG_CHARS));
+        let looped = r.def_node(node).and_then(|d| d.repeat_until.clone());
+        match looped {
+            Some(l) => {
+                let round = r.node(node).map_or(1, |n| n.round.max(1));
+                if round >= l.max_rounds() && l.on_max.as_deref() != Some("continue") {
+                    let n = r.node_mut(node).unwrap();
+                    n.state = "failed".into();
+                    n.error = Some(format!("{REJECTED} after {round} round{}: {feedback}", if round == 1 { "" } else { "s" }));
+                } else if round >= l.max_rounds() {
+                    let n = r.node_mut(node).unwrap();
+                    n.state = "done".into();
+                    log(n, "loop", &format!("Round {round} of {round}: rejected, but going on (on_max: continue)."));
+                } else {
+                    send_back(r, node, &l, round, &format!("{REJECTED}: {feedback}"));
+                }
+            }
+            None => {
+                let n = r.node_mut(node).unwrap();
+                n.state = "stopped".into();
+                n.note = format!("{REJECTED}: {}", clip(&feedback, 300));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A node that just finished with `approve`: its answer waits for you.
+fn gate(r: &mut Run, node: &str) {
+    if r.def_node(node).is_some_and(|d| d.approve) {
+        if let Some(n) = r.node_mut(node).filter(|n| n.state == "done") {
+            n.state = "needs".into();
+            n.gate = true;
+            log(n, "ask", "Done: its answer waits for your approval.");
+        }
+    }
 }
 
 /// A node that just finished, with a loop: its answer meets the loop's
@@ -945,7 +1118,7 @@ fn loop_back(r: &mut Run, node: &str) {
     let Some(n) = r.node(node).filter(|n| n.state == "done") else { return };
     let (answer, round) = (n.result.clone(), n.round.max(1));
     if l.done(&answer) {
-        if round > 1 {
+        if round > 1 && l.until.is_some() {
             log(r.node_mut(node).unwrap(), "loop", &format!("Round {round}: its loop's condition is met; going on."));
         }
         return;
@@ -960,6 +1133,12 @@ fn loop_back(r: &mut Run, node: &str) {
         }
         return;
     }
+    send_back(r, node, &l, round, &answer);
+}
+
+/// Another round: `back_to`, the looping `node` and the nodes between them
+/// wait again; `back_to` gets `feedback` (the node's answer, or your reasons).
+fn send_back(r: &mut Run, node: &str, l: &Loop, round: u32, feedback: &str) {
     let region = loop_region(&r.def.nodes, &l.back_to, node);
     for id in &region {
         let back_to = *id == l.back_to;
@@ -968,8 +1147,10 @@ fn loop_back(r: &mut Run, node: &str) {
             x.rounds.push(Round { round: x.round.max(1), state: x.state.clone(), started_at: x.started_at, ended_at: x.ended_at });
         }
         if back_to {
-            x.feedback = Some(Feedback { from: node.to_string(), round, text: clip_end(answer.trim(), 6000), previous: clip_end(x.result.trim(), 6000) });
+            x.feedback = Some(Feedback { from: node.to_string(), round, text: clip_end(feedback.trim(), 6000), previous: clip_end(x.result.trim(), 6000) });
         }
+        x.gate = false;
+        x.question = None;
         x.state = "waiting".into();
         x.round = round + 1;
         x.started_at = None;
@@ -980,7 +1161,8 @@ fn loop_back(r: &mut Run, node: &str) {
         x.result.clear();
         x.note = format!("Round {} of up to {}.", round + 1, l.max_rounds());
     }
-    log(r.node_mut(node).unwrap(), "loop", &format!("Round {round}: its loop's condition isn't met; back to {} for round {}.", l.back_to, round + 1));
+    let why = if feedback.starts_with(REJECTED) { "you rejected its answer" } else { "its loop's condition isn't met" };
+    log(r.node_mut(node).unwrap(), "loop", &format!("Round {round}: {why}; back to {} for round {}.", l.back_to, round + 1));
 }
 
 /// Can this waiting node start now (its inputs and condition allow it)?
@@ -1027,6 +1209,19 @@ fn node_prompt(r: &Run, def: &Node) -> String {
     }
     if !def.edits {
         parts.push("This node only reads: don't change any files.".into());
+    }
+    if let Some(d) = run_dir(&r.factory, &r.id) {
+        parts.push(format!(
+            "This run's own folder for files the nodes share (notes, plans, state for later nodes or later rounds): {}. Keep such files there, not in a fixed place: other runs of this factory may go at the same time.",
+            tildify(&d.join("files"))
+        ));
+    }
+    parts.push(format!(
+        "If you need something only the user can give (a decision, an approval, a missing detail), call {} and wait for the answer. Don't wait for files, poll or send notifications for that.",
+        crate::paw_agent::ASK_TOOL
+    ));
+    if def.approve {
+        parts.push("When you're done, the user reviews your answer before the run goes on, so make it complete and easy to check.".into());
     }
     // Sent back by a loop: what came back, and what this node answered before.
     if let Some(fb) = r.node(&def.id).and_then(|n| n.feedback.as_ref()) {
@@ -1096,6 +1291,25 @@ fn fmt_duration(d: Duration) -> String {
     }
 }
 
+/// A macOS notification (the window may be closed): a node needs you.
+fn notify(title: &str, body: &str) {
+    if cfg!(test) {
+        return;
+    }
+    let _ = std::process::Command::new("/usr/bin/osascript")
+        .args(["-e", "on run argv", "-e", "display notification (item 2 of argv) with title (item 1 of argv)", "-e", "end run"])
+        .arg(clip(title, 80))
+        .arg(clip(body, 200))
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+}
+
+/// "Factory · Node title" for a notification.
+fn who(r: &Run, node: &str) -> String {
+    format!("{} · {}", r.def.name, r.def_node(node).map(|d| d.label().to_string()).unwrap_or_else(|| node.to_string()))
+}
+
 /// A path with the home folder as `~`.
 fn tildify(p: &Path) -> String {
     let s = p.to_string_lossy().into_owned();
@@ -1162,6 +1376,10 @@ fn load_runs() -> Vec<Run> {
         .collect();
     runs.sort_by_key(|r: &Run| r.started_at);
     for r in &mut runs {
+        // Waiting only for your approval: nothing was running, so it waits on.
+        if active_run(r) && r.nodes.iter().any(|n| n.gate) && r.nodes.iter().filter(|n| active(&n.state)).all(|n| n.gate) {
+            continue;
+        }
         if active_run(r) {
             r.state = "stopped".into();
             r.note = INTERRUPTED.into();
@@ -1345,6 +1563,64 @@ nodes:
         assert_eq!(started(&pump(&mut r, 9, &mut busy, "")), ["ship"]);
         assert_eq!(r.node("fix").unwrap().rounds.len(), 1, "round 1 is kept for the timeline");
         assert_eq!(r.node("review").unwrap().round, 2);
+    }
+
+    #[test]
+    fn an_approved_answer_goes_on_and_a_rejected_one_goes_back_or_stops() {
+        let yaml = r#"
+name: Gate
+model: anthropic/claude-sonnet-5-5
+nodes:
+  - { id: plan, prompt: p, edits: false, approve: true, loop: { back_to: plan, max: 2 } }
+  - { id: build, needs: [plan], prompt: b }
+"#;
+        let mut r = run_of(yaml);
+        let mut busy = 0;
+        let done = |r: &mut Run, id: &str, answer: &str| {
+            let n = r.node_mut(id).unwrap();
+            n.state = "done".into();
+            n.result = answer.into();
+            n.started_at = Some(1);
+            loop_back(r, id);
+            gate(r, id);
+        };
+        assert_eq!(started(&pump(&mut r, 9, &mut busy, "")), ["plan"]);
+        assert!(node_prompt(&r, r.def_node("plan").unwrap()).contains("reviews your answer"));
+        done(&mut r, "plan", "plan v1");
+        assert!(r.node("plan").unwrap().gate, "without until, the answer waits for you");
+        busy = 0;
+        assert!(pump(&mut r, 9, &mut busy, "").is_empty(), "build waits for the approval");
+        assert_eq!(r.state, "running");
+        // Rejected: another round of plan, with your reasons as feedback.
+        decide_in(&mut r, "plan", false, Some("split it in two".into())).unwrap();
+        assert_eq!(r.node("plan").unwrap().state, "waiting");
+        assert!(r.node("plan").unwrap().feedback.as_ref().unwrap().text.contains("split it in two"));
+        assert_eq!(started(&pump(&mut r, 9, &mut busy, "")), ["plan"]);
+        done(&mut r, "plan", "plan v2");
+        // Approved with your edit: that's the answer build gets.
+        decide_in(&mut r, "plan", true, Some("plan v2, edited".into())).unwrap();
+        assert_eq!(started(&pump(&mut r, 9, &mut busy, "")), ["build"]);
+        assert!(node_prompt(&r, r.def_node("build").unwrap()).contains("plan v2, edited"));
+        assert!(decide_in(&mut r, "plan", true, None).is_err(), "it isn't waiting any more");
+
+        // Without a loop, rejecting stops the run.
+        let mut r = run_of("name: G\nmodel: anthropic/claude-sonnet-5-5\nnodes:\n  - { id: plan, prompt: p, approve: true }\n  - { id: build, needs: [plan], prompt: b }\n");
+        pump(&mut r, 9, &mut 0, "");
+        done(&mut r, "plan", "a plan");
+        decide_in(&mut r, "plan", false, Some("not now".into())).unwrap();
+        assert!(pump(&mut r, 9, &mut 0, "").is_empty());
+        assert_eq!(r.state, "stopped");
+        assert!(r.note.contains("Rejected by you: not now"), "{}", r.note);
+    }
+
+    #[test]
+    fn nodes_hear_about_asking_and_their_runs_files_folder() {
+        let r = run_of("name: A\nmodel: anthropic/claude-sonnet-5-5\nnodes:\n  - { id: a, prompt: p }\n");
+        let p = node_prompt(&r, r.def_node("a").unwrap());
+        assert!(p.contains("ask_user"));
+        if crate::paths::home().is_some() {
+            assert!(p.contains("f/r1/files"), "{p}");
+        }
     }
 
     #[test]

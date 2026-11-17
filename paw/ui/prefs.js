@@ -1323,8 +1323,8 @@ const PERMISSION_TEXT = {
   prompt: "put text in your prompt or send it to an agent",
   shell: "run commands in your tab's shell",
   network: "connect to the internet",
-  tasks: "read your tasks' plans and follow their progress",
-  views: "draw on a task's board, next to its graph",
+  tasks: "read your plans and follow their progress",
+  views: "draw on a plan's board, next to its graph",
 };
 const plState = { catalog: null, installed: [], error: "", loading: false, busy: new Set(), appVersion: "" };
 const older = (a, b) => {

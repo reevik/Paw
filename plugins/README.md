@@ -10,7 +10,7 @@ reactions to what happens in a tab. This folder is the **official catalog**.
 | [Pomodoro](pomodoro) | A focus timer in the status bar (`/pomodoro 25`) | commands, statusbar |
 | [Usage Meter](usage-meter) | Today's prompts and tokens in the status bar | commands, statusbar, events |
 | [Snippets](snippets) | Saved prompts, back in the prompt with `/snip <name>` | commands, prompt |
-| [Task Graph 3D](task-graph-3d) | A task's plan as a glowing 3D graph on its board (“3D” next to “Graph”) | views |
+| [Plan Graph 3D](task-graph-3d) | A plan as a glowing 3D graph on its board (“3D” next to “Graph”) | views |
 
 ## The catalog
 
@@ -58,8 +58,8 @@ and Paw refuses anything else.
 | `prompt` | put text in a tab's prompt, or send it to the tab's agent |
 | `shell` | run commands in a tab's shell (they show in the tab, like typed) |
 | `network` | use `fetch` and friends (without it they're removed) |
-| `tasks` | read the tasks' plans and hear when they change |
-| `views` | draw on a task's board, next to its graph (the view sees that task) |
+| `tasks` | read your plans and hear when they change |
+| `views` | draw on a plan's board, next to its graph (the view sees that plan) |
 
 ## Writing one
 
@@ -93,20 +93,20 @@ const { code, output } = await paw.run(tab, "git status --short");
 // The open tabs: [{ id, title, agent, model, cwd, active }].
 const tabs = await paw.tabs();
 
-// The tasks' plans (needs "tasks"): [{ id, tab, title, state, cwd, planner,
+// The plans (needs "tasks"; the API still calls a plan a task): [{ id, tab, title, state, cwd, planner,
 // selected, startedAt, endedAt, steps: [{ id, title, agent, needs, edits,
 // state, startedAt, endedAt }] }]. A step's state is waiting, running,
 // needs (waiting for approval), done, failed, stopped or skipped.
 const tasks = await paw.tasks();
-paw.on("task", (task) => {}); // a task changed (needs "tasks")
+paw.on("task", (task) => {}); // a plan changed (needs "tasks")
 
-// A view on the task board (needs "views"): a button next to "Graph". When
+// A view on a plan's board (needs "views"): a button next to "Graph". When
 // it's picked, the handler gets a canvas of its own, drawn from the worker.
 paw.view("graph3d", { label: "3D" }, (ctx) => {
   const gl = ctx.canvas.getContext("webgl");   // or "2d"
   // ctx.width, ctx.height (CSS pixels), ctx.dpr, ctx.task, ctx.theme ({ fg, bg, accent, dim, dark })
   ctx.on("resize", ({ width, height, dpr }) => {});
-  ctx.on("task", (task) => {});               // the task changed
+  ctx.on("task", (task) => {});               // the plan changed
   ctx.on("pointer", ({ type, x, y, buttons }) => {}); // pointerdown/move/up/leave, dblclick
   ctx.on("wheel", ({ dx, dy, x, y }) => {});
   ctx.on("visible", (shown) => {});           // rest while it's out of sight
@@ -121,7 +121,7 @@ const count = await paw.storage.get("count");
 
 A tab is `{ id, title, agent, model, cwd, active }`; pass it (or its `id`) to
 `print`, `prompt` and `run`. Commands can't reuse Paw's own names (`/help`,
-`/task`, …) or another plugin's.
+`/plan`, …) or another plugin's.
 
 ## Trying a plugin while writing it
 

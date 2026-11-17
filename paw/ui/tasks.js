@@ -237,8 +237,8 @@ async function newTask({ model, cwd, goal, atts = [] } = {}) {
 }
 
 function taskBanner(S) {
-  info(S, `<b>New task</b> <span class="dim">planned by</span> ${esc(S.agent.name)} <span class="dim">on</span> ${esc(modelShort(S.model) || "no model")}  <span class="dim">in</span> ${esc(tildify(S.cwd))}\n` +
-    `<span class="dim">Describe the task below. ${esc(S.agent.name)} splits it into steps, each on one of your models; you review the plan before anything runs.</span>`);
+  info(S, `<b>New plan</b> <span class="dim">by</span> ${esc(S.agent.name)} <span class="dim">on</span> ${esc(modelShort(S.model) || "no model")}  <span class="dim">in</span> ${esc(tildify(S.cwd))}\n` +
+    `<span class="dim">Describe what you want done below. ${esc(S.agent.name)} splits it into steps, each on one of your models; you review the plan before anything runs.</span>`);
 }
 
 /** The task tab's prompt box: the first message is the task, later ones change the plan. */
@@ -496,7 +496,7 @@ function restoreTask(saved, { live = false } = {}) {
   }
   if (live) return t;
   if (t.state === "planning") { closeSpan(t.plans, "stopped"); t.state = t.goal ? "draft" : "new"; t.note = t.goal ? "Paw restarted while planning. Ask the planner again below." : ""; }
-  if (t.state === "running") { t.state = "stopped"; t.note = "Paw restarted while this task ran. Press Run to carry on where it stopped."; }
+  if (t.state === "running") { t.state = "stopped"; t.note = "Paw restarted while this plan ran. Press Run to carry on where it stopped."; }
   return t;
 }
 
@@ -514,7 +514,7 @@ function relinkTasks() {
 // ---------- tabs ----------
 function taskTabLabel(S) {
   const t = S.task;
-  const name = t.title || "New task";
+  const name = t.title || "New plan";
   if (t.state === "running") {
     const n = t.steps.filter(activeStep).length;
     return `${name} · ${n} running`;
@@ -534,7 +534,7 @@ const taskNeedsYou = (S) => S.task.steps.filter((s) => stepView(s) === "needs").
 
 function taskPlaceholder(S) {
   return {
-    new: "Describe the task, and the planner splits it into steps…",
+    new: "Describe what you want done, and the planner splits it into steps…",
     planning: "Planning… (⌘. to stop)",
     draft: "Change the plan: add a step, use Copilot for the UI step, re-plan…",
     running: "Ask the planner something…",
@@ -553,9 +553,9 @@ function taskStatusText(t) {
   const n = t.steps.length;
   const done = t.steps.filter((s) => s.state === "done" || s.state === "skipped").length;
   switch (t.state) {
-    case "new": return "Waiting for the task";
+    case "new": return "Waiting for your goal";
     case "planning": return "Planning…";
-    case "draft": return n ? `Plan · ${n} step${n > 1 ? "s" : ""}` : "No plan yet";
+    case "draft": return n ? `Draft · ${n} step${n > 1 ? "s" : ""}` : "No steps yet";
     case "running": return `Running · ${done} of ${n} done`;
     case "done": return `Done · ${n} step${n > 1 ? "s" : ""}`;
     case "failed": return `Stopped on a failed step · ${done} of ${n} done`;
@@ -603,14 +603,14 @@ function renderTaskView() {
   const switcher = views.length ? `<div class="tk-views" role="tablist">${[["graph", { label: "Graph" }], ...views].map(([k, v]) =>
     `<button class="tk-viewbtn${k === viewKey ? " on" : ""}" data-view="${esc(k)}">${esc(v.label)}</button>`).join("")}</div>` : "";
   const head = `<div class="tk-head">
-      <span class="tk-title" title="${esc(t.goal)}">${esc(t.title || "New task")}</span>
+      <span class="tk-title" title="${esc(t.goal)}">${esc(t.title || "New plan")}</span>
       <span class="tk-state st-${esc(t.state)}">${esc(taskStatusText(t))}</span>
       ${switcher}<span class="grow"></span>${buttons}
     </div>${t.note ? `<div class="tk-note">${esc(t.note)}</div>` : ""}`;
   let body;
   if (t.state === "new" || (!t.steps.length && t.state !== "planning")) {
     body = `<div class="tk-empty">${t.state === "new"
-      ? `Describe the task in the prompt box below. ${esc(S.agent.name)} splits it into steps for your agents, and you check the plan before anything runs.`
+      ? `Describe what you want done in the prompt box below. ${esc(S.agent.name)} splits it into steps for your agents, and you check the plan before anything runs.`
       : "No steps yet."}</div>`;
   } else if (!t.steps.length) {
     body = `<div class="tk-empty"><span class="spin-ch">${SPIN[spinFrame % SPIN.length]}</span> ${esc(S.agent.name)} is planning…</div>`;
@@ -937,7 +937,7 @@ function modelOptions(cur) {
 
 function taskSummaryHtml(S) {
   const t = S.task;
-  const parts = [`<div class="tk-side-title">The task</div><div class="tk-goal">${esc(t.goal)}</div>`,
+  const parts = [`<div class="tk-side-title">The goal</div><div class="tk-goal">${esc(t.goal)}</div>`,
     `<div class="tk-dim">Planned by ${esc(S.agent.name)}${S.model ? ` on ${esc(modelShort(S.model))}` : ""} · ${esc(tildify(S.cwd))}</div>`];
   if (t.state === "draft") parts.push(`<div class="tk-hint">Click a step to change it, or ask the planner below to change the plan. Steps that change files run one at a time; others run side by side, as many as Settings › General › Agents at once allows (${maxAgents() === Infinity ? "no limit" : maxAgents()}).</div>`);
   if (t.state === "done") {
@@ -1154,7 +1154,7 @@ setInterval(() => {
 /** Every open task, one line each: state, steps, time, planner; the title opens its tab. */
 function tasksListHtml() {
   const tasks = openTabs.map((sid) => sessions.get(sid)).filter((S) => S?.task);
-  if (!tasks.length) return `<span class="dim">No tasks yet. Start one with</span> <span class="cmd">/task &lt;what&gt;</span> <span class="dim">or select text, right-click, Create a task.</span>`;
+  if (!tasks.length) return `<span class="dim">No plans yet. Make one with</span> <span class="cmd">/plan &lt;what&gt;</span> <span class="dim">or select text, right-click, Make a plan.</span>`;
   const glyph = { running: "●", planning: "●", done: "✓", failed: "✗", stopped: "■", draft: "◇", new: "◇" };
   const cls = { running: "ok", planning: "ok", done: "ok", failed: "err", stopped: "warn", draft: "dim", new: "dim" };
   const rows = tasks.map((T) => {
@@ -1164,7 +1164,7 @@ function tasksListHtml() {
     const done = steps.filter((st) => st.state === "done" || st.state === "skipped").length;
     const bits = [];
     if (t.state === "planning") bits.push("planning…");
-    else if (!steps.length) bits.push("no plan yet");
+    else if (!steps.length) bits.push("no steps yet");
     else if (t.state === "draft") bits.push(`${steps.length} step${steps.length === 1 ? "" : "s"} planned`);
     else bits.push(`${done}/${steps.length} steps`);
     if (t.state !== "draft") {
@@ -1175,12 +1175,12 @@ function tasksListHtml() {
     const time = t.startedAt ? fmtElapsed((t.endedAt ?? Date.now()) - t.startedAt) : "";
     const title = t.title || t.goal?.split("\n")[0] || "New task";
     return `<span class="${cls[t.state] ?? "dim"}">${glyph[t.state] ?? "·"}</span> ` +
-      `<a href="#" class="task-link" data-open-task="${esc(t.id)}" title="Open this task">${esc(title.length > 48 ? title.slice(0, 47) + "…" : title)}</a>` +
+      `<a href="#" class="task-link" data-open-task="${esc(t.id)}" title="Open this plan">${esc(title.length > 48 ? title.slice(0, 47) + "…" : title)}</a>` +
       `  <span class="${cls[t.state] ?? "dim"}">${esc(t.state)}</span>  ${bits.join(" · ")}` +
       (time ? `  <span class="dim">${esc(time)}</span>` : "") +
       `  <span class="dim">${esc(modelShort(T.model) || T.agent.name)} · ${esc(tildify(T.cwd))}</span>`;
   });
-  return `<span class="help-h">Tasks (${tasks.length})</span>\n${rows.join("\n")}`;
+  return `<span class="help-h">Plans (${tasks.length})</span>\n${rows.join("\n")}`;
 }
 
 // A task's title in /tasks opens its tab (its group unfolds if it's folded).
@@ -1189,7 +1189,7 @@ document.addEventListener("click", (e) => {
   if (!a) return;
   e.preventDefault();
   const T = [...sessions.values()].find((S) => S.task?.id === a.dataset.openTask);
-  if (!T) { const S = curS(); if (S) sys(S, "That task's tab is closed."); return; }
+  if (!T) { const S = curS(); if (S) sys(S, "That plan's tab is closed."); return; }
   const g = T.group ? groups.get(T.group) : null;
   if (g?.collapsed) g.collapsed = false;
   select(T.sid);

@@ -189,7 +189,7 @@ class Graph {
       nodes.set(id, n);
       return n;
     };
-    const hub = add("task", "task", { color: COLORS.task, size: 1.0, label: shorten(task?.title || "Task", 40), sub: STATE_TEXT[task?.state] ?? "" });
+    const hub = add("task", "task", { color: COLORS.task, size: 1.0, label: shorten(task?.title || "Plan", 40), sub: STATE_TEXT[task?.state] ?? "" });
     const agents = new Map();
     for (const s of steps) {
       const m = minutes(s, now);
@@ -508,6 +508,6 @@ paw.view("graph3d", { label: "3D" }, (ctx) => {
   try {
     new Graph(ctx);
   } catch (e) {
-    console.error("Task Graph 3D:", e);
+    console.error("Plan Graph 3D:", e);
   }
 });

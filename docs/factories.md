@@ -6,7 +6,7 @@ Factory files live in `~/.paw/factories/<id>.yaml`: the file name is the factory
 
 ## The factory view
 
-A factory opens in a tab that looks like a task:
+A factory opens in a tab that looks like a plan's:
 
 - **The graph:** nodes in the order they run. A dashed line is a branch: the node after it runs only if the condition holds.
 - **Zoom:** the bar in the graph's corner zooms out (−) and in (+), back to **100%** (click the percentage), or to **Fit**, which shows the whole graph and keeps fitting it as the view changes size. ⌘-scroll or a trackpad pinch zooms around the pointer, and ⌘+, ⌘− and ⌘0 zoom the graph while the pointer is over it. Each factory tab remembers its zoom.

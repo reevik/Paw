@@ -504,7 +504,7 @@ async function closeSession(sid) {
   const S = sessions.get(sid);
   if (!S) return;
   if (isBusy(S) && !confirm(`${S.agent.name} is still working. Close the tab and stop it?`)) return;
-  if (S.task?.state === "running" && !confirm("This task is running. Close it and stop its steps? Their tabs stay open.")) return;
+  if (S.task?.state === "running" && !confirm("This plan is running. Close it and stop its steps? Their tabs stay open.")) return;
   taskTabClosing(S);
   closeBoardView(S);
   keepClosedSession(S);
@@ -756,13 +756,13 @@ function helpHtml(S) {
     row("/restart", "restart the agent (conversation continues)"),
     row("/stop", "stop the agent or running command (⌘. · Ctrl-C)"),
     row(CLI_AGENTS ? "/new [agent]" : "/new [model]", "open a new tab with a new conversation"),
-    row("/task [what]", `plan a task with ${name} and run its steps on several ${CLI_AGENTS ? "agents" : "models"} (pasted text counts too)`),
-    row("/tasks", "list the open tasks and how far each one is (click one to open it)"),
+    row("/plan [what]", `make a plan with ${name} and run its steps on several ${CLI_AGENTS ? "agents" : "models"} (pasted text counts too)`),
+    row("/plans", "list the open plans and how far each one is (click one to open it)"),
     row("/factories", "list your factories and their last runs (click one to open it)"),
     row("/factory <name>", "open a factory; /factory new <name> makes one"),
     row("/factory run <name> [task]", "start a run of a factory in this tab's folder, with the task"),
     row("/sessions", "list stored sessions, open and closed; click one to reopen it in a new tab"),
-    row("/stats [day|week|month]", "tokens, queries, tasks and time per model: today, this week, this month"),
+    row("/stats [day|week|month]", "tokens, queries, plans and time per model: today, this week, this month"),
     row("/clear", "clear the screen (⌘K)"),
     row("/session", "open this tab's folder: its conversation, files, scripts and command log"),
     row("/plugins", "the plugins installed and their commands (Settings › Plugins adds more)"),
@@ -898,7 +898,8 @@ async function slashCommand(S, line) {
       if (arg !== "path") invoke("session_dir", { id: S.pawId, reveal: true }).catch(() => {});
       return true;
     }
-    case "/tasks":
+    case "/plans":
+    case "/tasks": // the old name
       echo();
       info(S, tasksListHtml());
       return true;
@@ -929,7 +930,8 @@ async function slashCommand(S, line) {
       echo();
       info(S, await sessionsListHtml().catch((e) => `<span class="err">✗ ${esc(e)}</span>`));
       return true;
-    case "/task": {
+    case "/plan":
+    case "/task": { // the old name
       // Plan it with this tab's agent, in this tab's folder. Pasted text
       // badges are part of the goal ("/task" alone: the pasted text is it).
       const pasted = (S.attachments ?? []).filter(isPasted);
@@ -2564,7 +2566,7 @@ function renderTabs() {
     t.className = "tab" + (sid === activeId ? " active" : paneOf(S) ? " visible" : "") + (S.task ? " task-tab" : step ? " step-tab" : "") + (g ? " in-group" : "");
     if (g) t.style.setProperty("--g", GROUP_COLORS[g.color] ?? GROUP_COLORS.grey);
     const runs = S.model ? `${S.agent.name} · ${S.model}` : S.agent.name;
-    t.title = S.task ? `Task: ${S.task.goal || "new"} — planned by ${runs}` : step ? `Step of ${step.T.task.title}: ${runs} — ${tildify(S.cwd)}` : `${runs} — ${tildify(S.cwd)}`;
+    t.title = S.task ? `Plan: ${S.task.goal || "new"} — by ${runs}` : step ? `Step of the plan ${step.T.task.title}: ${runs} — ${tildify(S.cwd)}` : `${runs} — ${tildify(S.cwd)}`;
     const needs = S.task ? taskNeedsYou(S) : 0;
     t.innerHTML = (S.task ? `<span class="task-ico" aria-hidden="true"></span>` : "") +
       `<span class="dot ${S.task ? taskDotState(S) : S.factory ? factoryDotState(S) : sessionState(S)}"></span><span class="label">${esc(tabLabel(S))}</span>` +
@@ -2916,7 +2918,7 @@ document.addEventListener("contextmenu", (e) => {
   const lines = text.trim().split("\n").length;
   contextMenu(e.clientX, e.clientY, [
     { label: "Copy", sub: "⌘C", run: () => copyText(text) },
-    { label: "Create a task", sub: lines > 1 ? `${lines} lines` : "", run: () => taskFromText(S, text) },
+    { label: "Make a plan", sub: lines > 1 ? `${lines} lines` : "", run: () => taskFromText(S, text) },
   ]);
 });
 
@@ -3066,7 +3068,7 @@ function sessionStatus(S) {
   if (S.factory) return factoryStatus(S.factory.id);
   if (S.task) {
     const n = taskNeedsYou(S);
-    return n ? `${n} step${n > 1 ? "s" : ""} waiting for you` : `Task · ${S.task.state}`;
+    return n ? `${n} step${n > 1 ? "s" : ""} waiting for you` : `Plan · ${S.task.state}`;
   }
   const st = sessionState(S);
   return `${STATE_TEXT[st] ?? st} · ${tildify(S.cwd)}`;
@@ -4326,7 +4328,7 @@ async function statsHtml(arg) {
   const s = await invoke("stats_summary", { day, week, month, modelsSince: since });
   const cols = [s.day, s.week, s.month];
   if (!s.month.queries && !s.month.tasks && !s.week.queries) {
-    return `<span class="dim">No usage recorded yet. Every prompt and task that finishes from now on is counted.</span>`;
+    return `<span class="dim">No usage recorded yet. Every prompt and plan that finishes from now on is counted.</span>`;
   }
   const row = (label, f, cls = "") => `${esc(label.padEnd(18))}${cols.map((c) => `<span class="${cls}">${esc(String(f(c)).padStart(11))}</span>`).join("")}`;
   const anyCost = cols.some((c) => c.cost > 0);
@@ -4334,7 +4336,7 @@ async function statsHtml(arg) {
     `<span class="help-h">Usage</span>${" ".repeat(13)}${["Today", "This week", "This month"].map((h) => `<span class="dim">${h.padStart(11)}</span>`).join("")}`,
     row("Queries", (c) => c.queries),
     row("  failed", (c) => c.failed || "–", "dim"),
-    row("Tasks completed", (c) => c.tasks),
+    row("Plans completed", (c) => c.tasks),
     row("Tokens ↑ in", (c) => (c.input ? fmtTokens(c.input) : "–")),
     row("Tokens ↓ out", (c) => (c.output ? fmtTokens(c.output) : "–")),
     row("Avg. query time", (c) => (c.queries ? fmtElapsed(c.ms / c.queries) : "–")),
@@ -4973,7 +4975,7 @@ function openMenu() {
   if (CLI_AGENTS ? list.some((a) => sessionMode(a) !== "stdin") : visibleModels().length) {
     const tk = document.createElement("button");
     tk.className = "menu-item";
-    tk.innerHTML = `<span class="mini-avatar ghost">◇</span><span class="mi-name">New task…</span><span class="mi-sub">plan, then run</span>`;
+    tk.innerHTML = `<span class="mini-avatar ghost">◇</span><span class="mi-name">New plan…</span><span class="mi-sub">plan, then run</span>`;
     tk.onclick = () => { closeMenu(); const S = focusedS(); newTask({ cwd: S?.cwd }); };
     menu.appendChild(tk);
   }

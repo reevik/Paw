@@ -441,6 +441,9 @@ button:disabled { opacity: .4; pointer-events: none; }
 .ac-label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--t-fg); }
 .ac-label b { color: var(--t-strong); font-weight: 700; }
 .ac-kind { font: 10px var(--font); color: var(--t-dim); text-transform: uppercase; letter-spacing: .04em; }
+.ac-desc { flex: 0 1 auto; max-width: 55%; min-width: 0; font: 11.5px var(--font); color: var(--t-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ac-icon.slash, .ac-icon.arg { color: var(--accent); font-weight: 700; }
+.ac-usage { padding: 5px 8px 3px; font: 11.5px var(--font); color: var(--t-dim); }
 .ac-hint { padding: 4px 8px 2px; font: 10.5px var(--font); color: var(--t-dim); border-top: 1px solid var(--t-border); margin-top: 3px; }
 
 /* Theme switches animate softly. */

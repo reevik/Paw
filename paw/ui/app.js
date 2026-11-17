@@ -734,6 +734,7 @@ function helpHtml(S) {
     row("/ask <text>", `always send to ${name}`),
     row("⇧Tab", "switch input mode: Auto → Shell → Agent"),
     row("⌃R", "search earlier prompts and commands"),
+    row("/", "the commands as you type, then their parameters (models, factories, folders…); Tab takes one"),
     row("Tab · ↑↓", "complete commands and paths · previous prompts"),
     row("+ · ⌘V", "attach files · paste an image · long pasted text becomes a badge (click it to edit)"),
   ];
@@ -1228,7 +1229,7 @@ listen("shell:exit", ({ payload: id }) => {
 // General). The popup suggests, in order: history lines, command names (first
 // word) and file/folder paths (later words, relative to the tab's folder).
 let shellHistory = [];
-const ac = { items: [], sel: -1, open: false, seq: 0, full: false, search: false };
+const ac = { items: [], sel: -1, open: false, seq: 0, full: false, search: false, slash: false, usage: "" };
 
 function recordHistory(command) {
   const max = settings.general.history_size ?? 1000;
@@ -1276,6 +1277,8 @@ async function updateAutocomplete(full = false) {
   const ta = $("input");
   const value = ta.value;
   if (!S || S.shellBusy || !value.trim() || value.includes("\n") || ta.selectionStart !== value.length) return closeAc();
+  // A slash command: its name, then its parameters, while you type.
+  if (value.startsWith("/")) return slashAutocomplete(S, value);
   const forced = value.startsWith("!");
   if (S.inputMode === "agent" && !forced) return closeAc();
   const looksShell = forced || S.inputMode === "shell" || classify(value, S).shell;
@@ -1333,9 +1336,110 @@ async function updateAutocomplete(full = false) {
   }
   if (seq !== ac.seq) return;
   ac.full = full;
+  ac.slash = false;
+  ac.usage = "";
   ac.items = items.slice(0, 50);
   ac.sel = -1;
   ac.items.length ? renderAc() : closeAc();
+}
+
+// ---------- slash commands ----------
+// Typing / lists the commands (with their parameters); after a command and a
+// space, its parameter's values: models, approval levels, factories, folders…
+// A free-text parameter (/plan's goal) shows what to type instead.
+
+/** The commands this tab offers: { cmd, usage, desc, args(words, S) → { options, free } }. */
+function slashSpecs(S) {
+  const name = S.agent.name;
+  const opt = (value, desc = "", more = false) => ({ value, desc, more });
+  const models = () => ({ options: visibleModels().map((m) => opt(m)), match: "contains" });
+  const levels = approvalLevels(S.agent);
+  const factories = () => {
+    if (!factoryState.loaded && !factoryState.loading) loadFactories().then(() => ac.slash && scheduleAutocomplete());
+    return factoryState.list.map((f) => opt(f.id, f.factory?.name ?? "can't be read"));
+  };
+  const specs = [
+    { cmd: "/help", desc: "what you can type here" },
+    { cmd: "/ask", usage: "<text>", desc: `send to ${name}, even if it looks like a command`, args: () => ({ free: `your message to ${name}` }) },
+    { cmd: "/model", usage: "[model]", desc: "show the models, or switch to one (conversation continues)", args: (w) => (w.length ? {} : models()) },
+    ...(CLI_AGENTS ? [{ cmd: "/agent", usage: "[id]", desc: "switch the agent in this tab", args: (w) => (w.length ? {} : { options: settings.agents.map((a) => opt(a.id, a.name)) }) }] : []),
+    ...(levels.length && hasLevels(S.agent) ? [{ cmd: "/approval", usage: "[level]", desc: `how much ${name} may do on its own`, args: (w) => (w.length ? {} : { options: levels.map((l) => opt(l)) }) }] : []),
+    { cmd: "/restart", desc: "restart the agent (conversation continues)" },
+    { cmd: "/stop", desc: "stop the agent or running command" },
+    { cmd: "/new", usage: "[model]", desc: "open a new tab with a new conversation", args: (w) => (w.length ? {} : models()) },
+    { cmd: "/plan", usage: "[what]", desc: `make a plan with ${name} and run its steps`, args: () => ({ free: "what you want done (or leave it out, and describe it in the plan's tab)" }) },
+    { cmd: "/plans", desc: "the open plans and how far each one is" },
+    { cmd: "/factories", desc: "your factories and their last runs" },
+    { cmd: "/factory", usage: "<name> · new <name> · run <name> [task]", desc: "open, make or run a factory", args: (w) => {
+      if (!w.length) return { options: [opt("run", "start a run in this tab's folder", true), opt("new", "make a new factory", true), ...factories()] };
+      if (w[0] === "new") return { free: "the new factory's name" };
+      if (w[0] === "run" && w.length === 1) return { options: factories().map((o) => ({ ...o, more: true })) };
+      if (w[0] === "run") return { free: "the task for this run (optional)" };
+      return {};
+    } },
+    { cmd: "/sessions", desc: "stored sessions, open and closed" },
+    { cmd: "/stats", usage: "[day|week|month]", desc: "tokens, queries, plans and time per model", args: (w) => (w.length ? {} : { options: [opt("day", "today"), opt("week", "this week"), opt("month", "this month")] }) },
+    { cmd: "/clear", desc: "clear the screen" },
+    { cmd: "/session", desc: "open this tab's folder: conversation, files, scripts" },
+    { cmd: "/plugins", desc: "the plugins installed and their commands" },
+    { cmd: "/cd", usage: "<dir>", desc: "change folder (the agent follows)", dirs: true },
+    ...[...pluginHost.commands.entries()].map(([n, c]) => ({ cmd: `/${n}`, usage: c.usage, desc: c.description || `from ${pluginHost.plugins.get(c.id)?.manifest.name ?? c.id}`,
+      args: () => (c.usage ? { free: c.usage } : {}) })),
+  ];
+  return specs;
+}
+
+async function slashAutocomplete(S, value) {
+  const seq = ++ac.seq;
+  const specs = slashSpecs(S);
+  const items = [];
+  let usage = "";
+  const sp = value.indexOf(" ");
+  if (sp < 0) {
+    // The command's name: the ones that start with what's typed, then the ones that contain it.
+    const w = value.toLowerCase();
+    const starts = specs.filter((c) => c.cmd.startsWith(w));
+    const has = specs.filter((c) => !c.cmd.startsWith(w) && c.cmd.includes(w.slice(1)));
+    for (const c of [...starts, ...has]) {
+      const takes = !!(c.usage || c.args || c.dirs);
+      if (c.cmd === value && !takes) continue; // typed in full: ⏎ runs it
+      const i = c.cmd.indexOf(w.length > 1 ? w : "/");
+      items.push({ kind: "slash", value: c.cmd + (takes ? " " : ""), label: c.cmd + (c.usage ? ` ${c.usage}` : ""), match: [Math.max(0, i), Math.max(0, i) + (w.length > 1 ? w.length : 1)], desc: c.desc, more: takes });
+    }
+  } else {
+    const spec = specs.find((c) => c.cmd === value.slice(0, sp));
+    if (!spec) return closeAc();
+    const rest = value.slice(sp + 1);
+    const word = rest.match(/(\S*)$/)[1];
+    const done = rest.slice(0, rest.length - word.length).trim().split(/\s+/).filter(Boolean);
+    const head = value.slice(0, value.length - word.length);
+    if (spec.dirs) {
+      const paths = await invoke("complete_path", { cwd: S.cwd, word }).catch(() => []);
+      if (seq !== ac.seq) return;
+      for (const p of paths) if (p.is_dir) items.push({ kind: "dir", value: head + p.value, label: p.value, match: [0, word.length] });
+      if (!items.length) usage = `${spec.cmd} ${spec.usage}: a folder`;
+    } else {
+      const a = spec.args?.(done, S) ?? {};
+      const w = word.toLowerCase();
+      for (const o of a.options ?? []) {
+        const v = o.value.toLowerCase();
+        const i = a.match === "contains" ? v.indexOf(w) : v.startsWith(w) ? 0 : -1;
+        if (i < 0 || o.value === word) continue;
+        items.push({ kind: "arg", value: head + o.value + (o.more ? " " : ""), label: o.value, match: [i, i + w.length], desc: o.desc, more: o.more });
+      }
+      // Starting with what's typed first.
+      items.sort((x, y) => (y.match[0] === 0) - (x.match[0] === 0));
+      if (a.free) usage = `${spec.cmd}${spec.usage ? " " + spec.usage : ""} · ${a.free}`;
+    }
+  }
+  if (seq !== ac.seq) return;
+  ac.full = true; // Tab takes the first one
+  ac.slash = true;
+  ac.usage = usage;
+  ac.search = false;
+  ac.items = items.slice(0, 60);
+  ac.sel = -1;
+  ac.items.length || usage ? renderAc() : closeAc();
 }
 
 // ---------- ⌃R: history search ----------
@@ -1372,7 +1476,7 @@ function historySearch(step = false) {
   renderAc();
 }
 
-const AC_ICON = { history: "↺", command: "›_", dir: "▸", file: "·", prompt: "❯" };
+const AC_ICON = { history: "↺", command: "›_", dir: "▸", file: "·", prompt: "❯", slash: "/", arg: "›" };
 function renderAc() {
   const el = $("ac");
   el.innerHTML = "";
@@ -1384,14 +1488,16 @@ function renderAc() {
     row.className = "ac-item" + (i === ac.sel ? " sel" : "");
     const [a, b] = it.match ?? [0, 0];
     const label = `${esc(it.label.slice(0, a))}<b>${esc(it.label.slice(a, b))}</b>${esc(it.label.slice(b))}`;
-    row.innerHTML = `<span class="ac-icon ${it.kind}">${AC_ICON[it.kind]}</span><span class="ac-label">${label}</span><span class="ac-kind">${it.kind}</span>`;
+    row.innerHTML = `<span class="ac-icon ${it.kind}">${AC_ICON[it.kind]}</span><span class="ac-label">${label}</span>` +
+      (it.desc != null ? `<span class="ac-desc">${esc(it.desc)}</span>` : `<span class="ac-kind">${it.kind}</span>`);
     row.onmousedown = (e) => { e.preventDefault(); acceptAc(i); };
     row.onmousemove = () => { if (ac.sel !== i) { ac.sel = i; renderAc(); } };
     el.appendChild(row);
   });
+  if (ac.slash && ac.usage) el.insertAdjacentHTML("beforeend", `<div class="ac-usage">${esc(ac.usage)}</div>`);
   const hint = document.createElement("div");
   hint.className = "ac-hint";
-  hint.textContent = ac.search ? "History search · type to filter · ⌃R / ↑↓ older · ⏎ / Tab use · Esc close"
+  hint.textContent = ac.slash ? (ac.items.length ? "↑↓ select · Tab accept · ⏎ run · Esc close" : "⏎ run · Esc close") : ac.search ? "History search · type to filter · ⌃R / ↑↓ older · ⏎ / Tab use · Esc close"
     : ac.full ? "↑↓ select · Tab / ⏎ accept · Esc close"
     : "History · ↑↓ select · ⏎ accept · Tab for commands & files · Esc close";
   el.appendChild(hint);
@@ -1403,6 +1509,8 @@ function renderAc() {
 function closeAc() {
   ac.open = false;
   ac.search = false;
+  ac.slash = false;
+  ac.usage = "";
   ac.items = [];
   ac.sel = -1;
   ac.seq++;
@@ -1418,8 +1526,9 @@ function acceptAc(i) {
   autosize();
   updateGlyph();
   ta.focus();
-  // Keep completing into folders and after a command name.
+  // Keep completing into folders, after a command name, and into a command's next parameter.
   if (it.kind === "dir" || it.kind === "command") updateAutocomplete(true);
+  else if ((it.kind === "slash" || it.kind === "arg") && it.more) updateAutocomplete();
   else closeAc();
 }
 

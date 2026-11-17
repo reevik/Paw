@@ -810,7 +810,7 @@ fn detect_chatgpt(cfg: &ProviderConfig) -> ProviderView {
 /// the ones that can call tools.
 fn detect_openrouter(cfg: &ProviderConfig) -> ProviderView {
     use crate::paw_agent::openrouter;
-    let connected = crate::paw_agent::keychain::get(openrouter::PROVIDER).is_some();
+    let connected = crate::paw_agent::keychain::has(openrouter::PROVIDER); // without reading the key: no prompt
     if !connected {
         return provider_view(openrouter::PROVIDER, "OpenRouter", "openrouter", false, "not connected yet".into(), vec![], &cfg.custom_models);
     }

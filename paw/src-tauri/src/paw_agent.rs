@@ -1439,6 +1439,12 @@ write (a whole file), shell (a command line, `sh -c`).\n\
 
 pub mod keychain {
     //! Paw's Keychain items: one service, an account per item.
+    //!
+    //! Reading an item's secret is what makes macOS ask whether Paw may (once
+    //! per item, with Always Allow). Checking that an item exists doesn't ask,
+    //! so status ("signed in?", "key saved?") uses `has*`, and the names shown
+    //! next to sign-ins come from `~/.paw/signins.json` (not secret), not from
+    //! the Keychain.
     use security_framework::passwords::{delete_generic_password, get_generic_password, set_generic_password};
 
     fn account(provider: &str) -> String {
@@ -1450,6 +1456,56 @@ pub mod keychain {
             .ok()
             .and_then(|b| String::from_utf8(b).ok())
             .filter(|s| !s.is_empty())
+    }
+
+    /// Does this item exist? Its attributes only: no secret, no prompt.
+    fn exists(service: &str, account: &str) -> bool {
+        use security_framework::item::{ItemClass, ItemSearchOptions, Limit};
+        ItemSearchOptions::new()
+            .class(ItemClass::generic_password())
+            .service(service)
+            .account(account)
+            .load_attributes(true)
+            .limit(Limit::Max(1))
+            .search()
+            .is_ok_and(|r| !r.is_empty())
+    }
+
+    /// Is a key saved for this provider (here, or from before the rename)? Never asks.
+    pub fn has(provider: &str) -> bool {
+        has_item(&account(provider)) || exists(crate::paths::legacy_keychain_service(), &account(provider))
+    }
+
+    /// Does Paw's item `account` exist? Never asks.
+    pub fn has_item(account: &str) -> bool {
+        exists(crate::paths::keychain_service(), account)
+    }
+
+    fn notes_path() -> Option<std::path::PathBuf> {
+        crate::paths::home().map(|h| h.join("signins.json"))
+    }
+
+    /// A sign-in's account name (an email, a GitHub login), kept outside the
+    /// Keychain so showing it doesn't ask.
+    pub fn note(key: &str) -> Option<String> {
+        let text = std::fs::read_to_string(notes_path()?).ok()?;
+        let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+        v.get(key)?.as_str().filter(|s| !s.is_empty()).map(String::from)
+    }
+
+    /// Keep (or with None, forget) a sign-in's account name.
+    pub fn set_note(key: &str, value: Option<&str>) {
+        let Some(path) = notes_path() else { return };
+        let mut v: serde_json::Map<String, serde_json::Value> =
+            std::fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+        match value.filter(|s| !s.is_empty()) {
+            Some(x) => v.insert(key.to_string(), x.into()),
+            None => v.remove(key),
+        };
+        if let Ok(text) = serde_json::to_string_pretty(&v) {
+            let _ = std::fs::create_dir_all(path.parent().unwrap_or(std::path::Path::new(".")));
+            let _ = std::fs::write(&path, text);
+        }
     }
 
     /// The saved key; one saved before the rename (Hive → Paw) is moved over.
@@ -1749,7 +1805,7 @@ pub async fn paw_key_status(app: tauri::AppHandle, reg: tauri::State<'_, crate::
     let saved = move || {
         ids.into_iter()
             .map(|p| {
-                let saved = keychain::get(&p).is_some();
+                let saved = keychain::has(&p); // without reading it: no prompt
                 (p, saved)
             })
             .collect()

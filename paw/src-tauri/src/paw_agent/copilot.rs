@@ -112,9 +112,10 @@ pub struct Status {
     pub cli: Option<String>,
 }
 
+/// Signed in, and as whom: without reading the Keychain's secrets (no prompt).
 pub fn status(home: &Path) -> Status {
-    let signed_in = keychain::item(TOKEN_ITEM).is_some();
-    Status { signed_in, login: signed_in.then(|| keychain::item(LOGIN_ITEM)).flatten(), cli: cli_login(home) }
+    let signed_in = keychain::has_item(TOKEN_ITEM);
+    Status { signed_in, login: signed_in.then(|| keychain::note(LOGIN_ITEM)).flatten(), cli: cli_login(home) }
 }
 
 /// The GitHub token a session uses, and whether it's Copilot CLI's.
@@ -127,6 +128,12 @@ pub struct Source {
 /// Keychain item.
 pub fn source(home: &Path) -> Result<Source, String> {
     if let Some(token) = keychain::item(TOKEN_ITEM) {
+        // A sign-in from before the login was kept outside the Keychain: keep it now.
+        if keychain::note(LOGIN_ITEM).is_none() {
+            if let Some(login) = keychain::item(LOGIN_ITEM) {
+                keychain::set_note(LOGIN_ITEM, Some(&login));
+            }
+        }
         return Ok(Source { token, cli: false });
     }
     if cli_login(home).is_some() {
@@ -278,11 +285,13 @@ pub async fn sign_in(show: impl Fn(DeviceCode)) -> Result<String, String> {
     let login = github_login(&token).await.unwrap_or_default();
     keychain::set_item(TOKEN_ITEM, &token)?;
     keychain::set_item(LOGIN_ITEM, &login)?;
+    keychain::set_note(LOGIN_ITEM, Some(&login));
     Ok(login)
 }
 
 pub fn sign_out() -> Result<(), String> {
     keychain::delete_item(TOKEN_ITEM)?;
+    keychain::set_note(LOGIN_ITEM, None);
     keychain::delete_item(LOGIN_ITEM)
 }
 

@@ -138,6 +138,12 @@ async fn paw_tokens() -> Result<Tokens, String> {
     let _one = RENEWING.lock().await;
     let saved = blocking(|| keychain::item(TOKEN_ITEM)).await;
     let t: Tokens = saved.and_then(|s| serde_json::from_str(&s).ok()).ok_or(NOT_SIGNED_IN)?;
+    // A sign-in from before the account name was kept outside the Keychain: keep it now.
+    if keychain::note(LOGIN_ITEM).is_none() {
+        if let Some(login) = blocking(|| keychain::item(LOGIN_ITEM)).await {
+            keychain::set_note(LOGIN_ITEM, Some(&login));
+        }
+    }
     if t.expires > now_ms() + MARGIN_MS {
         return Ok(t);
     }
@@ -269,9 +275,10 @@ pub struct Status {
     pub login: Option<String>,
 }
 
+/// Signed in, and as whom: without reading the Keychain's secrets (no prompt).
 pub fn status() -> Status {
-    let signed_in = keychain::item(TOKEN_ITEM).is_some();
-    Status { signed_in, login: signed_in.then(|| keychain::item(LOGIN_ITEM)).flatten() }
+    let signed_in = keychain::has_item(TOKEN_ITEM);
+    Status { signed_in, login: signed_in.then(|| keychain::note(LOGIN_ITEM)).flatten() }
 }
 
 fn authorize_url(redirect: &str, challenge: &str, state: &str) -> String {
@@ -325,6 +332,7 @@ pub async fn sign_in(show: impl Fn(String)) -> Result<String, String> {
     let email = login.clone();
     blocking(move || {
         keychain::set_item(TOKEN_ITEM, &json)?;
+        keychain::set_note(LOGIN_ITEM, Some(&email));
         keychain::set_item(LOGIN_ITEM, &email)
     })
     .await?;
@@ -337,6 +345,7 @@ pub async fn sign_out() -> Result<(), String> {
     let saved = blocking(|| keychain::item(TOKEN_ITEM)).await;
     blocking(|| {
         keychain::delete_item(TOKEN_ITEM)?;
+        keychain::set_note(LOGIN_ITEM, None);
         keychain::delete_item(LOGIN_ITEM)
     })
     .await?;

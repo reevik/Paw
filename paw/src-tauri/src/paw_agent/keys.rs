@@ -87,6 +87,10 @@ pub trait Probe {
     fn keychain_read(&self, service: &str) -> Option<String>;
     /// Paw's own key.
     fn paw_key(&self) -> Option<String>;
+    /// Is Paw's own key saved? (Without reading it: no prompt.)
+    fn paw_key_saved(&self) -> bool {
+        self.paw_key().is_some()
+    }
     /// Paw's own Claude sign-in: the account's email ("" when unknown).
     fn paw_claude(&self) -> Option<String>;
     /// Run Claude Code's `apiKeyHelper` command; its output is the key.
@@ -168,7 +172,7 @@ fn scan(p: &dyn Probe) -> Vec<Found> {
             .sign_in(),
         );
     }
-    if p.paw_key().is_some() {
+    if p.paw_key_saved() {
         out.push(found(PAW, "Paw's own key", "Saved in Settings (your Keychain)", "", |p| {
             p.paw_key().map(|k| cred(Secret::ApiKey(k), None, PAW))
         }));
@@ -352,6 +356,10 @@ impl Probe for System {
 
     fn paw_key(&self) -> Option<String> {
         super::keychain::get("anthropic")
+    }
+
+    fn paw_key_saved(&self) -> bool {
+        super::keychain::has("anthropic")
     }
 
     fn paw_claude(&self) -> Option<String> {

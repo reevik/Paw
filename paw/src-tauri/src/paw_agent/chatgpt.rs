@@ -47,16 +47,30 @@ fn item_for(key: &str) -> String {
 impl TokenStore for KeychainStore {
     fn load<'a>(&'a self, key: &'a str) -> WasmBoxedFuture<'a, Result<Option<String>, BoxError>> {
         let item = item_for(key);
-        Box::pin(async move { blocking(move || keychain::item(&item)).await })
+        Box::pin(async move {
+            let name = item.clone();
+            let record = blocking(move || keychain::item(&item)).await?;
+            // Keep the account's email outside the Keychain, for the status (no prompt).
+            if let Some(email) = record.as_deref().and_then(login_of) {
+                if keychain::note(&name).as_deref() != Some(email.as_str()) {
+                    keychain::set_note(&name, Some(&email));
+                }
+            }
+            Ok(record)
+        })
     }
 
     fn save<'a>(&'a self, key: &'a str, record: &'a str) -> WasmBoxedFuture<'a, Result<(), BoxError>> {
         let (item, record) = (item_for(key), record.to_string());
+        if let Some(email) = login_of(&record) {
+            keychain::set_note(&item, Some(&email));
+        }
         Box::pin(async move { blocking(move || keychain::set_item(&item, &record)).await?.map_err(BoxError::from) })
     }
 
     fn delete<'a>(&'a self, key: &'a str) -> WasmBoxedFuture<'a, Result<(), BoxError>> {
         let item = item_for(key);
+        keychain::set_note(&item, None);
         Box::pin(async move { blocking(move || keychain::delete_item(&item)).await?.map_err(BoxError::from) })
     }
 }
@@ -140,11 +154,10 @@ fn login_of(record: &str) -> Option<String> {
     email.as_str().filter(|e| !e.is_empty()).map(String::from)
 }
 
+/// Signed in, and as whom: without reading the Keychain's secrets (no prompt).
 pub fn status() -> Status {
-    match keychain::item(TOKEN_ITEM) {
-        Some(record) => Status { signed_in: true, login: login_of(&record) },
-        None => Status { signed_in: false, login: None },
-    }
+    let signed_in = keychain::has_item(TOKEN_ITEM);
+    Status { signed_in, login: signed_in.then(|| keychain::note(TOKEN_ITEM)).flatten() }
 }
 
 /// Sign in with ChatGPT in the browser: `page` gets the sign-in page's

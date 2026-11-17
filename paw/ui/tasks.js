@@ -1072,7 +1072,7 @@ function bindTaskView(P) {
     saveWorkspaceSoon();
     if (rerender) { el.blur(); taskChanged(T); }
   };
-  host.addEventListener("input", (e) => { if (e.target.matches("input[type=text], input:not([type]), textarea")) edit(e, false); });
+  host.addEventListener("input", (e) => { if (S()?.factory) return factoryInput(S(), e); if (e.target.matches("input[type=text], input:not([type]), textarea")) edit(e, false); });
   host.addEventListener("change", (e) => { const T = S(); if (T?.factory) return factoryChange(T, e, P); edit(e, true); });
   host.addEventListener("focusout", (e) => {
     // Titles show in the graph: redraw when you leave the field.

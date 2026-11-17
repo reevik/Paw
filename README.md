@@ -54,6 +54,7 @@ nodes:
 - **Any shape:** nodes run in order or side by side; they can join (`join: all` or `any`), branch (`when` an earlier answer matches) and wait (`wait` until a command succeeds).
 - **Each node its own agent:** its model, skills, built-in tools and MCP servers.
 - **Started on their own:** `every`, `at` (times of day), `watch` (a command), `webhook` (`POST 127.0.0.1:4747/factories/<id>`, its body going to the nodes) and `file`. `repeat` loops a pipeline.
+- **Side by side:** every run has its own execution id (a UUID) and folder, `~/.paw/factories/<id>/<execution-id>/`. Runs of one factory can go at once, each in its own project folder and with its own task.
 - **Watched like a task:** the graph shows each node's state (failed ones glow red, waiting ones amber), a click shows a node's task and activity, and the timeline shows where the time went. Approvals wait in the view until you answer them.
 
 The full format is in [docs/factories.md](docs/factories.md).

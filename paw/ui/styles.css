@@ -1218,7 +1218,22 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
   width: 11px; height: 11px; flex-shrink: 0; border: 1.5px solid currentColor; border-radius: 2px; opacity: .75;
   background: linear-gradient(currentColor, currentColor) center / 100% 1.5px no-repeat;
 }
-.fa-runs { width: auto; max-width: 190px; padding: 2px 6px; font-size: 11.5px; }
+.fa-runs { width: auto; max-width: 300px; padding: 2px 6px; font-size: 11.5px; }
+.fa-id {
+  padding: 0 5px; border-radius: 5px; font: 500 11px var(--mono, ui-monospace, monospace);
+  color: var(--text-3); background: var(--t-hover); user-select: text;
+}
+.tk-btn.on { box-shadow: inset 0 0 0 1px var(--accent); }
+.fa-runform {
+  display: grid; gap: 5px; margin-top: 8px; padding: 9px 10px; border-radius: 8px; flex-shrink: 0;
+  border: 0.5px solid var(--t-border); background: color-mix(in srgb, var(--t-fg) 3%, transparent);
+}
+.fa-runform .tk-lbl { margin: 2px 0 0; }
+.fa-runform textarea { resize: vertical; min-height: 38px; }
+.fa-row { display: flex; align-items: center; gap: 8px; }
+.fa-row .tk-in { flex: 1; min-width: 0; }
+.fa-exec { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-top: 4px; font-size: 11.5px; }
+.fa-exec code { font: 11px var(--mono, ui-monospace, monospace); user-select: text; overflow-wrap: anywhere; }
 .fa-desc { margin: 6px 0 2px; color: var(--t-fg); }
 .fa-chip {
   display: inline-block; margin: 0 4px 4px 0; padding: 1px 7px; border-radius: 9px;

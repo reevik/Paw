@@ -7,8 +7,12 @@
 //! output (`agent:output`) and approval requests (`paw:approval`) come back
 //! through the app's events. Wait nodes run their command until it succeeds.
 //!
-//! Every change goes to windows as a `factory:run` event (the whole run), and
-//! runs are kept in `~/.paw/factories/.runs/` so their history survives.
+//! Every change goes to windows as a `factory:run` event (the whole run).
+//! Each run (an execution) has a UUID and a folder of its own,
+//! `~/.paw/factories/<factory-id>/<execution-id>/`: `run.json` (kept while it
+//! runs, so a restart doesn't lose it) and `nodes/<node>/` with each agent
+//! node's conversations, scripts and files. A factory can have several runs
+//! going at once, each in its own project folder.
 
 use super::*;
 use crate::paw_agent::{PawAgents, StartOpts};
@@ -39,7 +43,7 @@ pub struct NodeRun {
     pub state: String,
     #[serde(default)]
     pub agent: Option<u32>,
-    /// Its folder in `~/.paw/session/` (the conversation is kept there).
+    /// Its conversation's id (kept in the run's `nodes/<node>/`).
     #[serde(default)]
     pub session: Option<String>,
     #[serde(default)]
@@ -98,8 +102,13 @@ pub struct Feedback {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Run {
+    /// The execution id (a UUID; older runs have shorter ids).
     pub id: String,
+    /// The factory's id (its file name).
     pub factory: String,
+    /// The project folder this run works in (empty: the factory's `folder`).
+    #[serde(default)]
+    pub folder: String,
     /// The factory as it was when the run started.
     pub def: Factory,
     /// What started it: "manual", or the trigger.
@@ -138,6 +147,22 @@ impl Run {
 
 fn now_ms() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
+}
+
+/// A random (version 4) UUID.
+fn uuid_v4() -> String {
+    use ring::rand::SecureRandom;
+    let mut b = [0u8; 16];
+    if ring::rand::SystemRandom::new().fill(&mut b).is_err() {
+        // No randomness: time and a counter still make it unique here.
+        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        b[..8].copy_from_slice(&(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos()) as u64).to_be_bytes());
+        b[8..].copy_from_slice(&N.fetch_add(1, std::sync::atomic::Ordering::Relaxed).to_be_bytes());
+    }
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    let h: String = b.iter().map(|x| format!("{x:02x}")).collect();
+    format!("{}-{}-{}-{}-{}", &h[..8], &h[8..12], &h[12..16], &h[16..20], &h[20..])
 }
 
 fn new_id(prefix: &str) -> String {
@@ -229,7 +254,7 @@ fn settings() -> (usize, String) {
 }
 
 fn window_model_path() -> Option<PathBuf> {
-    factories_dir().map(|d| d.join(".runs").join("default-model"))
+    factories_dir().map(|d| d.join(".default-model"))
 }
 
 fn window_model() -> Option<String> {
@@ -248,17 +273,19 @@ pub fn remember_window_model(model: Option<String>) {
     }
 }
 
-fn runs_dir() -> Option<PathBuf> {
-    crate::paths::home().map(|h| dir(&h).join(".runs"))
-}
-
 pub fn factories_dir() -> Option<PathBuf> {
     crate::paths::home().map(|h| dir(&h))
 }
 
-/// The folder a factory works in.
-fn folder_of(def: &Factory) -> PathBuf {
-    let f = def.folder.trim();
+/// A run's own folder: `~/.paw/factories/<factory-id>/<execution-id>/`.
+pub fn run_dir(factory: &str, run: &str) -> Option<PathBuf> {
+    let ok = |s: &str| valid_id(s) || (s.len() <= 64 && !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'));
+    (ok(factory) && ok(run)).then(|| factories_dir().map(|d| d.join(factory).join(run))).flatten()
+}
+
+/// The folder a run works in: the one it was given, else its factory's.
+fn folder_of(r: &Run) -> PathBuf {
+    let f = if r.folder.trim().is_empty() { r.def.folder.trim() } else { r.folder.trim() };
     crate::agents::expand_home(if f.is_empty() { "~" } else { f })
 }
 
@@ -268,23 +295,25 @@ impl Runner {
         // Loops go on after Paw starts again: a repeating factory whose last run
         // finished, or was cut off when Paw stopped, starts again (not one that
         // failed or that you stopped). A moment later, once pauses are known.
-        let resume: Vec<String> = {
+        // Each project folder's loop goes on, with its run's payload.
+        let resume: Vec<(String, String, Option<String>)> = {
             let st = runner.state.lock().unwrap();
-            let mut latest: HashMap<&str, &Run> = HashMap::new();
+            let mut latest: HashMap<(&str, &str), &Run> = HashMap::new();
             for r in &st.runs {
-                if latest.get(r.factory.as_str()).is_none_or(|l| l.started_at < r.started_at) {
-                    latest.insert(&r.factory, r);
+                let k = (r.factory.as_str(), r.folder.as_str());
+                if latest.get(&k).is_none_or(|l| l.started_at < r.started_at) {
+                    latest.insert(k, r);
                 }
             }
-            latest.values().filter(|r| r.state == "done" || r.note == INTERRUPTED).map(|r| r.factory.clone()).collect()
+            latest.values().filter(|r| r.state == "done" || r.note == INTERRUPTED).map(|r| (r.factory.clone(), r.folder.clone(), r.payload.clone())).collect()
         };
         let r = runner.clone();
         tauri::async_runtime::spawn(async move {
             tokio::time::sleep(Duration::from_secs(3)).await;
-            for f in resume {
-                let repeats = factories_dir().and_then(|d| ["yaml", "yml"].iter().map(|e| d.join(format!("{f}.{e}"))).find(|p| p.is_file())).and_then(|p| load(&f, &p).factory).is_some_and(|d| repeat_of(&d).is_some());
-                if repeats && !r.is_paused(&f) && !r.running(&f) {
-                    let _ = r.start(&f, "repeat", None);
+            for (f, folder, payload) in resume {
+                let repeats = factory_file(&f).and_then(|p| load(&f, &p).factory).is_some_and(|d| repeat_of(&d).is_some());
+                if repeats && !r.is_paused(&f) && !r.running_in(&f, &folder) {
+                    let _ = r.start(&f, "repeat", payload, Some(folder).filter(|s| !s.is_empty()));
                 }
             }
         });
@@ -329,27 +358,32 @@ impl Runner {
         self.paused.lock().unwrap().contains(factory)
     }
 
-    /// Is a run of this factory going?
-    pub fn running(&self, factory: &str) -> bool {
-        self.state.lock().unwrap().runs.iter().any(|r| r.factory == factory && active_run(r))
+    /// How many runs of this factory are going.
+    pub fn running(&self, factory: &str) -> usize {
+        self.state.lock().unwrap().runs.iter().filter(|r| r.factory == factory && active_run(r)).count()
+    }
+
+    /// Is a run of this factory going in this project folder ("" : its own)?
+    pub fn running_in(&self, factory: &str, folder: &str) -> bool {
+        self.state.lock().unwrap().runs.iter().any(|r| r.factory == factory && active_run(r) && r.folder == folder)
     }
 
     pub fn get(&self, run: &str) -> Option<Run> {
         self.state.lock().unwrap().runs.iter().find(|r| r.id == run).cloned()
     }
 
-    /// Start a run of a factory (by its file name).
-    pub fn start(self: &Arc<Self>, factory: &str, trigger: &str, payload: Option<String>) -> Result<String, String> {
-        let dir = factories_dir().ok_or("Paw can't find its folder (~/.paw).")?;
-        let path = ["yaml", "yml"].iter().map(|e| dir.join(format!("{factory}.{e}"))).find(|p| p.is_file()).ok_or(format!("There's no factory “{factory}”."))?;
+    /// Start a run of a factory (by its id, the file name), in its own folder
+    /// or in `folder` (another project); its execution id.
+    pub fn start(self: &Arc<Self>, factory: &str, trigger: &str, payload: Option<String>, folder: Option<String>) -> Result<String, String> {
+        factories_dir().ok_or("Paw can't find its folder (~/.paw).")?;
+        let path = factory_file(factory).ok_or(format!("There's no factory “{factory}”."))?;
         let found = load(factory, &path);
         let def = found.factory.ok_or_else(|| format!("{factory}.yaml: {}", found.error.unwrap_or_default()))?;
-        if !folder_of(&def).is_dir() {
-            return Err(format!("The factory's folder doesn't exist: {}", def.folder));
-        }
+        let folder = folder.map(|f| f.trim().to_string()).filter(|f| !f.is_empty()).unwrap_or_default();
         let run = Run {
-            id: new_id("r"),
+            id: uuid_v4(),
             factory: factory.to_string(),
+            folder,
             nodes: def.nodes.iter().map(|n| NodeRun { id: n.id.clone(), state: "waiting".into(), ..Default::default() }).collect(),
             def,
             trigger: trigger.to_string(),
@@ -359,6 +393,9 @@ impl Runner {
             ended_at: None,
             note: String::new(),
         };
+        if !folder_of(&run).is_dir() {
+            return Err(format!("The folder doesn't exist: {}", if run.folder.is_empty() { &run.def.folder } else { &run.folder }));
+        }
         let id = run.id.clone();
         {
             let mut st = self.state.lock().unwrap();
@@ -369,8 +406,8 @@ impl Runner {
                 let old: Vec<String> = mine[..mine.len() - RUNS_KEPT].iter().map(|&i| st.runs[i].id.clone()).collect();
                 st.runs.retain(|r| !old.contains(&r.id));
                 for o in old {
-                    if let Some(d) = runs_dir() {
-                        let _ = std::fs::remove_file(d.join(format!("{o}.json")));
+                    if let Some(d) = run_dir(factory, &o) {
+                        let _ = std::fs::remove_dir_all(d);
                     }
                 }
             }
@@ -457,18 +494,25 @@ impl Runner {
             let mut st = self.state.lock().unwrap();
             // Agent nodes at work (or starting) in every run count against the limit.
             let mut busy = st.runs.iter().flat_map(|r| r.nodes.iter().zip(&r.def.nodes)).filter(|(n, d)| active(&n.state) && !d.is_wait()).count();
+            // Folders a node is changing files in: one such node per folder at a time.
+            let mut editing: HashSet<PathBuf> = st
+                .runs
+                .iter()
+                .filter(|r| r.nodes.iter().zip(&r.def.nodes).any(|(n, d)| active(&n.state) && d.edits && !d.is_wait()))
+                .map(folder_of)
+                .collect();
             let mut starts = vec![];
             let mut repeats = vec![];
             let ids: Vec<String> = st.runs.iter().filter(|r| r.state == "running").map(|r| r.id.clone()).collect();
             for id in ids {
                 let r = st.runs.iter_mut().find(|r| r.id == id).unwrap();
-                starts.extend(pump(r, limit, &mut busy, &default_model));
+                starts.extend(pump_in(r, limit, &mut busy, &mut editing, &default_model));
                 // A run that just ended: a repeating factory starts again.
                 if let Some((after, on_failure)) = repeat_of(&r.def).filter(|_| r.state == "done" || r.state == "failed") {
                     if r.state == "done" || on_failure {
                         let when = format!("The next run starts in {}.", fmt_duration(after));
                         r.note = if r.note.is_empty() { when } else { format!("{} {when}", r.note) };
-                        repeats.push((r.factory.clone(), after));
+                        repeats.push((r.factory.clone(), r.folder.clone(), r.payload.clone(), after));
                     } else {
                         r.note = format!("{} It repeats, but stops after a failed run: fix it and press Run now.", r.note).trim().to_string();
                     }
@@ -481,15 +525,15 @@ impl Runner {
         for s in starts {
             self.launch(s);
         }
-        for (factory, after) in repeats {
+        for (factory, folder, payload, after) in repeats {
             let me = self.clone();
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(after).await;
-                // Paused meanwhile, or already going again (Run now): nothing to do.
-                if me.is_paused(&factory) || me.running(&factory) {
+                // Paused meanwhile, or going again in this folder (Run now): nothing to do.
+                if me.is_paused(&factory) || me.running_in(&factory, &folder) {
                     return;
                 }
-                if let Err(e) = me.start(&factory, "repeat", None) {
+                if let Err(e) = me.start(&factory, "repeat", payload, Some(folder).filter(|f| !f.is_empty())) {
                     eprintln!("Paw: factory {factory} couldn't start again: {e}");
                 }
             });
@@ -743,8 +787,9 @@ fn active_run(r: &Run) -> bool {
     r.state == "running"
 }
 
-/// Decide what starts next in a run (and skip what won't run).
-fn pump(r: &mut Run, limit: usize, busy: &mut usize, default_model: &str) -> Vec<Start> {
+/// Decide what starts next in a run (and skip what won't run). `editing`:
+/// the folders a node is changing files in (this run's own, and others').
+fn pump_in(r: &mut Run, limit: usize, busy: &mut usize, editing: &mut HashSet<PathBuf>, default_model: &str) -> Vec<Start> {
     let order = topo_order(&r.def.nodes).unwrap_or_default();
     // Skips can make more nodes ready, so go round until nothing changes.
     loop {
@@ -795,15 +840,19 @@ fn pump(r: &mut Run, limit: usize, busy: &mut usize, default_model: &str) -> Vec
             break;
         }
     }
-    // Start what's ready: one node changing files at a time, within Agents at once.
+    // Start what's ready: one node changing files in a folder at a time, within Agents at once.
     let mut starts = vec![];
-    let mut editing = r.nodes.iter().zip(&r.def.nodes).any(|(n, d)| active(&n.state) && d.edits && !d.is_wait());
+    let folder = folder_of(r);
+    if r.nodes.iter().zip(&r.def.nodes).any(|(n, d)| active(&n.state) && d.edits && !d.is_wait()) {
+        editing.insert(folder.clone());
+    }
+    let dir = run_dir(&r.factory, &r.id);
     for &i in &order {
         let def = r.def.nodes[i].clone();
         if r.nodes[i].state != "waiting" || !ready_now(r, &def) {
             continue;
         }
-        let folder = folder_of(&r.def);
+        let folder = folder.clone();
         if let Some(cmd) = &def.wait {
             let n = &mut r.nodes[i];
             n.state = "running".into();
@@ -819,7 +868,7 @@ fn pump(r: &mut Run, limit: usize, busy: &mut usize, default_model: &str) -> Vec
             });
             continue;
         }
-        if *busy >= limit || (def.edits && editing) {
+        if *busy >= limit || (def.edits && editing.contains(&folder)) {
             continue;
         }
         let model = [def.model.trim(), r.def.model.trim(), default_model].into_iter().find(|m| !m.is_empty()).unwrap_or("").to_string();
@@ -848,7 +897,7 @@ fn pump(r: &mut Run, limit: usize, busy: &mut usize, default_model: &str) -> Vec
         n.log.clear();
         *busy += 1;
         if def.edits {
-            editing = true;
+            editing.insert(folder.clone());
         }
         let prompt = node_prompt(r, &def);
         starts.push(Start::Agent {
@@ -870,6 +919,7 @@ fn pump(r: &mut Run, limit: usize, busy: &mut usize, default_model: &str) -> Vec
                 tools: def.tools.clone(),
                 skills: def.skills.clone(),
                 mcp: def.mcp.clone(),
+                dir: dir.as_ref().map(|d| d.join("nodes").join(&def.id)),
             }),
         });
     }
@@ -958,7 +1008,7 @@ fn node_prompt(r: &Run, def: &Node) -> String {
     let mut parts = vec![format!(
         "You're one node of the factory “{}”, a pipeline of agents working in {}.{}",
         r.def.name,
-        r.def.folder.trim().is_empty().then_some("~").unwrap_or(r.def.folder.trim()),
+        tildify(&folder_of(r)),
         if r.def.description.trim().is_empty() { String::new() } else { format!("\nThe factory: {}", r.def.description.trim()) }
     )];
     parts.push(format!("Your node: {}{}", def.label(), if def.description.trim().is_empty() { String::new() } else { format!("\n{}", def.description.trim()) }));
@@ -966,7 +1016,11 @@ fn node_prompt(r: &Run, def: &Node) -> String {
         parts.push(format!("This run was started by its trigger ({}).", r.trigger));
     }
     if let Some(p) = r.payload.as_deref().filter(|p| !p.trim().is_empty()) {
-        parts.push(format!("<trigger>\n{}\n</trigger>", clip_end(p.trim(), 4000)));
+        if r.trigger == "manual" {
+            parts.push(format!("The task for this run:\n<task>\n{}\n</task>", clip_end(p.trim(), 4000)));
+        } else {
+            parts.push(format!("<trigger>\n{}\n</trigger>", clip_end(p.trim(), 4000)));
+        }
     }
     if !inputs.is_empty() {
         parts.push(format!("Results of the nodes before yours:\n{inputs}"));
@@ -1042,26 +1096,69 @@ fn fmt_duration(d: Duration) -> String {
     }
 }
 
+/// A path with the home folder as `~`.
+fn tildify(p: &Path) -> String {
+    let s = p.to_string_lossy().into_owned();
+    match std::env::var("HOME") {
+        Ok(h) if !h.is_empty() && s.starts_with(&h) => format!("~{}", &s[h.len()..]),
+        _ => s,
+    }
+}
+
+/// A factory's file by its id: `<id>.yaml` (or `.yml`).
+fn factory_file(id: &str) -> Option<PathBuf> {
+    let d = factories_dir()?;
+    valid_id(id).then(|| ["yaml", "yml"].iter().map(|e| d.join(format!("{id}.{e}"))).find(|p| p.is_file())).flatten()
+}
+
 fn save_run(r: &Run) {
-    let Some(d) = runs_dir() else { return };
+    let Some(d) = run_dir(&r.factory, &r.id) else { return };
     let _ = std::fs::create_dir_all(&d);
     if let Ok(text) = serde_json::to_string(r) {
-        let tmp = d.join(format!(".{}.tmp", r.id));
+        let tmp = d.join(".run.json.tmp");
         if std::fs::write(&tmp, text).is_ok() {
-            let _ = std::fs::rename(&tmp, d.join(format!("{}.json", r.id)));
+            let _ = std::fs::rename(&tmp, d.join("run.json"));
         }
     }
 }
 
+/// Runs kept before runs had folders (`~/.paw/factories/.runs/<id>.json`)
+/// move to `<factory-id>/<execution-id>/run.json`.
+fn move_old_runs(dir: &Path) {
+    let old = dir.join(".runs");
+    let Ok(entries) = std::fs::read_dir(&old) else { return };
+    for e in entries.flatten() {
+        let p = e.path();
+        if p.file_name().is_some_and(|n| n == "default-model") {
+            let to = dir.join(".default-model");
+            if !to.exists() {
+                let _ = std::fs::rename(&p, to);
+            }
+            continue;
+        }
+        if p.extension().is_none_or(|x| x != "json") {
+            continue;
+        }
+        let Some(r) = std::fs::read_to_string(&p).ok().and_then(|t| serde_json::from_str::<Run>(&t).ok()) else { continue };
+        if run_dir(&r.factory, &r.id).is_some() {
+            save_run(&r);
+            let _ = std::fs::remove_file(&p);
+        }
+    }
+    let _ = std::fs::remove_dir(&old); // if it's empty now
+}
+
 /// Runs from before; any that were going when Paw stopped are marked stopped.
 fn load_runs() -> Vec<Run> {
-    let Some(d) = runs_dir() else { return vec![] };
-    let mut runs: Vec<Run> = std::fs::read_dir(&d)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
-        .filter_map(|e| serde_json::from_str(&std::fs::read_to_string(e.path()).ok()?).ok())
+    let Some(d) = factories_dir() else { return vec![] };
+    move_old_runs(&d);
+    let subdirs = |p: &Path| -> Vec<PathBuf> {
+        std::fs::read_dir(p).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.is_dir() && !p.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.'))).collect()
+    };
+    let mut runs: Vec<Run> = subdirs(&d)
+        .iter()
+        .flat_map(|f| subdirs(f))
+        .filter_map(|r| serde_json::from_str(&std::fs::read_to_string(r.join("run.json")).ok()?).ok())
         .collect();
     runs.sort_by_key(|r: &Run| r.started_at);
     for r in &mut runs {
@@ -1091,6 +1188,7 @@ mod tests {
         Run {
             id: "r1".into(),
             factory: "f".into(),
+            folder: String::new(),
             nodes: def.nodes.iter().map(|n| NodeRun { id: n.id.clone(), state: "waiting".into(), ..Default::default() }).collect(),
             def,
             trigger: "manual".into(),
@@ -1100,6 +1198,10 @@ mod tests {
             ended_at: None,
             note: String::new(),
         }
+    }
+
+    fn pump(r: &mut Run, limit: usize, busy: &mut usize, default_model: &str) -> Vec<Start> {
+        pump_in(r, limit, busy, &mut HashSet::new(), default_model)
     }
 
     fn started(starts: &[Start]) -> Vec<String> {
@@ -1129,6 +1231,29 @@ nodes:
   - { id: join, needs: [a, b], prompt: sum up, edits: false }
   - { id: first, needs: [a, b], join: any, prompt: quick note, edits: false }
 "#;
+
+    #[test]
+    fn execution_ids_are_uuids() {
+        let (a, b) = (uuid_v4(), uuid_v4());
+        assert_ne!(a, b);
+        let parts: Vec<usize> = a.split('-').map(str::len).collect();
+        assert_eq!(parts, [8, 4, 4, 4, 12]);
+        assert_eq!(&a[14..15], "4", "version 4");
+        assert!("89ab".contains(&a[19..20]), "the RFC 4122 variant");
+    }
+
+    #[test]
+    fn runs_in_one_folder_take_turns_changing_files_and_other_folders_dont_wait() {
+        const EDIT: &str = "name: E\nmodel: anthropic/claude-sonnet-5-5\nnodes:\n  - { id: fix, prompt: fix }\n";
+        let (mut a, mut b, mut c) = (run_of(EDIT), run_of(EDIT), run_of(EDIT));
+        a.folder = "/tmp/one".into();
+        b.folder = "/tmp/one".into();
+        c.folder = "/tmp/two".into();
+        let (mut busy, mut editing) = (0, HashSet::new());
+        assert_eq!(started(&pump_in(&mut a, 9, &mut busy, &mut editing, "")), ["fix"]);
+        assert!(pump_in(&mut b, 9, &mut busy, &mut editing, "").is_empty(), "the same folder waits");
+        assert_eq!(started(&pump_in(&mut c, 9, &mut busy, &mut editing, "")), ["fix"], "another folder goes on");
+    }
 
     #[test]
     fn parallel_nodes_start_together_and_joins_wait() {

@@ -43,7 +43,20 @@ pub struct Factory {
     /// Start again when a run finishes: `true`, or `{ after: 10s, on_failure: continue }`.
     #[serde(default)]
     pub repeat: Option<Repeat>,
+    /// How many runs triggers and repeat may have going at once (default 1).
+    /// Run now always starts one.
+    #[serde(default)]
+    pub parallel: Option<u32>,
     pub nodes: Vec<Node>,
+}
+
+pub const PARALLEL_MAX: u32 = 20;
+
+impl Factory {
+    /// Runs triggers may have going at once.
+    pub fn parallel_runs(&self) -> usize {
+        self.parallel.unwrap_or(1).clamp(1, PARALLEL_MAX) as usize
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -348,6 +361,9 @@ pub fn parse(text: &str) -> Result<Factory, String> {
 pub fn check(f: &Factory) -> Result<(), String> {
     if f.name.trim().is_empty() {
         return Err("The factory needs a name.".into());
+    }
+    if f.parallel.is_some_and(|p| p == 0 || p > PARALLEL_MAX) {
+        return Err(format!("parallel should be 1 to {PARALLEL_MAX} runs."));
     }
     if f.nodes.is_empty() {
         return Err("The factory has no nodes.".into());

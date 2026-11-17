@@ -1250,6 +1250,10 @@ pub struct StartOpts {
     /// Only these MCP servers (by name); unset: every one that's on.
     #[serde(default)]
     pub mcp: Option<Vec<String>>,
+    /// A folder to keep the conversation, scripts and files in instead of
+    /// `~/.paw/session/<id>` (a factory node's, inside its run's folder).
+    #[serde(skip)]
+    pub dir: Option<PathBuf>,
 }
 
 fn valid_conversation_id(s: &str) -> bool {
@@ -1284,7 +1288,10 @@ pub async fn paw_agent_start(
 
     let conversation = opts.session.clone().filter(|s| valid_conversation_id(s)).unwrap_or_else(new_conversation_id);
     // The tab's folder (a tab from before session folders: its conversation's).
-    let session_dir = crate::paths::ensure_session_dir(opts.paw_session.as_deref().filter(|s| crate::paths::valid_session_id(s)).unwrap_or(&conversation)).ok();
+    let session_dir = match &opts.dir {
+        Some(d) => ["files", "scripts", "conversations"].iter().all(|s| std::fs::create_dir_all(d.join(s)).is_ok()).then(|| d.clone()),
+        None => crate::paths::ensure_session_dir(opts.paw_session.as_deref().filter(|s| crate::paths::valid_session_id(s)).unwrap_or(&conversation)).ok(),
+    };
     let scripts = session_dir.as_ref().map(|d| d.join("scripts"));
     let app2 = app.clone();
     let scripts2 = scripts.clone();

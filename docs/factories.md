@@ -2,7 +2,7 @@
 
 A factory is a pipeline of agents that you describe once in a YAML file. Paw runs it in the background, so a run keeps going when the window is closed. Each **node** is one agent with its own task, model, skills, tools and MCP servers, or a **wait** that holds the run until a command succeeds.
 
-Factory files live in `~/.paw/factories/<name>.yaml`. The sidebar's **Factories** section lists them. Click one to open it, or press **+** to make a new one. In a tab, `/factories` lists them and `/factory new <name>` makes one.
+Factory files live in `~/.paw/factories/<id>.yaml`: the file name is the factory's **id** (`error-spike`), which webhooks, run folders and `/factory` use; `name` is what you see. The sidebar's **Factories** section lists them. Click one to open it, or press **+** to make a new one. In a tab, `/factories` lists them and `/factory new <name>` makes one.
 
 ## The factory view
 
@@ -10,7 +10,7 @@ A factory opens in a tab that looks like a task:
 
 - **The graph:** nodes in the order they run. A dashed line is a branch: the node after it runs only if the condition holds.
 - **Click a node** to see its description, prompt, model, skills, tools, MCP servers and condition. During a run you also see its activity and result. When the node waits for your approval, the side panel shows **Allow**, **Always allow** and **Deny**.
-- **Run now** starts a run in the background. **Stop** stops it. **Retry** and **Skip** work on a failed node. The run picker shows earlier runs.
+- **Run now** starts a run in the background, in the factory's folder. **Run in…** starts one in another project folder, optionally with a task that every node gets. Runs go side by side, so you can start several. **Stop** stops the run you're looking at. **Retry** and **Skip** work on a failed node. The run picker lists the runs, going and earlier ones, with their folder and execution id.
 - **Edit file** opens the YAML file in your editor. You can also ask Paw Agent in the prompt box below to change the factory, for example "add a node that posts the note to Slack".
 
 ## The file
@@ -21,6 +21,7 @@ description: Triage error spikes, fix critical ones, write a note.
 folder: ~/Developer/my-service       # where the nodes work (default ~)
 model: anthropic/claude-sonnet-5-5   # default model for nodes (else Settings' default)
 approval: auto                       # for nodes that change files: ask, edits, auto, full
+parallel: 2                          # runs triggers may have going at once (default 1)
 
 nodes:
   - id: triage                       # letters, digits, - and _
@@ -59,7 +60,7 @@ nodes:
 
 ### Shapes
 
-- **Linear, tree or graph:** a node runs after the nodes in its `needs`, and their answers are its inputs. Nodes that don't need each other run side by side, as many as **Settings › General › Agents at once** allows. Nodes that change files run one at a time.
+- **Linear, tree or graph:** a node runs after the nodes in its `needs`, and their answers are its inputs. Nodes that don't need each other run side by side, as many as **Settings › General › Agents at once** allows. Nodes that change files run one at a time in a folder, across all runs.
 - **Joins:** `join: all` (the default) waits for every input. `join: any` goes on as soon as the first input is done.
 - **Branches:** `when` runs a node only if an earlier node's answer matches `matches`, or doesn't match `not_matches`. Both are regular expressions and ignore case. The node in `from` has to come before it. A node whose condition doesn't hold is skipped, and so is a node whose inputs were all skipped.
 - **Waits:** a node with `wait` runs its command every `every` (30s by default) until it succeeds. Its output is passed on like an answer. A `timeout` makes it fail when the time runs out.
@@ -128,7 +129,7 @@ trigger:
 | `every` | every so often |
 | `at` | at these times of day (local time) |
 | `watch` + `every` | when the command **starts** succeeding: it has to fail before it fires again, so a long error spike starts one run, not one per check. With `fires: each`, every successful check starts a run instead, for a check that succeeds once per new event (a new commit, a new file). The command's output goes to the nodes as the trigger's payload. |
-| `webhook` | when something posts to `http://127.0.0.1:4747/factories/<id>`. The request's body goes to the nodes as the trigger's payload, so an alert's JSON reaches them. With a secret, the caller sends it as an `X-Paw-Token` header or `?token=`. |
+| `webhook` | when something posts to `http://127.0.0.1:4747/factories/<id>`. The request's body goes to the nodes as the trigger's payload, so an alert's JSON reaches them. With a secret, the caller sends it as an `X-Paw-Token` header or `?token=`. `?folder=~/Developer/app` (or an `X-Paw-Folder` header) runs it in that project folder. The reply has the run's execution id: `{"run": "…"}`, or `{"queued": true}`. |
 | `file` | when the file, or anything in the folder, changes and then stays quiet for 2 seconds |
 
 For example, Alertmanager or Grafana can post their alerts straight to a factory:
@@ -137,7 +138,7 @@ For example, Alertmanager or Grafana can post their alerts straight to a factory
 curl -X POST -H "X-Paw-Token: s3cret" -d @alert.json http://127.0.0.1:4747/factories/error-spike
 ```
 
-A trigger never starts a run while one of the same factory is still going. If it fires during a run, one more run starts right after that run ends, so an event that arrives mid-run isn't lost. **Pause trigger** in the factory view stops it from starting runs (Run now still works), and **Resume trigger** turns it back on. The view shows the next scheduled run, the last check and what the trigger did last.
+A trigger has at most `parallel` runs of a factory going at once (1 unless the file says otherwise). When it fires with no room, the run waits its turn and starts when a run ends, so an event that arrives mid-run isn't lost. One run waits per project folder: a later event for the same folder replaces the earlier one. **Pause trigger** in the factory view stops it from starting runs (Run now still works), and **Resume trigger** turns it back on. The view shows the next scheduled run, the last check and what the trigger did last.
 
 The webhook listens only on this Mac (127.0.0.1). Port 4747 can be changed in `~/.paw/settings.json`: `"factories": { "webhook_port": 4800 }`.
 
@@ -163,4 +164,14 @@ trigger:
 
 ## Runs
 
-Runs are kept in `~/.paw/factories/.runs/`, the last 30 per factory. Each agent node's conversation is kept in its own session folder in `~/.paw/session/`.
+Every run (an execution) gets an **execution id**, a UUID, and a folder of its own:
+
+```
+~/.paw/factories/<factory-id>/<execution-id>/
+  run.json              # the run: its copy of the factory, each node's state, answers and activity
+  nodes/<node-id>/      # each agent node's conversations, scripts and files
+```
+
+`run.json` is written while the run goes, so a restart doesn't lose it. The factory view's side panel shows a run's execution id, and **Open its folder** opens it. The last 30 runs of each factory are kept.
+
+A factory can run several times at once, for different projects or tasks: each run works in its own folder (**Run in…**, or a webhook's `?folder=`) and gets its own task. Runs in different folders change files at the same time; in the same folder they take turns. Run now always starts a run. Triggers and `repeat` start at most `parallel` at once, and a repeating run starts again in its own folder.

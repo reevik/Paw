@@ -418,10 +418,11 @@ pub async fn skills_scan(app: AppHandle, cwd: Option<String>) -> Result<SkillsRe
 
 /// Native folder picker for "Add folder…".
 #[tauri::command]
-pub async fn skills_pick_folder(app: AppHandle) -> Result<Option<String>, String> {
+pub async fn skills_pick_folder(app: AppHandle, title: Option<String>) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
+    let title = title.filter(|t| !t.trim().is_empty()).unwrap_or_else(|| "Add Skills Folder".into());
     let picked = tauri::async_runtime::spawn_blocking(move || {
-        app.dialog().file().set_title("Add Skills Folder").blocking_pick_folder()
+        app.dialog().file().set_title(title).blocking_pick_folder()
     })
     .await
     .map_err(|e| e.to_string())?;

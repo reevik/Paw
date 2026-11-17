@@ -10,8 +10,11 @@
 //! - `file: <path>`: a run when the file (or anything in the folder) changes,
 //!   once it has been quiet for a moment.
 //!
-//! A trigger never starts a second run of a factory while one is going, and a
-//! factory's trigger can be paused (kept in `~/.paw/factories/.paused.json`).
+//! A trigger has at most `parallel` runs of a factory going at once (default 1);
+//! what fires beyond that waits its turn (one waiting run per project folder).
+//! A webhook can name the project folder a run works in (`?folder=` or an
+//! `X-Paw-Folder` header). A factory's trigger can be paused (kept in
+//! `~/.paw/factories/.paused.json`).
 
 use super::runner::Runner;
 use super::*;
@@ -64,8 +67,30 @@ struct Entry {
     file_sig: Option<(u64, usize)>,
     file_changed: Option<Instant>,
     next_file_poll: Option<Instant>,
-    /// Fired while a run was going: starts when that run ends (why, payload).
-    queued: Option<(String, Option<String>)>,
+    /// Runs triggers may have going at once (the factory's `parallel`).
+    parallel: usize,
+    /// Fired while there was no room: starts when a run ends.
+    queued: Vec<Fired>,
+}
+
+/// A trigger that fired: why, its payload, the project folder ("": the factory's).
+#[derive(Debug, Clone, Default)]
+struct Fired {
+    why: String,
+    payload: Option<String>,
+    folder: String,
+}
+
+const QUEUE_MAX: usize = 20;
+
+impl Entry {
+    /// Wait for room; a later event for the same folder replaces an earlier one.
+    fn enqueue(&mut self, f: Fired) {
+        self.queued.retain(|q| q.folder != f.folder);
+        if self.queued.len() < QUEUE_MAX {
+            self.queued.push(f);
+        }
+    }
 }
 
 pub struct Triggers {
@@ -188,8 +213,9 @@ impl Triggers {
                     crate::agents::expand_home(if d.is_empty() { "~" } else { d })
                 };
                 let every = trig.every.as_deref().and_then(parse_duration);
-                let mut e = Entry { modified: f.modified, trigger: Some(trig.clone()), folder: folder.clone(), ..Default::default() };
-                let old = entries.remove(&f.id);
+                let mut e = Entry { modified: f.modified, trigger: Some(trig.clone()), folder: folder.clone(), parallel: def.parallel_runs(), ..Default::default() };
+                let mut old = entries.remove(&f.id);
+                e.queued = old.as_mut().map(|o| std::mem::take(&mut o.queued)).unwrap_or_default();
                 e.status = Status {
                     kinds: [
                         trig.watch.as_ref().map(|_| "watch"),
@@ -235,7 +261,7 @@ impl Triggers {
     fn tick(self: &Arc<Self>) {
         let now = Instant::now();
         let today = local_now();
-        let mut fire: Vec<(String, String, Option<String>)> = vec![];
+        let mut fire: Vec<(String, Fired)> = vec![];
         let mut checks: Vec<(String, String, PathBuf)> = vec![];
         {
             let mut entries = self.entries.lock().unwrap();
@@ -251,10 +277,12 @@ impl Triggers {
                 if e.status.paused {
                     continue;
                 }
-                // Fired during a run: its turn comes when that run has ended.
-                if e.queued.is_some() && !self.runner.running(id) {
-                    let (why, payload) = e.queued.take().unwrap();
-                    fire.push((id.clone(), why, payload));
+                // Fired when there was no room: their turn comes as runs end.
+                if !e.queued.is_empty() {
+                    let room = e.parallel.max(1).saturating_sub(self.runner.running(id));
+                    for f in e.queued.drain(..room.min(e.queued.len())) {
+                        fire.push((id.clone(), f));
+                    }
                 }
                 if let (Some(cmd), Some(due)) = (&t.watch, e.next_check) {
                     if now >= due && !e.checking {
@@ -265,7 +293,7 @@ impl Triggers {
                 } else if let Some(due) = e.next_due {
                     if now >= due {
                         e.next_due = Some(now + t.every.as_deref().and_then(parse_duration).unwrap_or(Duration::from_secs(3600)));
-                        fire.push((id.clone(), format!("every {}", t.every.as_deref().unwrap_or("")), None));
+                        fire.push((id.clone(), Fired { why: format!("every {}", t.every.as_deref().unwrap_or("")), ..Default::default() }));
                     }
                 }
                 if let Some(times) = t.at.as_deref().and_then(at_times) {
@@ -273,7 +301,7 @@ impl Triggers {
                     if let Some((h, m)) = times.into_iter().find(|&(th, tm)| th == h && tm == m) {
                         let key = format!("{day}-{h:02}:{m:02}");
                         if e.fired_at.insert(key) {
-                            fire.push((id.clone(), format!("at {h:02}:{m:02}"), None));
+                            fire.push((id.clone(), Fired { why: format!("at {h:02}:{m:02}"), ..Default::default() }));
                         }
                     }
                 }
@@ -286,7 +314,7 @@ impl Triggers {
                             e.file_changed = Some(now);
                         } else if e.file_changed.is_some_and(|c| now.duration_since(c) >= FILE_QUIET) {
                             e.file_changed = None;
-                            fire.push((id.clone(), "a file change".into(), Some(format!("{path} changed."))));
+                            fire.push((id.clone(), Fired { why: "a file change".into(), payload: Some(format!("{path} changed.")), ..Default::default() }));
                         }
                     }
                 }
@@ -308,35 +336,44 @@ impl Triggers {
                     rose && !e.status.paused
                 };
                 if fire {
-                    me.fire(&id, "its watch", Some(out.1));
+                    me.fire(&id, Fired { why: "its watch".into(), payload: Some(out.1), ..Default::default() });
                 }
                 me.publish();
             });
         }
-        for (id, why, payload) in fire {
-            self.fire(&id, &why, payload);
+        for (id, f) in fire {
+            self.fire(&id, f);
         }
     }
 
-    /// Start a run (unless one is going); note what happened.
-    fn fire(self: &Arc<Self>, id: &str, why: &str, payload: Option<String>) {
-        let note = if self.runner.running(id) {
-            // One more run right after this one (later events replace earlier ones).
+    /// Is there room for one more run from a trigger?
+    fn room(&self, id: &str) -> bool {
+        let parallel = self.entries.lock().unwrap().get(id).map_or(1, |e| e.parallel.max(1));
+        self.runner.running(id) < parallel
+    }
+
+    /// Start a run (if there's room, else it waits its turn); what happened,
+    /// and the run's execution id.
+    fn fire(self: &Arc<Self>, id: &str, f: Fired) -> (String, Option<String>) {
+        let why = f.why.clone();
+        let (note, run) = if !self.room(id) {
             if let Some(e) = self.entries.lock().unwrap().get_mut(id) {
-                e.queued = Some((why.to_string(), payload));
+                e.enqueue(f);
             }
-            format!("{why}: a run was going, so another starts when it ends")
+            (format!("{why}: runs were going, so another starts when one ends"), None)
         } else {
-            match self.runner.start(id, why, payload) {
-                Ok(_) => format!("{why}: started a run"),
-                Err(e) => format!("{why}: couldn't start ({e})"),
+            let folder = Some(f.folder).filter(|s| !s.is_empty());
+            match self.runner.start(id, &why, f.payload, folder) {
+                Ok(run) => (format!("{why}: started a run"), Some(run)),
+                Err(e) => (format!("{why}: couldn't start ({e})"), None),
             }
         };
         if let Some(e) = self.entries.lock().unwrap().get_mut(id) {
             e.status.last_fired = Some(now_ms());
-            e.status.last_note = note;
+            e.status.last_note = note.clone();
         }
         self.publish();
+        (note, run)
     }
 
     pub fn set_paused(&self, id: &str, paused: bool) {
@@ -484,35 +521,67 @@ impl Triggers {
         if self.entries.lock().unwrap().get(*id).is_some_and(|e| e.status.paused) {
             return (409, json!({ "error": "This factory's trigger is paused." }));
         }
-        if self.runner.running(id) {
-            if let Some(e) = self.entries.lock().unwrap().get_mut(*id) {
-                e.queued = Some(("its webhook".into(), (!body.trim().is_empty()).then_some(body)));
-            }
-            self.note(id, "its webhook: a run was going, so another starts when it ends");
-            return (202, json!({ "queued": true }));
+        // The project folder this run works in, if the caller names one.
+        let folder = headers
+            .get("x-paw-folder")
+            .cloned()
+            .or_else(|| query.split('&').find_map(|kv| kv.strip_prefix("folder=")).map(url_decode))
+            .map(|f| f.trim().to_string())
+            .unwrap_or_default();
+        if !folder.is_empty() && !crate::agents::expand_home(&folder).is_dir() {
+            return (400, json!({ "error": format!("The folder doesn't exist: {folder}") }));
         }
         let payload = (!body.trim().is_empty()).then_some(body);
-        match self.runner.start(id, "its webhook", payload) {
-            Ok(run) => {
-                self.note(id, "its webhook: started a run");
-                (202, json!({ "run": run }))
-            }
-            Err(e) => (500, json!({ "error": e })),
+        match self.fire(id, Fired { why: "its webhook".into(), payload, folder }) {
+            (_, Some(run)) => (202, json!({ "run": run })),
+            (note, None) if note.contains("couldn't start") => (500, json!({ "error": note })),
+            _ => (202, json!({ "queued": true })),
         }
     }
 
-    fn note(&self, id: &str, note: &str) {
-        if let Some(e) = self.entries.lock().unwrap().get_mut(id) {
-            e.status.last_fired = Some(now_ms());
-            e.status.last_note = note.into();
+}
+
+/// `%xx` and `+` in a query value.
+fn url_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'+' => out.push(b' '),
+            b'%' if i + 2 < b.len() => match std::str::from_utf8(&b[i + 1..i + 3]).ok().and_then(|h| u8::from_str_radix(h, 16).ok()) {
+                Some(x) => {
+                    out.push(x);
+                    i += 2;
+                }
+                None => out.push(b'%'),
+            },
+            c => out.push(c),
         }
-        self.publish();
+        i += 1;
     }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn query_values_are_decoded() {
+        assert_eq!(url_decode("~%2FDeveloper%2Fmy+app"), "~/Developer/my app");
+        assert_eq!(url_decode("100%"), "100%");
+        assert_eq!(url_decode("a%zzb"), "a%zzb");
+    }
+
+    #[test]
+    fn a_later_event_for_a_folder_replaces_its_earlier_one() {
+        let mut e = Entry::default();
+        e.enqueue(Fired { why: "1".into(), folder: "a".into(), ..Default::default() });
+        e.enqueue(Fired { why: "2".into(), folder: "b".into(), ..Default::default() });
+        e.enqueue(Fired { why: "3".into(), folder: "a".into(), ..Default::default() });
+        assert_eq!(e.queued.iter().map(|f| f.why.as_str()).collect::<Vec<_>>(), ["2", "3"]);
+    }
 
     #[test]
     fn next_at_is_within_a_day() {

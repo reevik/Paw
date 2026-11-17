@@ -61,8 +61,10 @@ function factoryStatus(id) {
   const f = factoryById(id);
   const run = runsOf(id)[0];
   const t = triggerOf(id);
+  const going = runsOf(id).filter((r) => r.state === "running");
   if (f?.error) return "Can't be read · fix the file";
-  if (run?.state === "running") return `Running · ${runProgress(run)}`;
+  if (going.length > 1) return `${going.length} runs going`;
+  if (going.length) return `Running · ${runProgress(going[0])}`;
   const trig = t ? (t.paused ? "Paused" : TRIGGER_WORD[t.kinds[0]] ?? "Armed") : "";
   const last = run ? `${RUN_STATE_TEXT[run.state] ?? run.state} ${fmtWhen(run.started_at)}` : f ? "never run" : "";
   return [trig, last].filter(Boolean).join(" · ");
@@ -131,8 +133,9 @@ function renderFactoryNav() {
   const rest = shown.filter((f) => !isPinned("factories", f.id));
   const row = (f) => {
     const run = runsOf(f.id)[0];
-    const dot = f.error ? "failed" : run?.state === "running" ? "running" : run?.state === "failed" ? "failed" : "idle";
-    const needs = run?.state === "running" ? run.nodes.filter((n) => n.state === "needs").length : 0;
+    const going = runsOf(f.id).filter((r) => r.state === "running");
+    const dot = f.error ? "failed" : going.length ? "running" : run?.state === "failed" ? "failed" : "idle";
+    const needs = going.reduce((n, r) => n + r.nodes.filter((x) => x.state === "needs").length, 0);
     return `<div class="nav-item${open.has(f.id) ? " active" : ""}" data-factory="${esc(f.id)}" title="${esc(f.factory?.description || tildify(f.path))}">
       <span class="dot ${dot}"></span>
       <span class="nav-text"><span class="nav-name">${esc(f.factory?.name || f.id)}</span><span class="nav-status">${esc(factoryStatus(f.id))}</span></span>
@@ -174,6 +177,13 @@ function renderFactoryTabs() {
 
 const factoryById = (id) => factoryState.list.find((f) => f.id === id);
 const runsOf = (id) => [...factoryState.runs.values()].filter((r) => r.factory === id).sort((a, b) => b.started_at - a.started_at);
+/** A run's execution id, short: its UUID's first part. */
+const shortRunId = (id) => String(id ?? "").split("-")[0];
+/** The project folder a run works in. */
+const runFolder = (r) => r?.folder || r?.def?.folder?.trim() || "~";
+const lastPart = (p) => String(p).replace(/\/+$/, "").split("/").pop() || p;
+/** A run's own folder: ~/.paw/factories/<factory-id>/<execution-id>. */
+const runDir = (r) => `${factoryState.dir}/${r.factory}/${r.id}`;
 
 /** The run a factory tab shows: the one picked, else the latest. */
 function shownRun(S) {
@@ -233,8 +243,9 @@ trigger:           # optional: what starts runs on its own (any of these; Paw's 
   every: 15m       # a run every so often
   at: "09:00, 17:30"   # a run at these times of day
   watch: "./check.sh"  # a run each time this command STARTS succeeding (it must fail in between); with watch, every is how often it's checked
-  webhook: s3cret  # a run when something POSTs to http://127.0.0.1:4747/factories/<file name>; the body reaches the nodes (true: no secret)
+  webhook: s3cret  # a run when something POSTs to http://127.0.0.1:4747/factories/<file name>; the body reaches the nodes (true: no secret); ?folder=~/path runs it in that project folder
   file: ./inbox    # a run when this file or folder changes
+parallel: 1        # optional: how many runs triggers and repeat may have going at once (default 1); Run now always starts one. Each run has its own execution id (a UUID) and can work in its own project folder
 repeat: true       # optional: start the next run when one finishes (or { after: 10s, on_failure: continue }); a failed run stops the loop unless on_failure: continue
 nodes:             # required; ids use letters, digits, - and _
   - id: triage
@@ -258,7 +269,7 @@ nodes:             # required; ids use letters, digits, - and _
     every: 30s
     timeout: 10m
 Nodes that don't need each other run side by side. A node whose inputs were all skipped is skipped too.
-A run goes once through the nodes. To react to events (a new commit, an alert, a file), prefer a trigger over a long wait node: a watch trigger whose command succeeds once per new event starts one run per event. Use repeat for a pipeline that should loop. A trigger never starts a run while one of the same factory is going.`;
+A run goes once through the nodes. To react to events (a new commit, an alert, a file), prefer a trigger over a long wait node: a watch trigger whose command succeeds once per new event starts one run per event. Use repeat for a pipeline that should loop. Triggers start at most parallel runs of a factory at once; what fires beyond that waits its turn. The file name is the factory's id; each run is kept in ~/.paw/factories/<id>/<execution-id>/.`;
 
 function factoryPrompt(S, text) {
   const f = factoryById(S.factory.id);
@@ -324,6 +335,8 @@ function renderFactoryView(S, host) {
   $("task-split")?.classList.remove("hidden");
   applyBoardSizes(host);
   if (host.dataset.dragging) return;
+  // Typing in the Run in… form: don't redraw it under the cursor.
+  if (host.querySelector(".fa-runform input:focus, .fa-runform textarea:focus")) return;
   if (!factoryState.loaded) {
     if (!factoryState.loading) loadFactories();
     host.innerHTML = `<div class="tk-empty"><span class="spin-ch">${SPIN[spinFrame % SPIN.length]}</span> Reading the factory…</div>`;
@@ -333,23 +346,25 @@ function renderFactoryView(S, host) {
   const plan = factoryPlan(S);
   const run = plan?.run ?? (S.factory.run ? null : plan?.latest);
   const runs = runsOf(S.factory.id);
-  const running = runs.some((r) => r.state === "running");
+  const going = runs.filter((r) => r.state === "running").length;
   const state = run ? run.state : f?.error ? "failed" : "draft";
-  const stateText = run ? `${RUN_STATE_TEXT[run.state] ?? run.state} · ${runProgress(run)}` : f?.error ? "can't run" : "ready";
+  const stateText = (run ? `${RUN_STATE_TEXT[run.state] ?? run.state} · ${runProgress(run)}` : f?.error ? "can't run" : "ready") +
+    (going > 1 ? ` · ${going} runs going` : "");
   const buttons = [
-    f?.factory && !running && `<button class="tk-btn primary" data-fact="run">Run now</button>`,
-    running && `<button class="tk-btn" data-fact="stop">Stop</button>`,
+    f?.factory && `<button class="tk-btn primary" data-fact="run" title="Start a run in ${esc(f.factory.folder?.trim() || "~")}${going ? " (alongside the runs going)" : ""}">Run now</button>`,
+    f?.factory && `<button class="tk-btn${S.factory.form ? " on" : ""}" data-fact="runin" title="Start a run in another project folder, or with a task">Run in…</button>`,
+    run?.state === "running" && `<button class="tk-btn" data-fact="stop" title="Stop this run (${esc(shortRunId(run.id))})">Stop</button>`,
     triggerOf(S.factory.id) && `<button class="tk-btn" data-fact="pause" title="${triggerOf(S.factory.id).paused ? "Let the trigger start runs again" : "Stop the trigger from starting runs (Run now still works)"}">${triggerOf(S.factory.id).paused ? "Resume trigger" : "Pause trigger"}</button>`,
     f && `<button class="tk-btn" data-fact="edit" title="${esc(tildify(f.path))}">Edit file</button>`,
   ].filter(Boolean).join("");
   const picker = runs.length ? `<select class="tk-in fa-runs" data-fact="pick" title="Show a run">${
     `<option value=""${S.factory.run ? "" : " selected"}>Latest run</option>` +
-    runs.map((r) => `<option value="${esc(r.id)}"${S.factory.run === r.id ? " selected" : ""}>${esc(fmtWhen(r.started_at))} · ${esc(RUN_STATE_TEXT[r.state] ?? r.state)}</option>`).join("")}</select>` : "";
+    runs.map((r) => `<option value="${esc(r.id)}"${S.factory.run === r.id ? " selected" : ""}>${esc(fmtWhen(r.started_at))} · ${esc(RUN_STATE_TEXT[r.state] ?? r.state)} · ${esc(lastPart(runFolder(r)))} · ${esc(shortRunId(r.id))}</option>`).join("")}</select>` : "";
   const head = `<div class="tk-head">
-      <span class="tk-title fa-title" title="${esc(f?.factory?.description || "")}"><span class="fa-ico" aria-hidden="true"></span>${esc(f?.factory?.name || S.factory.id)}</span>
+      <span class="tk-title fa-title" title="${esc([`id: ${S.factory.id}`, f?.factory?.description].filter(Boolean).join("\n"))}"><span class="fa-ico" aria-hidden="true"></span>${esc(f?.factory?.name || S.factory.id)}</span>
       <span class="tk-state st-${esc(state)}">${esc(stateText)}</span>
       ${picker}<span class="grow"></span>${buttons}
-    </div>${run?.note ? `<div class="tk-note">${esc(run.note)}</div>` : ""}`;
+    </div>${S.factory.form && f?.factory ? runFormHtml(S, f.factory) : ""}${run?.note ? `<div class="tk-note">${esc(run.note)}</div>` : ""}`;
   let body;
   if (!f && !run) {
     body = `<div class="tk-empty">There's no factory “${esc(S.factory.id)}” in ${esc(tildify(factoryState.dir))} any more.</div>`;
@@ -564,7 +579,7 @@ function factorySummaryHtml(S, plan, f) {
   const { def, run } = plan;
   const parts = [`<div class="tk-side-title">${esc(def.name)}</div>`];
   if (def.description?.trim()) parts.push(`<div class="tk-goal">${esc(def.description.trim())}</div>`);
-  parts.push(`<div class="tk-dim">${def.nodes.length} node${def.nodes.length === 1 ? "" : "s"} · works in ${esc(def.folder?.trim() || "~")}${def.model ? ` · ${esc(modelShort(def.model))}` : ""}</div>`);
+  parts.push(`<div class="tk-dim"><code class="fa-id" title="The factory's id (its file name)">${esc(S.factory.id)}</code> · ${def.nodes.length} node${def.nodes.length === 1 ? "" : "s"} · works in ${esc(def.folder?.trim() || "~")}${def.model ? ` · ${esc(modelShort(def.model))}` : ""}</div>`);
   // The trigger as the file has it now (the run may be of an older version).
   parts.push(triggerHtml(S.factory.id, f?.factory ?? def));
   if (run && f?.factory && JSON.stringify(f.factory) !== JSON.stringify(def)) {
@@ -574,7 +589,9 @@ function factorySummaryHtml(S, plan, f) {
   }
   if (f?.error && run) parts.push(`<div class="tk-warn">The file has a problem now: ${esc(f.error)}</div>`);
   if (run) {
-    parts.push(`<label class="tk-lbl">This run</label><div class="tk-dim">Started ${esc(fmtWhen(run.started_at))} (${esc(run.trigger)})${run.ended_at ? ` · took ${esc(fmtElapsed(run.ended_at - run.started_at))}` : ""}</div>`);
+    parts.push(`<label class="tk-lbl">This run</label><div class="tk-dim">Started ${esc(fmtWhen(run.started_at))} (${esc(run.trigger)})${run.ended_at ? ` · took ${esc(fmtElapsed(run.ended_at - run.started_at))}` : ""} · works in ${esc(runFolder(run))}</div>
+      <div class="fa-exec"><span class="tk-dim">Execution</span><code title="The run's execution id">${esc(run.id)}</code><button class="tk-btn" data-fact="rundir" title="${esc(tildify(runDir(run)))}">Open its folder</button></div>`);
+    if (run.trigger === "manual" && run.payload?.trim()) parts.push(`<label class="tk-lbl">Task</label><div class="tk-md">${renderMarkdown(clipEnd(run.payload.trim(), 2000))}</div>`);
     if (run.state === "done") {
       // The nodes nobody else needed: their answers are the run's outcome.
       const needed = new Set(def.nodes.flatMap((n) => n.needs ?? []));
@@ -600,22 +617,30 @@ async function factoryClick(S, e, P) {
   }
   const b = e.target.closest("[data-fact]");
   if (!b || b.tagName === "SELECT") return;
-  // Stop acts on the run going; Retry, Skip and approvals on the run shown.
-  const run = b.dataset.fact === "stop" ? runsOf(S.factory.id).find((r) => r.state === "running") : factoryPlan(S)?.run;
+  // Stop, Retry, Skip and approvals act on the run shown.
+  const run = factoryPlan(S)?.run;
   const fail = (err) => sys(S, `✗ ${err}`);
   try {
     switch (b.dataset.fact) {
-      case "run": {
-        const id = await invoke("factory_run", { factory: S.factory.id, payload: null, model: defaultPawModel() || null });
-        S.factory.run = null; // follow it (the latest)
-        await loadFactories();
-        if (!factoryState.runs.has(id)) {
-          const r = await invoke("factory_get", { run: id });
-          if (r) factoryState.runs.set(id, r);
-        }
+      case "run": await startFactoryRun(S, P, null, null); break;
+      case "runin": S.factory.form = !S.factory.form; withPane(P, renderTaskView); break;
+      case "formcancel": S.factory.form = false; withPane(P, renderTaskView); break;
+      case "choose": {
+        const dir = await invoke("skills_pick_folder", { title: "Run the factory in" });
+        if (dir) { S.factory.formFolder = tildify(dir); withPane(P, renderTaskView); }
         break;
       }
-      case "stop": if (run) await invoke("factory_stop", { run: run.id }); break;
+      case "runstart": {
+        const folder = (S.factory.formFolder ?? "").trim();
+        const task = (S.factory.formTask ?? "").trim();
+        await startFactoryRun(S, P, folder || null, task || null);
+        S.factory.form = false;
+        S.factory.formTask = "";
+        withPane(P, renderTaskView);
+        break;
+      }
+      case "rundir": if (run) await invoke("open_folder", { path: runDir(run) }); break;
+      case "stop": if (run?.state === "running") await invoke("factory_stop", { run: run.id }); break;
       case "pause": {
         const t = triggerOf(S.factory.id);
         if (t) { await invoke("factory_pause", { factory: S.factory.id, paused: !t.paused }); await loadFactories(); }
@@ -642,6 +667,38 @@ async function factoryClick(S, e, P) {
 }
 
 /** The run picker. */
+/** Start a run (in a project folder, with a task, or neither) and show it. */
+async function startFactoryRun(S, P, folder, task) {
+  const id = await invoke("factory_run", { factory: S.factory.id, payload: task, folder, model: defaultPawModel() || null });
+  S.factory.run = id; // show this run, even with others going
+  saveWorkspaceSoon();
+  await loadFactories();
+  if (!factoryState.runs.has(id)) {
+    const r = await invoke("factory_get", { run: id });
+    if (r) factoryState.runs.set(id, r);
+  }
+  withPane(P, renderTaskView);
+}
+
+/** Run in…: a project folder and a task for one run. */
+function runFormHtml(S, def) {
+  const folder = S.factory.formFolder ?? (def.folder?.trim() || "~");
+  return `<div class="fa-runform">
+    <label class="tk-lbl">Project folder</label>
+    <div class="fa-row"><input class="tk-in" data-fact-in="folder" value="${esc(folder)}" placeholder="~/Developer/my-app" spellcheck="false"><button class="tk-btn" data-fact="choose">Choose…</button></div>
+    <label class="tk-lbl">Task <span class="tk-dim">optional: every node gets it</span></label>
+    <textarea class="tk-in" data-fact-in="task" rows="2" placeholder="What this run is for, e.g. “Release 1.4 with the new importer”">${esc(S.factory.formTask ?? "")}</textarea>
+    <div class="fa-row"><span class="tk-dim">Runs of this factory go side by side, each with its own execution id.</span><span class="grow"></span><button class="tk-btn" data-fact="formcancel">Cancel</button><button class="tk-btn primary" data-fact="runstart">Start run</button></div>
+  </div>`;
+}
+
+/** Typing in the Run in… form (kept across redraws). */
+function factoryInput(S, e) {
+  const k = e.target.dataset?.factIn;
+  if (k === "folder") S.factory.formFolder = e.target.value;
+  else if (k === "task") S.factory.formTask = e.target.value;
+}
+
 function factoryChange(S, e, P) {
   if (!e.target.matches?.("select[data-fact=pick]")) return false;
   S.factory.run = e.target.value || null;

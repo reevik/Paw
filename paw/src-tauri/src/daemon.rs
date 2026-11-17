@@ -506,7 +506,8 @@ async fn dispatch(app: AppHandle, cmd: String, a: Value) -> Result<Value, String
         "factory_get" => ok(factory_runner(&app).get(&arg::<String>(&a, "run")?)),
         "factory_run" => {
             crate::factories::runner::remember_window_model(arg(&a, "model")?);
-            ok(factory_runner(&app).start(&arg::<String>(&a, "factory")?, "manual", arg(&a, "payload")?)?)
+            // In the factory's folder, or another project's; payload: the task for this run.
+            ok(factory_runner(&app).start(&arg::<String>(&a, "factory")?, "manual", arg(&a, "payload")?, arg(&a, "folder")?)?)
         }
         "factory_stop" => ok(factory_runner(&app).stop(&arg::<String>(&a, "run")?)?),
         "factory_retry" => ok(factory_runner(&app).retry(&arg::<String>(&a, "run")?, &arg::<String>(&a, "node")?)?),

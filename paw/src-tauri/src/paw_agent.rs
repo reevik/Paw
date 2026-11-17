@@ -351,6 +351,8 @@ pub struct SessionConfig {
     pub tool_names: Option<Vec<String>>,
     /// It may ask the user (`ask_user`): a factory node, which has no tab to talk in.
     pub ask: bool,
+    /// A folder as fine to change as `cwd` in auto mode (a factory run's shared files).
+    pub shared: Option<PathBuf>,
 }
 
 impl SessionConfig {
@@ -652,7 +654,7 @@ impl AgentHook for GateHook {
         };
         let auto = *self.sess.level.lock().unwrap() == "auto";
         let gate = match gate {
-            Gate::Ask(mut ask) if auto => match auto::check(&tool, &args, &self.sess.cfg.cwd, self.sess.cfg.scripts.as_deref()) {
+            Gate::Ask(mut ask) if auto => match auto::check_in(&tool, &args, &self.sess.cfg.cwd, &self.sess.cfg.scripts.iter().chain(&self.sess.cfg.shared).map(PathBuf::as_path).collect::<Vec<_>>()) {
                 auto::Check::Allow => Gate::Allow,
                 auto::Check::Ask(why) => {
                     ask.why = Some(why);
@@ -1384,6 +1386,9 @@ pub struct StartOpts {
     /// It may ask the user (`ask_user`): a factory node.
     #[serde(skip)]
     pub ask: bool,
+    /// A folder as fine to change as `cwd` in auto mode (a factory run's shared files).
+    #[serde(skip)]
+    pub shared: Option<PathBuf>,
 }
 
 fn valid_conversation_id(s: &str) -> bool {
@@ -1501,6 +1506,7 @@ pub async fn paw_agent_start(
         scripts,
         tool_names: opts.tools,
         ask: opts.ask,
+        shared: opts.shared,
     };
     let id = procs.alloc_id();
     let sink: Arc<dyn Sink> = Arc::new(TauriSink { app, seq: Mutex::default() });

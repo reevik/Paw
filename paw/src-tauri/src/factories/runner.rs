@@ -225,7 +225,7 @@ fn working(n: &NodeRun) -> bool {
 /// What `pump` decided to start (started outside the lock).
 enum Start {
     Agent { run: String, node: String, opts: Box<StartOpts>, prompt: String, timeout: Option<Duration> },
-    Wait { run: String, node: String, command: String, folder: PathBuf, every: Duration, timeout: Option<Duration> },
+    Wait { run: String, node: String, command: String, folder: PathBuf, env: Vec<(String, String)>, every: Duration, timeout: Option<Duration> },
 }
 
 #[derive(Default)]
@@ -660,15 +660,15 @@ impl Runner {
                     }
                 });
             }
-            Start::Wait { run, node, command, folder, every, timeout } => {
+            Start::Wait { run, node, command, folder, env, every, timeout } => {
                 tauri::async_runtime::spawn(async move {
                     let deadline = timeout.map(|t| Instant::now() + t);
                     loop {
                         if !me.is_running(&run, &node) {
                             return;
                         }
-                        let (cmd, dir) = (command.clone(), folder.clone());
-                        let out = tauri::async_runtime::spawn_blocking(move || check(&cmd, &dir)).await.unwrap_or_else(|e| (false, e.to_string()));
+                        let (cmd, dir, env) = (command.clone(), folder.clone(), env.clone());
+                        let out = tauri::async_runtime::spawn_blocking(move || check_with(&cmd, &dir, &env)).await.unwrap_or_else(|e| (false, e.to_string()));
                         if !me.is_running(&run, &node) {
                             return;
                         }
@@ -969,6 +969,8 @@ fn pump_in(r: &mut Run, limit: usize, busy: &mut usize, editing: &mut HashSet<Pa
                 node: def.id.clone(),
                 command: cmd.clone(),
                 folder,
+                // The run's own folders, for commands that read what its nodes wrote.
+                env: dir.iter().flat_map(|d| [("PAW_RUN_DIR".to_string(), d.display().to_string()), ("PAW_RUN_FILES".to_string(), d.join("files").display().to_string())]).collect(),
                 every: def.every.as_deref().and_then(parse_duration).unwrap_or(Duration::from_secs(30)),
                 timeout: def.timeout.as_deref().and_then(parse_duration),
             });
@@ -1027,6 +1029,7 @@ fn pump_in(r: &mut Run, limit: usize, busy: &mut usize, editing: &mut HashSet<Pa
                 mcp: def.mcp.clone(),
                 dir: dir.as_ref().map(|d| d.join("nodes").join(&def.id)),
                 ask: true,
+                shared: dir.as_ref().map(|d| d.join("files")),
             }),
         });
     }
@@ -1212,7 +1215,7 @@ fn node_prompt(r: &Run, def: &Node) -> String {
     }
     if let Some(d) = run_dir(&r.factory, &r.id) {
         parts.push(format!(
-            "This run's own folder for files the nodes share (notes, plans, state for later nodes or later rounds): {}. Keep such files there, not in a fixed place: other runs of this factory may go at the same time.",
+            "This run's own folder for files the nodes share (notes, plans, state for later nodes or later rounds): {}. Keep such files there, not in a fixed place: other runs of this factory may go at the same time. (Wait nodes' commands find it as $PAW_RUN_FILES.)",
             tildify(&d.join("files"))
         ));
     }
@@ -1243,12 +1246,18 @@ fn node_prompt(r: &Run, def: &Node) -> String {
 
 /// Run a wait node's command once: (it succeeded, its output).
 pub(super) fn check(command: &str, folder: &Path) -> (bool, String) {
+    check_with(command, folder, &[])
+}
+
+/// `check`, with more environment variables (a wait node's run folders).
+fn check_with(command: &str, folder: &Path, env: &[(String, String)]) -> (bool, String) {
     use std::process::{Command, Stdio};
     let mut child = match Command::new("/bin/sh")
         .arg("-c")
         .arg(command)
         .current_dir(folder)
         .env("PATH", crate::registry::login_path())
+        .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

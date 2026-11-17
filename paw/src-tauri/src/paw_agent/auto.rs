@@ -25,9 +25,16 @@ pub enum Check {
 
 /// Check a tool call that the `ask` level would have asked about. `scripts`
 /// is the session's scripts folder, where changes are as fine as in `cwd`.
+#[cfg(test)]
 pub fn check(tool: &str, args: &Value, cwd: &Path, scripts: Option<&Path>) -> Check {
+    check_in(tool, args, cwd, &scripts.into_iter().collect::<Vec<_>>())
+}
+
+/// `check`, with any number of folders as fine as `cwd` (the scripts folder,
+/// a factory run's shared files folder).
+pub fn check_in(tool: &str, args: &Value, cwd: &Path, extra: &[&Path]) -> Check {
     let s = |k: &str| args.get(k).and_then(Value::as_str).unwrap_or("");
-    let roots: Vec<&Path> = std::iter::once(cwd).chain(scripts).collect();
+    let roots: Vec<&Path> = std::iter::once(cwd).chain(extra.iter().copied()).collect();
     match tool {
         "write" | "edit" => file_change(s("path"), &roots),
         "delete" | "move" => Check::Review,
@@ -507,6 +514,10 @@ mod tests {
         assert_eq!(w("/work/app/README.md"), Check::Allow);
         assert_eq!(w("./a/../b.txt"), Check::Allow);
         assert_eq!(w("/h/.paw/session/s1/scripts/fix.py"), Check::Allow, "the session's scripts folder");
+        let shared = Path::new("/h/.paw/factories/f/run-1/files");
+        let wf = |p: &str| check_in("write", &json!({ "path": p, "content": "x" }), cwd, &[scripts, shared]);
+        assert_eq!(wf("/h/.paw/factories/f/run-1/files/plan.md"), Check::Allow, "a factory run's shared files");
+        assert!(matches!(wf("/h/.paw/factories/f/run-2/files/plan.md"), Check::Ask(_)), "another run's aren't");
         assert!(matches!(w("/h/.paw/session/s2/scripts/x.py"), Check::Ask(_)), "another session's isn't");
         assert!(matches!(w("../other/x"), Check::Ask(_)));
         assert!(matches!(w("/etc/hosts"), Check::Ask(_)));

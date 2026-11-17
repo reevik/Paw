@@ -64,7 +64,7 @@ nodes:
 - **Linear, tree or graph:** a node runs after the nodes in its `needs`, and their answers are its inputs. Nodes that don't need each other run side by side, as many as **Settings › General › Agents at once** allows. Nodes that change files run one at a time in a folder, across all runs.
 - **Joins:** `join: all` (the default) waits for every input. `join: any` goes on as soon as the first input is done.
 - **Branches:** `when` runs a node only if an earlier node's answer matches `matches`, or doesn't match `not_matches`. Both are regular expressions and ignore case. The node in `from` has to come before it. A node whose condition doesn't hold is skipped, and so is a node whose inputs were all skipped.
-- **Waits:** a node with `wait` runs its command every `every` (30s by default) until it succeeds. Its output is passed on like an answer. A `timeout` makes it fail when the time runs out.
+- **Waits:** a node with `wait` runs its command every `every` (30s by default) until it succeeds. Its output is passed on like an answer. A `timeout` makes it fail when the time runs out. The command runs in the run's project folder, with `$PAW_RUN_FILES` set to the run's shared files folder (and `$PAW_RUN_DIR` to the run's folder).
 - **Loops:** a node with `loop` sends the run back to an earlier node (or itself) until its answer meets a condition, for at most `max` rounds. See below.
 
 ### A node's settings

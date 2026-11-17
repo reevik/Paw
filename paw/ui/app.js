@@ -760,6 +760,7 @@ function helpHtml(S) {
     row("/tasks", "list the open tasks and how far each one is (click one to open it)"),
     row("/factories", "list your factories and their last runs (click one to open it)"),
     row("/factory <name>", "open a factory; /factory new <name> makes one"),
+    row("/factory run <name> [task]", "start a run of a factory in this tab's folder, with the task"),
     row("/sessions", "list stored sessions, open and closed; click one to reopen it in a new tab"),
     row("/stats [day|week|month]", "tokens, queries, tasks and time per model: today, this week, this month"),
     row("/clear", "clear the screen (⌘K)"),
@@ -909,6 +910,9 @@ async function slashCommand(S, line) {
       echo();
       const m = /^new\s+(.+)$/i.exec(arg);
       if (m) { await newFactory(m[1].trim()); return true; }
+      // /factory run <id> [task]: a run in this tab's folder, with the task.
+      const r = /^run\s+(\S+)\s*([\s\S]*)$/i.exec(arg);
+      if (r) { await runFactoryFromTab(S, r[1], r[2].trim()); return true; }
       if (!arg) { info(S, await factoriesListHtml().catch((e) => `<span class="err">✗ ${esc(e)}</span>`)); return true; }
       await loadFactories();
       const want = arg.toLowerCase();
@@ -4465,6 +4469,11 @@ listen("agent:output", ({ payload: l }) => onAgentOutput(l));
 function onAgentOutput(l) {
   const S = sessions.get(procToSid.get(l.id));
   if (!S) return;
+  // Paw Agent started a factory run (run_factory): a link to it.
+  if (l.stream === "stdout" && l.text.startsWith('{"type":"paw","subtype":"factory_run"')) {
+    try { factoryRunNote(S, JSON.parse(l.text)); } catch {}
+    return;
+  }
   if (l.stream === "stdin") return; // echoed locally by sendToAgent
   if (l.stream === "system" && S.quietProcs?.has(l.id)) return; // approval restarts are silent
   // One-shot runs end every prompt; a clean exit is not news.

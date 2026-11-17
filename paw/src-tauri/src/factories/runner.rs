@@ -301,9 +301,23 @@ fn folder_of(r: &Run) -> PathBuf {
     crate::agents::expand_home(if f.is_empty() { "~" } else { f })
 }
 
+/// The background process's runner, for Paw Agent's factory tools.
+static GLOBAL: std::sync::OnceLock<Arc<Runner>> = std::sync::OnceLock::new();
+
+/// The runner, in the background process (None in a window's own process).
+pub fn global() -> Option<Arc<Runner>> {
+    GLOBAL.get().cloned()
+}
+
+/// Was this run given a task by you (Run now / Run in…, or a chat with Paw Agent)?
+pub fn has_task(trigger: &str) -> bool {
+    trigger == "manual" || trigger == "chat"
+}
+
 impl Runner {
     pub fn new(app: &AppHandle) -> Arc<Runner> {
         let runner = Arc::new(Runner { app: app.clone(), state: Mutex::new(State { runs: load_runs(), ..Default::default() }), paused: Mutex::default() });
+        let _ = GLOBAL.set(runner.clone());
         // Loops go on after Paw starts again: a repeating factory whose last run
         // finished, or was cut off when Paw stopped, starts again (not one that
         // failed or that you stopped). A moment later, once pauses are known.
@@ -442,6 +456,78 @@ impl Runner {
             .collect();
         files.sort();
         Ok(files.iter().map(|(_, p)| crate::paw_agent::conversation_lines(p)).collect())
+    }
+
+    /// How runs are doing, in words (Paw Agent's `factory_status`): one run,
+    /// a factory's (the ones going and the last one), or every run going.
+    pub fn status_text(&self, factory: Option<&str>, run: Option<&str>) -> String {
+        let st = self.state.lock().unwrap();
+        let mut runs: Vec<&Run> = match (run, factory) {
+            (Some(id), _) => st.runs.iter().filter(|r| r.id == id || r.id.starts_with(id)).take(1).collect(),
+            (None, Some(f)) => {
+                let mine: Vec<&Run> = st.runs.iter().filter(|r| r.factory == f).collect();
+                let going: Vec<&Run> = mine.iter().copied().filter(|r| active_run(r)).collect();
+                if going.is_empty() { mine.into_iter().max_by_key(|r| r.started_at).into_iter().collect() } else { going }
+            }
+            (None, None) => st.runs.iter().filter(|r| active_run(r)).collect(),
+        };
+        runs.sort_by_key(|r| r.started_at);
+        if runs.is_empty() {
+            return match (run, factory) {
+                (Some(id), _) => format!("There's no run {id}."),
+                (None, Some(f)) => format!("The factory {f} hasn't run yet."),
+                _ => "No factory runs are going.".into(),
+            };
+        }
+        let mut out = vec![];
+        for r in runs {
+            let done = r.nodes.iter().filter(|n| finished(&n.state)).count();
+            let mut lines = vec![format!(
+                "Run {} of “{}” ({}): {}, {done} of {} nodes finished. Started {}s ago by {}, in {}.",
+                r.id,
+                r.def.name,
+                r.factory,
+                r.state,
+                r.nodes.len(),
+                now_ms().saturating_sub(r.started_at) / 1000,
+                if has_task(&r.trigger) { "you" } else { r.trigger.as_str() },
+                tildify(&folder_of(r))
+            )];
+            if !r.note.is_empty() {
+                lines.push(format!("  Note: {}", r.note));
+            }
+            for n in &r.nodes {
+                let label = r.def_node(&n.id).map(|d| d.label().to_string()).unwrap_or_else(|| n.id.clone());
+                if let Some(q) = &n.question {
+                    let choices = q["choices"].as_array().map(|c| c.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(" / ")).unwrap_or_default();
+                    lines.push(format!("  WAITS FOR YOU — node {} ({label}) asks: {}{}", n.id, q["question"].as_str().unwrap_or(""), if choices.is_empty() { String::new() } else { format!(" [choices: {choices}]") }));
+                } else if n.gate {
+                    lines.push(format!("  WAITS FOR YOU — node {} ({label}) is done; its answer waits for approval:\n{}", n.id, clip_end(n.result.trim(), 1500)));
+                } else if let Some(a) = &n.approval {
+                    lines.push(format!("  WAITS FOR YOU — node {} ({label}) wants to: {} (answer it in the factory's view)", n.id, a["label"].as_str().unwrap_or("use a tool")));
+                } else if n.state == "running" {
+                    lines.push(format!("  Working: node {} ({label}){}", n.id, if n.round > 1 { format!(", round {}", n.round) } else { String::new() }));
+                } else if n.state == "failed" {
+                    lines.push(format!("  Failed: node {} ({label}): {}", n.id, n.error.as_deref().unwrap_or("")));
+                }
+            }
+            if r.state == "done" {
+                let needed: HashSet<&str> = r.def.nodes.iter().flat_map(|n| n.needs.iter().map(String::as_str)).collect();
+                for n in r.nodes.iter().filter(|n| n.state == "done" && !needed.contains(n.id.as_str())) {
+                    lines.push(format!("  Outcome of {}: {}", n.id, clip_end(n.result.trim(), 1500)));
+                }
+            }
+            out.push(lines.join("\n"));
+        }
+        out.join("\n\n")
+    }
+
+    /// A run's full execution id from its id or its first characters.
+    pub fn full_run_id(&self, id: &str) -> Option<String> {
+        let id = id.trim();
+        let st = self.state.lock().unwrap();
+        let hits: Vec<&Run> = st.runs.iter().filter(|r| r.id == id || (id.len() >= 6 && r.id.starts_with(id))).collect();
+        (hits.len() == 1).then(|| hits[0].id.clone())
     }
 
     pub fn get(&self, run: &str) -> Option<Run> {
@@ -1197,11 +1283,11 @@ fn node_prompt(r: &Run, def: &Node) -> String {
         if r.def.description.trim().is_empty() { String::new() } else { format!("\nThe factory: {}", r.def.description.trim()) }
     )];
     parts.push(format!("Your node: {}{}", def.label(), if def.description.trim().is_empty() { String::new() } else { format!("\n{}", def.description.trim()) }));
-    if r.trigger != "manual" {
+    if !has_task(&r.trigger) {
         parts.push(format!("This run was started by its trigger ({}).", r.trigger));
     }
     if let Some(p) = r.payload.as_deref().filter(|p| !p.trim().is_empty()) {
-        if r.trigger == "manual" {
+        if has_task(&r.trigger) {
             parts.push(format!("The task for this run:\n<task>\n{}\n</task>", clip_end(p.trim(), 4000)));
         } else {
             parts.push(format!("<trigger>\n{}\n</trigger>", clip_end(p.trim(), 4000)));

@@ -634,7 +634,7 @@ function factorySummaryHtml(S, plan, f) {
   if (run) {
     parts.push(`<label class="tk-lbl">This run</label><div class="tk-dim">Started ${esc(fmtWhen(run.started_at))} (${esc(run.trigger)})${run.ended_at ? ` · took ${esc(fmtElapsed(run.ended_at - run.started_at))}` : ""} · works in ${esc(runFolder(run))}</div>
       <div class="fa-exec"><span class="tk-dim">Execution</span><code title="The run's execution id">${esc(run.id)}</code><button class="tk-btn" data-fact="rundir" title="${esc(tildify(runDir(run)))}">Open its folder</button></div>`);
-    if (run.trigger === "manual" && run.payload?.trim()) parts.push(`<label class="tk-lbl">Task</label><div class="tk-md">${renderMarkdown(clipEnd(run.payload.trim(), 2000))}</div>`);
+    if ((run.trigger === "manual" || run.trigger === "chat") && run.payload?.trim()) parts.push(`<label class="tk-lbl">Task</label><div class="tk-md">${renderMarkdown(clipEnd(run.payload.trim(), 2000))}</div>`);
     if (run.state === "done") {
       // The nodes nobody else needed: their answers are the run's outcome.
       const needed = new Set(def.nodes.flatMap((n) => n.needs ?? []));
@@ -847,6 +847,36 @@ async function nodeSessionSend(T, text) {
     ? "It's working: you can write here when it asks you something (it shows in the factory's view too)."
     : "This node has finished: its session is read only. Retry it in the factory's view to run it again.");
 }
+
+// ---------- starting runs from a tab ----------
+/** A note in a tab that a run started, with a link to it. */
+function factoryRunNote(S, ev) {
+  info(S, `<span class="fa-ico" aria-hidden="true"></span> Started <b>${esc(ev.name ?? ev.factory)}</b> in ${esc(tildify(ev.folder ?? ""))} · run <code>${esc(shortRunId(ev.run))}</code> · <a href="#" class="fa-open-run" data-factory="${esc(ev.factory)}" data-run="${esc(ev.run)}">Open run</a>`);
+}
+
+/** /factory run <name> [task]: a run in the tab's folder (or the factory's, from a home-folder tab). */
+async function runFactoryFromTab(S, which, task) {
+  await loadFactories();
+  const want = which.toLowerCase();
+  const f = factoryState.list.find((x) => x.id === which || x.id.toLowerCase() === want || x.factory?.name?.toLowerCase() === want);
+  if (!f) { sys(S, `No factory “${which}”. /factories lists them.`); return; }
+  if (!f.factory) { sys(S, `✗ ${f.id}.yaml can't be read: ${f.error}`); return; }
+  const folder = S.cwd && S.cwd !== homeDir ? S.cwd : null;
+  try {
+    const run = await invoke("factory_run", { factory: f.id, payload: task || null, folder, model: defaultPawModel() || null });
+    factoryRunNote(S, { factory: f.id, name: f.factory.name, run, folder: folder ?? (f.factory.folder?.trim() || "~") });
+    loadFactories();
+  } catch (e) { sys(S, `✗ ${e}`); }
+}
+
+document.addEventListener("click", async (e) => {
+  const a = e.target.closest?.(".fa-open-run");
+  if (!a) return;
+  e.preventDefault();
+  if (!factoryState.loaded) await loadFactories();
+  const F = await openFactory(a.dataset.factory);
+  if (F?.factory) { F.factory.run = a.dataset.run; F.factory.selected = null; saveWorkspaceSoon(); renderFactoryTabs(); }
+});
 
 // ---------- /factories ----------
 async function factoriesListHtml() {

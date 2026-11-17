@@ -590,6 +590,23 @@ pub fn load(id: &str, path: &Path) -> Found {
     Found { id: id.to_string(), path: path.to_path_buf(), factory, error, modified }
 }
 
+/// A factory by its id or its name (any case): its id and definition.
+pub fn find(dir: &Path, which: &str) -> Result<(String, Factory), String> {
+    let all = load_all(dir);
+    let w = which.trim();
+    let hit = all.iter().find(|f| f.id == w).or_else(|| all.iter().find(|f| f.factory.as_ref().is_some_and(|d| d.name.eq_ignore_ascii_case(w)) || f.id.eq_ignore_ascii_case(w)));
+    match hit {
+        Some(f) => match &f.factory {
+            Some(d) => Ok((f.id.clone(), d.clone())),
+            None => Err(format!("{}.yaml can't be read: {}", f.id, f.error.clone().unwrap_or_default())),
+        },
+        None => Err(format!(
+            "There's no factory “{w}”. The factories: {}.",
+            if all.is_empty() { "none yet".to_string() } else { all.iter().map(|f| f.id.as_str()).collect::<Vec<_>>().join(", ") }
+        )),
+    }
+}
+
 /// A new factory file from the template; its id (the file name).
 pub fn create(name: &str) -> Result<String, String> {
     let name = name.trim();
@@ -757,6 +774,19 @@ nodes:
         assert!(parse("name: x\nnodes:\n  - { id: w, wait: 'true', approve: true }\n").unwrap_err().contains("approve is for agent nodes"));
         assert!(parse(&base("loop: { back_to: fix, until: { matches: x }, max: 0 }")).unwrap_err().contains("1 to 20"));
         assert!(parse(&base("loop: { back_to: fix, until: { matches: x }, on_max: retry }")).unwrap_err().contains("fail or continue"));
+    }
+
+    #[test]
+    fn factories_are_found_by_id_or_name() {
+        let d = std::env::temp_dir().join(format!("paw-find-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("create-release.yaml"), "name: Software Development Lifecycle\nnodes:\n  - { id: a, prompt: hi }\n").unwrap();
+        std::fs::write(d.join("broken.yaml"), "name: [\n").unwrap();
+        assert_eq!(find(&d, "create-release").unwrap().0, "create-release");
+        assert_eq!(find(&d, "software development lifecycle").unwrap().0, "create-release");
+        assert!(find(&d, "broken").unwrap_err().contains("can't be read"));
+        assert!(find(&d, "nope").unwrap_err().contains("broken, create-release"));
+        std::fs::remove_dir_all(&d).ok();
     }
 
     #[test]

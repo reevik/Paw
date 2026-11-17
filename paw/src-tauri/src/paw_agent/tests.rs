@@ -50,6 +50,14 @@ impl Drop for Tmp {
     }
 }
 
+#[test]
+fn a_run_from_a_chat_works_in_the_tabs_folder_unless_its_home() {
+    let home = PathBuf::from(std::env::var("HOME").unwrap());
+    assert_eq!(factory_folder(Path::new("/work/app"), ""), Some("/work/app".into()));
+    assert_eq!(factory_folder(&home, ""), None, "a home-folder tab: the factory's own folder");
+    assert_eq!(factory_folder(&home, " ~/x "), Some("~/x".into()), "a folder named");
+}
+
 fn config(dir: &Path, approval: &str, conversation: &str) -> SessionConfig {
     SessionConfig {
         name: "Paw Agent — test".into(),

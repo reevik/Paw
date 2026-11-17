@@ -55,6 +55,7 @@ nodes:
 - **Each node its own agent:** its model, skills, built-in tools and MCP servers.
 - **Started on their own:** `every`, `at` (times of day), `watch` (a command), `webhook` (`POST 127.0.0.1:4747/factories/<id>`, its body going to the nodes) and `file`. `repeat` loops a pipeline.
 - **Side by side:** every run has its own execution id (a UUID) and folder, `~/.paw/factories/<id>/<execution-id>/`. Runs of one factory can go at once, each in its own project folder and with its own task.
+- **Started from a chat:** ask Paw Agent to run a factory on the project at hand; it starts the run once you confirm, and tells you how it's going.
 - **They ask you:** a node can ask a question or wait for you to approve its answer, with a notification; answer in the view or in the node's own session.
 - **Watched like a task:** the graph shows each node's state (failed ones glow red, waiting ones amber), a click shows a node's task and activity, and the timeline shows where the time went. Approvals wait in the view until you answer them.
 

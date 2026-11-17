@@ -108,6 +108,16 @@ When the answer doesn't meet `until`, `back_to`, the looping node and every node
 
 Nodes run without a window, so pick approval levels that let them work on their own. `auto` (the default for nodes that change files) allows edits inside the folder and safe commands. When a node does need you, it shows **needs you** and a badge in the sidebar. Its approval waits in the factory view until you answer it.
 
+## Starting runs from a chat
+
+Paw Agent in any tab can start factories for you. Say what you want, and it starts the run in the tab's folder (or one you name) with your words as the task:
+
+> Run the SDLC factory on this repo: add a --verbose flag to the CLI.
+
+You confirm before the run starts. **Always** allows that factory from then on, and the `full` level doesn't ask. The tab shows a link to the run. Ask Paw Agent how a run is going and it tells you the state, the node at work, and anything waiting for you. When a node asks you something or waits for your approval, you can answer in the chat too; Paw Agent passes on only what you say.
+
+Without a model: `/factory run <name> [task]` starts a run in the tab's folder.
+
 ## Talking to the nodes
 
 A node can need you in three ways. Each time it glows amber, shows **needs you** and a badge in the sidebar, and you get a notification, even with the window closed.

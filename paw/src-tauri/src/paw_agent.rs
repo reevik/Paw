@@ -202,6 +202,11 @@ pub struct QuestionRequest {
 
 /// The tool a factory node asks the user with.
 pub const ASK_TOOL: &str = "ask_user";
+/// Paw Agent's factory tools (tabs, not factory nodes): start a run, see how
+/// runs are doing, pass the user's answer or decision on to a node.
+pub const RUN_FACTORY: &str = "run_factory";
+pub const FACTORY_STATUS: &str = "factory_status";
+pub const FACTORY_REPLY: &str = "reply_to_factory";
 
 /// Where a session's events go: the webview, or a test.
 pub trait Sink: Send + Sync + 'static {
@@ -575,6 +580,8 @@ impl Session {
                 self.cfg.mcp.tools.iter().cloned().filter_map(|t| rig_core::tool::DynamicTool::try_from(t).ok()).collect();
             if self.cfg.ask {
                 mcp.push(self.ask_tool());
+            } else if crate::factories::runner::global().is_some() {
+                mcp.extend(self.factory_tools());
             }
             if !mcp.is_empty() {
                 b = b.dynamic_tools(mcp);
@@ -584,7 +591,137 @@ impl Session {
     }
 }
 
+/// Where a run asked for in a chat works: the folder named, else the tab's
+/// (unless that's just the home folder: then the factory's own).
+fn factory_folder(cwd: &Path, given: &str) -> Option<String> {
+    let given = given.trim();
+    if !given.is_empty() {
+        return Some(given.to_string());
+    }
+    let home = std::env::var("HOME").map(PathBuf::from).ok();
+    (home.as_deref() != Some(cwd)).then(|| cwd.display().to_string())
+}
+
 impl Session {
+    /// run_factory, factory_status and reply_to_factory.
+    fn factory_tools(self: &Arc<Self>) -> Vec<rig_core::tool::DynamicTool> {
+        use rig_core::tool::{DynamicTool, ToolExecutionError, ToolOutput};
+        let name = |n: &str| rig_core::message::ToolName::new(n).expect("a name");
+        let dir = crate::factories::runner::factories_dir();
+        let list = dir
+            .as_deref()
+            .map(crate::factories::load_all)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|f| f.factory.map(|d| format!("- {} (“{}”): {}", f.id, d.name, d.description.trim())))
+            .collect::<Vec<_>>();
+        let list = if list.is_empty() { "There are no factories yet.".to_string() } else { format!("The factories:\n{}", list.join("\n")) };
+        let fail = |e: String| ToolExecutionError::other(e);
+
+        let me = self.clone();
+        let run = DynamicTool::new_with_context(
+            name(RUN_FACTORY),
+            format!(
+                "Start a run of one of the user's Paw factories (pipelines of agents that run in the background) when the user asks you to. \
+                 The task is what the run is for, in the user's words (every node gets it). The run works in `folder`; leave it out to use \
+                 this tab's folder. The user confirms before it starts. It returns the run's execution id; the run goes on without you, \
+                 so don't wait for it: say it started, and use {FACTORY_STATUS} when the user asks how it's going.\n{list}"
+            ),
+            json!({
+                "type": "object",
+                "properties": {
+                    "factory": { "type": "string", "description": "The factory's id (or name)." },
+                    "task": { "type": "string", "description": "What this run is for, in the user's words." },
+                    "folder": { "type": "string", "description": "The project folder the run works in (default: this tab's folder)." }
+                },
+                "required": ["factory"]
+            }),
+            move |_ctx, args| {
+                let me = me.clone();
+                Box::pin(async move {
+                    let s = |k: &str| args.get(k).and_then(Value::as_str).unwrap_or("").trim().to_string();
+                    let runner = crate::factories::runner::global().ok_or_else(|| fail("Factories run in Paw's background process, which isn't reachable here.".into()))?;
+                    let dir = crate::factories::runner::factories_dir().ok_or_else(|| fail("Paw can't find its folder.".into()))?;
+                    let (id, def) = crate::factories::find(&dir, &s("factory")).map_err(fail)?;
+                    let folder = factory_folder(&me.cfg.cwd, &s("folder"));
+                    let task = Some(s("task")).filter(|t| !t.is_empty());
+                    let rid = runner.start(&id, "chat", task, folder.clone()).map_err(fail)?;
+                    let shown = folder.unwrap_or_else(|| if def.folder.trim().is_empty() { "~".into() } else { def.folder.trim().to_string() });
+                    me.sink.line(me.id, "stdout", event(json!({ "type": "paw", "subtype": "factory_run", "factory": id, "name": def.name, "run": rid, "folder": shown })));
+                    Ok(ToolOutput::text(format!(
+                        "Started run {rid} of “{}” ({id}) in {shown}. It runs in the background; the user can watch it in the factory's view. \
+                         Nodes that need the user (a question, an approval) notify them.",
+                        def.name
+                    )))
+                })
+            },
+        );
+
+        let status = DynamicTool::new_with_context(
+            name(FACTORY_STATUS),
+            format!(
+                "How the user's factory runs are doing: their state, the node at work, and anything waiting for the user (a question, \
+                 an answer to approve) with its run and node ids. With a run id: that run; with a factory: its runs going (or its last one); \
+                 with neither: every run going.\n{list}"
+            ),
+            json!({
+                "type": "object",
+                "properties": {
+                    "factory": { "type": "string", "description": "A factory's id (or name)." },
+                    "run": { "type": "string", "description": "A run's execution id (or its first characters)." }
+                }
+            }),
+            move |_ctx, args| {
+                Box::pin(async move {
+                    let s = |k: &str| args.get(k).and_then(Value::as_str).unwrap_or("").trim().to_string();
+                    let runner = crate::factories::runner::global().ok_or_else(|| fail("Factories run in Paw's background process, which isn't reachable here.".into()))?;
+                    let factory = match s("factory") {
+                        f if f.is_empty() => None,
+                        f => {
+                            let dir = crate::factories::runner::factories_dir().ok_or_else(|| fail("Paw can't find its folder.".into()))?;
+                            Some(crate::factories::find(&dir, &f).map_err(fail)?.0)
+                        }
+                    };
+                    let run = Some(s("run")).filter(|r| !r.is_empty());
+                    Ok(ToolOutput::text(runner.status_text(factory.as_deref(), run.as_deref())))
+                })
+            },
+        );
+
+        let reply = DynamicTool::new_with_context(
+            name(FACTORY_REPLY),
+            "Pass the user's reply on to a factory node that waits for them (factory_status shows which): the answer to its question, \
+             or their decision on an answer waiting for approval (approve true or false, with text: the answer as they want it passed on, \
+             or why they reject it). Only pass on what the user said in this chat; never answer, approve or reject on your own.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "run": { "type": "string", "description": "The run's execution id." },
+                    "node": { "type": "string", "description": "The node's id." },
+                    "answer": { "type": "string", "description": "The user's answer to the node's question." },
+                    "approve": { "type": "boolean", "description": "For an answer waiting for approval: the user approves (true) or rejects (false) it." },
+                    "text": { "type": "string", "description": "With approve: the answer as the user changed it, or why they reject it." }
+                },
+                "required": ["run", "node"]
+            }),
+            move |_ctx, args| {
+                Box::pin(async move {
+                    let s = |k: &str| args.get(k).and_then(Value::as_str).unwrap_or("").trim().to_string();
+                    let runner = crate::factories::runner::global().ok_or_else(|| fail("Factories run in Paw's background process, which isn't reachable here.".into()))?;
+                    let (run, node) = (s("run"), s("node"));
+                    let run = runner.full_run_id(&run).ok_or_else(|| fail(format!("There's no run {run}.")))?;
+                    if let Some(approve) = args.get("approve").and_then(Value::as_bool) {
+                        runner.decide(&run, &node, approve, Some(s("text")).filter(|t| !t.is_empty())).map_err(fail)?;
+                        return Ok(ToolOutput::text(if approve { "Approved; the run goes on." } else { "Rejected; the node goes back for another round, or the run stops." }));
+                    }
+                    runner.answer(&run, &node, &s("answer")).map_err(fail)?;
+                    Ok(ToolOutput::text("Passed on; the node goes on with it."))
+                })
+            },
+        );
+        vec![run, status, reply]
+    }
+
     /// `ask_user`: a question that waits for the user's answer.
     fn ask_tool(self: &Arc<Self>) -> rig_core::tool::DynamicTool {
         use rig_core::tool::{DynamicTool, ToolExecutionError, ToolOutput};
@@ -643,6 +780,35 @@ impl AgentHook for GateHook {
             return DispatchAction::proceed();
         }
         let args: Value = ev.tool_args().and_then(|a| serde_json::from_str(a).ok()).unwrap_or(Value::Null);
+        // The factory tools: reading how runs go, and passing on what the user said, need no approval.
+        if (tool == FACTORY_STATUS || tool == FACTORY_REPLY) && !self.sess.cfg.ask {
+            return DispatchAction::proceed();
+        }
+        // Starting a run can do a lot (push code, open pull requests): the user confirms it.
+        if tool == RUN_FACTORY && !self.sess.cfg.ask {
+            let level = self.sess.level.lock().unwrap().clone();
+            if level == "plan" {
+                return DispatchAction::skip(PLAN_REFUSAL);
+            }
+            let which = arg(&args, "factory").to_string();
+            let found = crate::factories::runner::factories_dir().and_then(|d| crate::factories::find(&d, &which).ok());
+            let Some((id, def)) = found else { return DispatchAction::proceed() }; // the tool says what's wrong
+            let rule = format!("factory({id})");
+            if level == "full" || self.sess.rules.lock().unwrap().contains(&rule) {
+                return DispatchAction::proceed();
+            }
+            let folder = factory_folder(&self.sess.cfg.cwd, arg(&args, "folder"))
+                .unwrap_or_else(|| if def.folder.trim().is_empty() { "~".into() } else { def.folder.trim().to_string() });
+            let task = arg(&args, "task").trim();
+            let ask = Ask {
+                label: format!("Start the factory “{}” in {folder}", def.name),
+                rule,
+                detail: if task.is_empty() { "(no task)".into() } else { task.to_string() },
+                broad: false,
+                why: None,
+            };
+            return if self.sess.ask(&tool, ask).await { DispatchAction::proceed() } else { DispatchAction::skip(USER_DENIED) };
+        }
         // MCP tools their server marks read-only run like `read`.
         if self.sess.cfg.mcp.read_only.contains(&tool) {
             return DispatchAction::proceed();

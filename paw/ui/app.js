@@ -5136,9 +5136,11 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") closeMenu();
   if (!e.metaKey) return;
   if (e.ctrlKey && (e.key === "m" || e.key === "M")) { e.preventDefault(); setPanel(!panel.open); return; }
-  // ⌘+ (also ⌘= without shift) / ⌘− / ⌘0: the transcript's font size.
+  // ⌘+ (also ⌘= without shift) / ⌘− / ⌘0: the transcript's font size, or a
+  // factory diagram's zoom while the pointer is over it.
   if (!e.ctrlKey && !e.altKey && ["=", "+", "-", "_", "0"].includes(e.key)) {
     e.preventDefault();
+    if (factoryZoomKey(e.key)) return;
     stepFontSize(e.key === "0" ? 0 : e.key === "-" || e.key === "_" ? -1 : 1);
     return;
   }

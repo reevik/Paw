@@ -1265,7 +1265,22 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
 .fa-hook .tk-pre { margin: 2px 0 6px; user-select: text; -webkit-user-select: text; }
 
 /* A factory that repeats: a line from its last nodes back to its first (factories.js › drawFactoryEdges). */
-.tk-graph.fa-loop { padding-bottom: 40px; }
+.fa-zoom.fa-loop { padding-bottom: 40px; }
+/* A factory's diagram: scaled inside a box of its zoomed size, the zoom bar over it. */
+.fa-graph-wrap { position: relative; display: flex; min-width: 0; min-height: 0; }
+.tk-graph.fa-graph { flex: 1; display: flex; padding: 0; gap: 0; }
+.fa-sizer { position: relative; flex-shrink: 0; margin: auto; }
+.fa-zoom { position: absolute; left: 0; top: 0; width: max-content; display: flex; gap: 34px; align-items: center; padding: 4px 4px 8px; transform-origin: 0 0; }
+.fa-zoombar {
+  position: absolute; right: 8px; bottom: 8px; z-index: 2; display: flex; align-items: center; gap: 1px; padding: 2px;
+  border-radius: 8px; background: color-mix(in srgb, var(--t-bg, var(--bg)) 88%, transparent); border: 0.5px solid var(--t-border);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .08); backdrop-filter: blur(6px); opacity: .75; transition: opacity .15s;
+}
+.fa-graph-wrap:hover .fa-zoombar { opacity: 1; }
+.fa-zb { min-width: 24px; height: 22px; padding: 0 6px; border: 0; border-radius: 6px; background: transparent; color: var(--t-fg); font: 12px var(--ui-font, inherit); cursor: pointer; }
+.fa-zb:hover { background: var(--t-hover); }
+.fa-zb.on { color: var(--accent); }
+.fa-zpct { min-width: 44px; font-variant-numeric: tabular-nums; }
 .tk-edges .fa-loop-line { fill: none; stroke: color-mix(in srgb, var(--t-accent) 55%, var(--tk-line)); stroke-width: 1.5; stroke-dasharray: 6 4; }
 .tk-edges .fa-loop-line.live { animation: fa-loop-flow 1.2s linear infinite; }
 @keyframes fa-loop-flow { to { stroke-dashoffset: -20; } }

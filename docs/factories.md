@@ -9,6 +9,7 @@ Factory files live in `~/.paw/factories/<id>.yaml`: the file name is the factory
 A factory opens in a tab that looks like a task:
 
 - **The graph:** nodes in the order they run. A dashed line is a branch: the node after it runs only if the condition holds.
+- **Zoom:** the bar in the graph's corner zooms out (−) and in (+), back to **100%** (click the percentage), or to **Fit**, which shows the whole graph and keeps fitting it as the view changes size. ⌘-scroll or a trackpad pinch zooms around the pointer, and ⌘+, ⌘− and ⌘0 zoom the graph while the pointer is over it. Each factory tab remembers its zoom.
 - **Click a node** to see its description, prompt, model, skills, tools, MCP servers and condition. During a run you also see its activity and result. What a node needs from you shows at the top of its side panel: a tool call to allow, a question to answer, or its answer to approve (see [Talking to the nodes](#talking-to-the-nodes)).
 - **Open session** opens a node's conversation in a tab: live while it works, and saved once it's done.
 - **Run now** starts a run in the background, in the factory's folder. **Run in…** starts one in another project folder, optionally with a task that every node gets. Runs go side by side, so you can start several. **Stop** stops the run you're looking at. **Retry** and **Skip** work on a failed node. The run picker lists the runs, going and earlier ones, with their folder and execution id.

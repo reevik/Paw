@@ -387,23 +387,121 @@ function renderFactoryView(S, host) {
   } else {
     const vsplit = `<div class="tk-vsplit" title="Drag to resize · double-click to reset"></div>`;
     const loop = repeats(plan.def) ? " fa-loop" : "";
-    body = `<div class="tk-body"><div class="tk-graph${loop}">${graphHtml(plan)}</div>${vsplit}<aside class="tk-side">${factorySideHtml(S, plan, f)}</aside></div>`;
+    // The diagram scales inside a box of its zoomed size (so the scrollbars fit it), with the zoom bar over it.
+    const z = typeof S.factory.zoom === "number" ? S.factory.zoom : 1;
+    const graph = `<div class="fa-graph-wrap"><div class="tk-graph fa-graph"><div class="fa-sizer"><div class="fa-zoom${loop}" data-zoom="${z}" style="transform: scale(${z})">${graphHtml(plan)}</div></div></div>${zoomBarHtml(S)}</div>`;
+    body = `<div class="tk-body">${graph}${vsplit}<aside class="tk-side">${factorySideHtml(S, plan, f)}</aside></div>`;
   }
   // Not under the user's typing; keep where the graph was scrolled.
   if (host.contains(document.activeElement) && document.activeElement.matches("input, textarea")) return;
-  const scroll = host.querySelector(".tk-graph")?.scrollLeft ?? 0;
+  const old = host.querySelector(".fa-graph");
+  const scroll = old ? [old.scrollLeft, old.scrollTop] : null;
   const sideScroll = host.querySelector(".tk-side")?.scrollTop ?? 0;
   host.innerHTML = head + body;
-  const g = host.querySelector(".tk-graph");
+  const g = host.querySelector(".fa-graph");
   if (g) {
-    g.scrollLeft = scroll;
-    requestAnimationFrame(() => drawFactoryEdges(g, S, plan));
+    requestAnimationFrame(() => {
+      drawFactoryEdges(g.querySelector(".fa-zoom"), S, plan);
+      applyZoom(host, S);
+      if (scroll) [g.scrollLeft, g.scrollTop] = scroll;
+    });
   }
   const side = host.querySelector(".tk-side");
   if (side) side.scrollTop = sideScroll;
 }
 
 const repeats = (def) => !!def?.repeat && def.repeat !== false;
+
+// ---------- zooming the diagram ----------
+const ZOOM_STEPS = [0.25, 0.33, 0.5, 0.67, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3];
+const ZOOM_MIN = ZOOM_STEPS[0], ZOOM_MAX = ZOOM_STEPS.at(-1);
+const clampZoom = (z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
+
+function zoomBarHtml(S) {
+  const fit = S.factory.zoom === "fit";
+  return `<div class="fa-zoombar" role="toolbar" aria-label="Zoom">
+    <button class="fa-zb" data-fact="zoom-out" title="Zoom out (⌘− over the diagram)">−</button>
+    <button class="fa-zb fa-zpct" data-fact="zoom-100" title="Actual size (⌘0 over the diagram)">100%</button>
+    <button class="fa-zb" data-fact="zoom-in" title="Zoom in (⌘+ over the diagram)">+</button>
+    <button class="fa-zb${fit ? " on" : ""}" data-fact="zoom-fit" title="Fit the diagram to the view">Fit</button>
+  </div>`;
+}
+
+/** The scale that shows the whole diagram in the view. */
+function fitScale(g, inner) {
+  const W = inner.offsetWidth, H = inner.offsetHeight;
+  if (!W || !H) return 1;
+  return clampZoom(Math.min((g.clientWidth - 16) / W, (g.clientHeight - 16) / H, 2));
+}
+
+/** Scale the diagram to the tab's zoom (a number, or "fit"). `anchor`
+ *  ({x, y} in the view, and the diagram point under it) stays put. */
+function applyZoom(host, S, anchor = null) {
+  const g = host.querySelector(".fa-graph"), sizer = g?.querySelector(".fa-sizer"), inner = sizer?.querySelector(".fa-zoom");
+  if (!inner) return 1;
+  const z = S.factory.zoom === "fit" ? fitScale(g, inner) : clampZoom(Number(S.factory.zoom) || 1);
+  inner.style.transform = `scale(${z})`;
+  inner.dataset.zoom = String(z);
+  sizer.style.width = `${Math.ceil(inner.offsetWidth * z)}px`;
+  sizer.style.height = `${Math.ceil(inner.offsetHeight * z)}px`;
+  const pct = host.querySelector(".fa-zpct");
+  if (pct) pct.textContent = `${Math.round(z * 100)}%`;
+  host.querySelector('[data-fact="zoom-fit"]')?.classList.toggle("on", S.factory.zoom === "fit");
+  if (anchor) {
+    g.scrollLeft = sizer.offsetLeft + anchor.px * z - anchor.x;
+    g.scrollTop = sizer.offsetTop + anchor.py * z - anchor.y;
+  }
+  return z;
+}
+
+/** Where a view point (relative to the view) is on the unscaled diagram. */
+function zoomAnchor(host, x, y) {
+  const g = host.querySelector(".fa-graph"), sizer = g?.querySelector(".fa-sizer");
+  const z = Number(sizer?.firstElementChild?.dataset.zoom) || 1;
+  if (!sizer) return null;
+  return { x, y, px: (g.scrollLeft + x - sizer.offsetLeft) / z, py: (g.scrollTop + y - sizer.offsetTop) / z };
+}
+
+/** Set the zoom: a scale, "fit", or a step in or out ("in" / "out"); around a point, or the view's middle. */
+function setZoom(S, host, to, at = null) {
+  const g = host.querySelector(".fa-graph");
+  if (!g) return;
+  const now = Number(g.querySelector(".fa-zoom")?.dataset.zoom) || 1;
+  let z = to;
+  if (to === "in") z = ZOOM_STEPS.find((s) => s > now + 0.001) ?? ZOOM_MAX;
+  else if (to === "out") z = [...ZOOM_STEPS].reverse().find((s) => s < now - 0.001) ?? ZOOM_MIN;
+  S.factory.zoom = z === "fit" ? "fit" : clampZoom(z);
+  const anchor = z === "fit" ? null : zoomAnchor(host, at?.x ?? g.clientWidth / 2, at?.y ?? g.clientHeight / 2);
+  applyZoom(host, S, anchor);
+  saveWorkspaceSoon();
+}
+
+/** ⌘-scroll, or a trackpad pinch (which comes as ctrl-scroll): zoom around the pointer. */
+function factoryWheel(S, e, host) {
+  if (!(e.ctrlKey || e.metaKey)) return;
+  const g = e.target.closest?.(".fa-graph");
+  if (!g) return;
+  e.preventDefault();
+  const now = Number(g.querySelector(".fa-zoom")?.dataset.zoom) || 1;
+  const d = Math.max(-60, Math.min(60, e.deltaY));
+  const r = g.getBoundingClientRect();
+  setZoom(S, host, clampZoom(now * Math.exp(-d * 0.01)), { x: e.clientX - r.left, y: e.clientY - r.top });
+}
+
+/** ⌘+ / ⌘− / ⌘0 with the pointer over a factory's diagram: zoom it (true: handled). */
+function factoryZoomKey(key) {
+  const g = document.querySelector(".fa-graph:hover");
+  if (!g) return false;
+  for (const P of panes.values()) {
+    const host = withPane(P, () => $("task-view"));
+    const S = sessions.get(P.sid);
+    if (host?.contains(g) && S?.factory) {
+      setZoom(S, host, key === "0" ? 1 : key === "-" || key === "_" ? "out" : "in");
+      return true;
+    }
+  }
+  return false;
+}
 
 /** The nodes a loop runs again: back_to, the looping node, and every node on a path between them. */
 function loopRegion(nodes, backTo, node) {
@@ -431,9 +529,10 @@ function drawFactoryEdges(g, S, plan = factoryPlan(S)) {
   if (!loops.length && !repeats(plan.def)) return;
   const svg = g.querySelector(".tk-edges");
   const box = g.getBoundingClientRect();
+  const z = Number(g.dataset.zoom) || 1; // measured on screen, drawn unscaled
   const at = (id) => g.querySelector(`.tk-node[data-step="${CSS.escape(id)}"]`)?.getBoundingClientRect();
-  const cx = (r) => r.left + r.width / 2 - box.left + g.scrollLeft;
-  const bot = (r) => r.bottom - box.top + g.scrollTop;
+  const cx = (r) => (r.left + r.width / 2 - box.left) / z + g.scrollLeft;
+  const bot = (r) => (r.bottom - box.top) / z + g.scrollTop;
   const lowest = Math.max(...plan.def.nodes.map((n) => at(n.id)).filter(Boolean).map(bot));
   // Each loop: from the looping node down, back under the graph, up into back_to (one lane each).
   let lane = 0;
@@ -455,8 +554,8 @@ function drawFactoryEdges(g, S, plan = factoryPlan(S)) {
   const ends = plan.steps.filter((s) => !needed.has(s.id)).map((s) => at(s.id)).filter(Boolean);
   const starts = plan.steps.filter((s) => !s.needs.length).map((s) => at(s.id)).filter(Boolean);
   if (!ends.length || !starts.length) return;
-  const x = (r) => r.left + r.width / 2 - box.left + g.scrollLeft;
-  const bottom = (r) => r.bottom - box.top + g.scrollTop;
+  const x = (r) => (r.left + r.width / 2 - box.left) / z + g.scrollLeft;
+  const bottom = (r) => (r.bottom - box.top) / z + g.scrollTop;
   const y = Math.max(...[...ends, ...starts].map(bottom)) + 22 + lane * 22; // below every node and loop
   const r = 10;
   let d = "";
@@ -683,6 +782,9 @@ async function factoryClick(S, e, P) {
         break;
       }
       case "rundir": if (run) await invoke("open_folder", { path: runDir(run) }); break;
+      case "zoom-in": case "zoom-out": setZoom(S, withPane(P, () => $("task-view")), b.dataset.fact.slice(5)); break;
+      case "zoom-100": setZoom(S, withPane(P, () => $("task-view")), 1); break;
+      case "zoom-fit": setZoom(S, withPane(P, () => $("task-view")), "fit"); break;
       case "answer": {
         const r = run?.nodes.find((n) => n.id === S.factory.selected);
         if (!r?.question) break;

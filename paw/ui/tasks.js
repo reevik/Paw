@@ -859,6 +859,8 @@ function drawEdges(g, t) {
   const svg = g.querySelector(".tk-edges");
   if (!svg) return;
   const box = g.getBoundingClientRect();
+  // A zoomed graph (a factory's): measure on screen, draw in its own unscaled space.
+  const z = Number(g.dataset.zoom) || 1;
   const w = g.scrollWidth, h = g.scrollHeight;
   svg.setAttribute("width", w);
   svg.setAttribute("height", h);
@@ -871,8 +873,8 @@ function drawEdges(g, t) {
     for (const n of s.needs) {
       const from = at(n);
       if (!from) continue;
-      const x1 = from.right - box.left + g.scrollLeft, y1 = from.top + from.height / 2 - box.top + g.scrollTop;
-      const x2 = to.left - box.left + g.scrollLeft, y2 = to.top + to.height / 2 - box.top + g.scrollTop;
+      const x1 = (from.right - box.left) / z + g.scrollLeft, y1 = (from.top + from.height / 2 - box.top) / z + g.scrollTop;
+      const x2 = (to.left - box.left) / z + g.scrollLeft, y2 = (to.top + to.height / 2 - box.top) / z + g.scrollTop;
       const dx = Math.max(16, (x2 - x1) / 2);
       const live = stepView(s) === "running" || stepView(s) === "needs";
       // A factory's branch: the node runs only if this input's answer matches.
@@ -1004,6 +1006,8 @@ function bindTaskView(P) {
     saveBoardSizes(s);
     for (const Q of panes.values()) withPane(Q, renderTaskView);
   });
+  // A factory's diagram: ⌘-scroll or pinch zooms it.
+  host.addEventListener("wheel", (e) => { const T = S(); if (T?.factory) factoryWheel(T, e, host); }, { passive: false });
   host.addEventListener("click", (e) => {
     const T = S();
     if (T?.factory) return factoryClick(T, e, P);
@@ -1126,7 +1130,8 @@ function bindTaskView(P) {
     const T = S();
     const g = host.querySelector(".tk-graph");
     if (T?.task && g) drawEdges(g, T.task);
-    if (T?.factory && g) drawFactoryEdges(g, T);
+    // A factory's diagram: its lines are drawn in the zoomed box; Fit follows the view's size.
+    if (T?.factory && g) { drawFactoryEdges(g.querySelector(".fa-zoom") ?? g, T); applyZoom(host, T); }
   }).observe(host);
 }
 

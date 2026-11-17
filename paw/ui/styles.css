@@ -1280,3 +1280,5 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
 .sidebar .nav-sec > .sk-sec-body { display: block; padding-top: 0; }
 .nav-tools { display: flex; align-items: center; gap: 4px; margin: 0 0 6px; }
 .nav-tools .nav-filter { flex: 1; min-width: 0; margin: 0; }
+.tk-round { color: var(--t-accent); }
+.tk-edges .fa-back { stroke: color-mix(in srgb, var(--wait-glow) 65%, var(--tk-line)); }

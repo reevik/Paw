@@ -65,8 +65,35 @@ pub struct NodeRun {
     /// A wait node: how many times it checked.
     #[serde(default)]
     pub checks: u32,
+    /// The round it's in when it's part of a loop (1 = the first pass).
+    #[serde(default)]
+    pub round: u32,
+    /// Its earlier rounds, for the timeline.
+    #[serde(default)]
+    pub rounds: Vec<Round>,
+    /// What sent it back (the looping node's answer), and its own answer then.
+    #[serde(default)]
+    pub feedback: Option<Feedback>,
     #[serde(skip)]
     last_answer: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Round {
+    pub round: u32,
+    pub state: String,
+    pub started_at: Option<u64>,
+    pub ended_at: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Feedback {
+    /// The node whose loop sent the run back.
+    pub from: String,
+    pub round: u32,
+    pub text: String,
+    /// This node's own answer in that round.
+    pub previous: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -575,6 +602,8 @@ impl Runner {
                 }
             }
             let agent = n.agent;
+            // A node with a loop: go on, or send the run back for another round.
+            loop_back(r, node);
             if let Some(a) = agent {
                 st.agents.remove(&a);
             }
@@ -857,6 +886,53 @@ fn pump(r: &mut Run, limit: usize, busy: &mut usize, default_model: &str) -> Vec
     starts
 }
 
+/// A node that just finished, with a loop: its answer meets the loop's
+/// condition (go on), or the run goes back to `back_to` for another round
+/// (the nodes on the way there run again, `back_to` getting the answer as
+/// feedback), or the rounds are used up (fail, or go on with `on_max: continue`).
+fn loop_back(r: &mut Run, node: &str) {
+    let Some(l) = r.def_node(node).and_then(|d| d.repeat_until.clone()) else { return };
+    let Some(n) = r.node(node).filter(|n| n.state == "done") else { return };
+    let (answer, round) = (n.result.clone(), n.round.max(1));
+    if l.done(&answer) {
+        if round > 1 {
+            log(r.node_mut(node).unwrap(), "loop", &format!("Round {round}: its loop's condition is met; going on."));
+        }
+        return;
+    }
+    if round >= l.max_rounds() {
+        let n = r.node_mut(node).unwrap();
+        if l.on_max.as_deref() == Some("continue") {
+            log(n, "loop", &format!("Round {round} of {round}: still not met; going on anyway (on_max: continue)."));
+        } else {
+            n.state = "failed".into();
+            n.error = Some(format!("After {round} round{}, its answer still doesn't meet its loop's condition.", if round == 1 { "" } else { "s" }));
+        }
+        return;
+    }
+    let region = loop_region(&r.def.nodes, &l.back_to, node);
+    for id in &region {
+        let back_to = *id == l.back_to;
+        let Some(x) = r.node_mut(id) else { continue };
+        if x.started_at.is_some() {
+            x.rounds.push(Round { round: x.round.max(1), state: x.state.clone(), started_at: x.started_at, ended_at: x.ended_at });
+        }
+        if back_to {
+            x.feedback = Some(Feedback { from: node.to_string(), round, text: clip_end(answer.trim(), 6000), previous: clip_end(x.result.trim(), 6000) });
+        }
+        x.state = "waiting".into();
+        x.round = round + 1;
+        x.started_at = None;
+        x.ended_at = None;
+        x.error = None;
+        x.approval = None;
+        x.agent = None;
+        x.result.clear();
+        x.note = format!("Round {} of up to {}.", round + 1, l.max_rounds());
+    }
+    log(r.node_mut(node).unwrap(), "loop", &format!("Round {round}: its loop's condition isn't met; back to {} for round {}.", l.back_to, round + 1));
+}
+
 /// Can this waiting node start now (its inputs and condition allow it)?
 fn ready_now(r: &Run, def: &Node) -> bool {
     let needs: Vec<&NodeRun> = def.needs.iter().filter_map(|n| r.node(n)).collect();
@@ -897,6 +973,19 @@ fn node_prompt(r: &Run, def: &Node) -> String {
     }
     if !def.edits {
         parts.push("This node only reads: don't change any files.".into());
+    }
+    // Sent back by a loop: what came back, and what this node answered before.
+    if let Some(fb) = r.node(&def.id).and_then(|n| n.feedback.as_ref()) {
+        let max = r.def_node(&fb.from).and_then(|d| d.repeat_until.as_ref()).map_or(0, |l| l.max_rounds());
+        let from = r.def_node(&fb.from).map(|d| d.label().to_string()).unwrap_or_else(|| fb.from.clone());
+        parts.push(format!(
+            "This is round {} of up to {max}: “{from}” sent the work back.\n<feedback from=\"{}\" round=\"{}\">\n{}\n</feedback>{}\nAddress the feedback.",
+            fb.round + 1,
+            fb.from,
+            fb.round,
+            fb.text,
+            if fb.previous.is_empty() { String::new() } else { format!("\nYour answer in round {}:\n<previous>\n{}\n</previous>", fb.round, fb.previous) },
+        ));
     }
     parts.push(def.prompt.trim().to_string());
     parts.push("When you're done, end with a short summary of what you did and what you found. The next nodes get it.".into());
@@ -1089,6 +1178,65 @@ nodes:
         assert_eq!(r.state, "failed");
         let mut r = run_of(&GRAPH.replace("model: anthropic/claude-sonnet-5-5\n", ""));
         assert_eq!(started(&pump(&mut r, 9, &mut 0, "ollama/qwen3")), ["triage"], "the default model from Settings");
+    }
+
+    #[test]
+    fn a_loop_sends_the_run_back_until_its_condition_holds() {
+        let yaml = r#"
+name: Loop
+model: anthropic/claude-sonnet-5-5
+nodes:
+  - { id: plan, prompt: p, edits: false }
+  - { id: fix, needs: [plan], prompt: f }
+  - { id: review, needs: [fix], prompt: r, edits: false, loop: { back_to: fix, until: { matches: approved }, max: 3 } }
+  - { id: ship, needs: [review], prompt: s }
+"#;
+        let mut r = run_of(yaml);
+        let mut busy = 0;
+        let done = |r: &mut Run, id: &str, answer: &str| {
+            let n = r.node_mut(id).unwrap();
+            n.state = "done".into();
+            n.result = answer.into();
+            n.started_at = Some(1);
+            n.ended_at = Some(2);
+            loop_back(r, id);
+        };
+        pump(&mut r, 9, &mut busy, "");
+        done(&mut r, "plan", "the plan");
+        assert_eq!(started(&pump(&mut r, 9, &mut busy, "")), ["fix"]);
+        done(&mut r, "fix", "fixed v1");
+        assert_eq!(started(&pump(&mut r, 9, &mut busy, "")), ["review"]);
+        done(&mut r, "review", "changes needed: tests fail");
+        // Back to fix: fix and review run again, plan doesn't; ship waits.
+        assert_eq!((r.node("fix").unwrap().state.as_str(), r.node("review").unwrap().state.as_str(), r.node("plan").unwrap().state.as_str()), ("waiting", "waiting", "done"));
+        let fb = r.node("fix").unwrap().feedback.clone().unwrap();
+        assert_eq!((fb.from.as_str(), fb.round, fb.previous.as_str()), ("review", 1, "fixed v1"));
+        assert_eq!(started(&pump(&mut r, 9, &mut busy, "")), ["fix"]);
+        let prompt = node_prompt(&r, r.def_node("fix").unwrap());
+        assert!(prompt.contains("round 2 of up to 3") && prompt.contains("tests fail") && prompt.contains("fixed v1"));
+        done(&mut r, "fix", "fixed v2");
+        pump(&mut r, 9, &mut busy, "");
+        done(&mut r, "review", "verdict: APPROVED");
+        assert_eq!(started(&pump(&mut r, 9, &mut busy, "")), ["ship"]);
+        assert_eq!(r.node("fix").unwrap().rounds.len(), 1, "round 1 is kept for the timeline");
+        assert_eq!(r.node("review").unwrap().round, 2);
+    }
+
+    #[test]
+    fn a_loop_fails_when_its_rounds_run_out_unless_it_continues() {
+        let yaml = |on_max: &str| format!("name: L\nmodel: a/b\nnodes:\n  - {{ id: w, prompt: w, loop: {{ back_to: w, until: {{ matches: ok }}, max: 2{on_max} }} }}\n  - {{ id: next, needs: [w], prompt: n }}\n");
+        for (extra, end) in [("", "failed"), (", on_max: continue", "done")] {
+            let mut r = run_of(&yaml(extra));
+            for _ in 0..2 {
+                pump(&mut r, 9, &mut 0, "");
+                let n = r.node_mut("w").unwrap();
+                n.state = "done".into();
+                n.result = "nope".into();
+                loop_back(&mut r, "w");
+            }
+            assert_eq!(r.node("w").unwrap().state, end);
+            assert_eq!(r.node("w").unwrap().round, 2);
+        }
     }
 
     #[test]

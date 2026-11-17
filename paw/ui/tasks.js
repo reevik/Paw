@@ -707,7 +707,7 @@ function timelineHtml(T) {
 }
 
 /** Rows on one time axis, with a side panel: tasks' and factories' timelines. */
-function timelineCore({ rows, selected, side, empty, foot, label = "step", legend = [] }) {
+function timelineCore({ rows, selected, side, empty, foot, label = "step", legend = [], again = "runs" }) {
   const now = Date.now();
   const spans = rows.flatMap((r) => r.spans);
   if (!spans.length) {
@@ -726,7 +726,7 @@ function timelineCore({ rows, selected, side, empty, foot, label = "step", legen
       const w = Math.max((s.end ?? now) - s.at, 0);
       return `<span class="tl-bar v-${esc(s.view)}" style="left:${pct(s.at - t0)};width:max(3px, ${pct(w)})" title="${esc(STEP_STATE_TEXT[s.view] ?? s.view)} · ${esc(fmtElapsed(w))}"></span>`;
     }).join("");
-    const runs = r.spans.length > 1 ? `<span class="tl-tag">${r.spans.length} runs</span>` : "";
+    const runs = r.spans.length > 1 ? `<span class="tl-tag">${r.spans.length} ${again}</span>` : "";
     return `<div class="tl-row${r.id && r.id === selected ? " sel" : ""}"${r.id ? ` data-step="${esc(r.id)}"` : ""}>
       <div class="tl-lbl" style="padding-left:${8 + r.level * 8}px">
         <span class="tl-name" title="${esc(r.name)} · ${esc(r.agent)}">${esc(r.name)}</span>
@@ -849,7 +849,7 @@ function graphHtml(t) {
     const time = stepTime(s);
     return `<button class="tk-node v-${v}${t.selected === s.id ? " sel" : ""}" data-step="${esc(s.id)}" title="${esc(s.title)}">
       <span class="tk-node-title">${esc(s.title)}</span>
-      <span class="tk-node-sub"><span class="tk-dot v-${v}"></span>${esc(stepModelName(s))} · ${esc(STEP_STATE_TEXT[v] ?? v)}${time && v !== "waiting" ? ` · <span data-time="${esc(s.id)}">${esc(time)}</span>` : ""}${s.edits ? "" : ` · <span class="tk-ro">reads</span>`}</span>
+      <span class="tk-node-sub"><span class="tk-dot v-${v}"></span>${esc(stepModelName(s))} · ${esc(STEP_STATE_TEXT[v] ?? v)}${time && v !== "waiting" ? ` · <span data-time="${esc(s.id)}">${esc(time)}</span>` : ""}${s.edits ? "" : ` · <span class="tk-ro">reads</span>`}${s.badge ? ` · <span class="tk-round">${esc(s.badge)}</span>` : ""}</span>
     </button>`;
   }).join("")}</div>`).join("");
 }

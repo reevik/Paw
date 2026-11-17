@@ -63,6 +63,7 @@ nodes:
 - **Joins:** `join: all` (the default) waits for every input. `join: any` goes on as soon as the first input is done.
 - **Branches:** `when` runs a node only if an earlier node's answer matches `matches`, or doesn't match `not_matches`. Both are regular expressions and ignore case. The node in `from` has to come before it. A node whose condition doesn't hold is skipped, and so is a node whose inputs were all skipped.
 - **Waits:** a node with `wait` runs its command every `every` (30s by default) until it succeeds. Its output is passed on like an answer. A `timeout` makes it fail when the time runs out.
+- **Loops:** a node with `loop` sends the run back to an earlier node (or itself) until its answer meets a condition, for at most `max` rounds. See below.
 
 ### A node's settings
 
@@ -76,6 +77,29 @@ nodes:
 | `tools` | Only these built-in tools: `read`, `edit`, `write`, `search`, `list`, `shell`. `[]` gives none. |
 | `mcp` | Only these MCP servers, by name. |
 | `timeout` | Give up after this long (`30s`, `20m`, `1h`). |
+| `loop` | Send the run back to an earlier node until this node's answer meets `until`, for at most `max` rounds. |
+
+### Loops
+
+A run goes forward through the nodes, but a node can send it back for another round, like a review that returns the work until it's right:
+
+```yaml
+  - id: fix
+    needs: [plan]
+    prompt: Make the change the plan describes.
+
+  - id: review
+    needs: [fix]
+    edits: false
+    prompt: Review the change. End with "verdict: approved" or "verdict: changes needed".
+    loop:
+      back_to: fix                              # the node the run goes back to (this node, or one it needs)
+      until: { matches: "verdict: approved" }   # done when this node's answer matches (or not_matches)
+      max: 3                                    # at most 3 rounds, the first one included (default 3)
+      on_max: fail                              # after the last round: fail (default) or continue
+```
+
+When the answer doesn't meet `until`, `back_to`, the looping node and every node on the way between them run again; nodes before `back_to` don't. `back_to` gets the looping node's answer as feedback, together with its own answer from the round before. Nodes after the looping node wait until the loop is through. The board draws the loop as a line back to `back_to` with its round, and the timeline shows every round.
 
 ### Approvals
 

@@ -251,6 +251,7 @@ nodes:             # required; ids use letters, digits, - and _
     tools: [read, search, list]  # only these built-in tools: read, edit, write, search, list, shell
     mcp: [server]              # only these MCP servers (default all that are on)
     timeout: 20m
+    loop: { back_to: fix, until: { matches: "verdict: approved" }, max: 3 }   # send the run back to an earlier node (or this one) until this node's answer matches; the nodes on the way run again and back_to gets this answer as feedback; on_max: continue goes on after the last round instead of failing
   - id: settle                 # a wait node: no prompt; holds the run until the command succeeds
     needs: [triage]
     wait: "curl -sf localhost:8080/health"
@@ -291,9 +292,18 @@ function factoryPlan(S) {
     run = latest && (!f?.factory || sameShape(latest.def, f.factory)) ? latest : null;
   }
   if (!def) return null;
+  // Which loop each node is in (the looping node's), for "round 2/3".
+  const loopOf = new Map();
+  for (const n of def.nodes) {
+    if (!n.loop) continue;
+    for (const id of loopRegion(def.nodes, n.loop.back_to, n.id)) loopOf.set(id, n);
+  }
   const steps = def.nodes.map((n) => {
     const r = run?.nodes.find((x) => x.id === n.id);
+    const lp = loopOf.get(n.id);
+    const max = lp ? Math.min(Math.max(lp.loop.max ?? 3, 1), 20) : 0;
     return {
+      badge: lp && run ? `round ${Math.max(r?.round ?? 1, 1)}/${max}` : "",
       id: n.id,
       title: n.title?.trim() || n.id,
       needs: n.needs ?? [],
@@ -366,22 +376,59 @@ function renderFactoryView(S, host) {
 
 const repeats = (def) => !!def?.repeat && def.repeat !== false;
 
+/** The nodes a loop runs again: back_to, the looping node, and every node on a path between them. */
+function loopRegion(nodes, backTo, node) {
+  if (backTo === node) return [node];
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const ancestors = (id) => {
+    const seen = new Set(), todo = [...(byId.get(id)?.needs ?? [])];
+    while (todo.length) { const x = todo.pop(); if (!seen.has(x)) { seen.add(x); todo.push(...(byId.get(x)?.needs ?? [])); } }
+    return seen;
+  };
+  const up = ancestors(node);
+  return nodes.filter((n) => n.id === backTo || n.id === node || (up.has(n.id) && ancestors(n.id).has(backTo))).map((n) => n.id);
+}
+
+const untilText = (u) => [u?.matches && `matches “${u.matches}”`, u?.not_matches && `doesn't match “${u.not_matches}”`].filter(Boolean).join(" and ");
+
 /** The lines between nodes, and for a factory that repeats, a line from its
  *  last nodes back under the graph to its first ones. */
 function drawFactoryEdges(g, S, plan = factoryPlan(S)) {
   if (!plan) return;
+  const loops = plan.def.nodes.filter((n) => n.loop);
+  // Room under the graph for the loop lines (before the lines' canvas takes its size).
+  g.style.paddingBottom = loops.length || repeats(plan.def) ? `${40 + loops.length * 22}px` : "";
   drawEdges(g, plan);
-  if (!repeats(plan.def)) return;
+  if (!loops.length && !repeats(plan.def)) return;
   const svg = g.querySelector(".tk-edges");
   const box = g.getBoundingClientRect();
   const at = (id) => g.querySelector(`.tk-node[data-step="${CSS.escape(id)}"]`)?.getBoundingClientRect();
+  const cx = (r) => r.left + r.width / 2 - box.left + g.scrollLeft;
+  const bot = (r) => r.bottom - box.top + g.scrollTop;
+  const lowest = Math.max(...plan.def.nodes.map((n) => at(n.id)).filter(Boolean).map(bot));
+  // Each loop: from the looping node down, back under the graph, up into back_to (one lane each).
+  let lane = 0;
+  for (const n of loops) {
+    const from = at(n.id), to = at(n.loop.back_to);
+    if (!from || !to) continue;
+    const y = lowest + 20 + lane++ * 22, r = 8;
+    const x1 = cx(from), x2 = n.loop.back_to === n.id ? cx(to) - 26 : cx(to);
+    const xa = n.loop.back_to === n.id ? cx(from) + 26 : x1;
+    const d = `M${xa},${bot(from)} V${y - r} Q${xa},${y} ${xa - r},${y} H${x2 + r} Q${x2},${y} ${x2},${y - r} V${bot(to) + 6}`;
+    const st = plan.run?.nodes.find((x) => x.id === n.id);
+    const max = Math.min(Math.max(n.loop.max ?? 3, 1), 20);
+    const live = (st?.round ?? 1) > 1 && plan.run?.state === "running" ? " live" : "";
+    const label = `until ${n.loop.until?.matches ?? `not ${n.loop.until?.not_matches ?? ""}`} · max ${max}${plan.run ? ` · round ${Math.max(st?.round ?? 1, 1)}` : ""}`;
+    svg.insertAdjacentHTML("beforeend", `<path class="fa-loop-line fa-back${live}" d="${d}"/><path class="fa-loop-head fa-back" d="M${x2 - 4},${bot(to) + 11} L${x2},${bot(to) + 4} L${x2 + 4},${bot(to) + 11}"/><text class="fa-loop-label" x="${(Math.min(xa, x2) + Math.max(xa, x2)) / 2}" y="${y - 4}" text-anchor="middle">${esc(label.length > 60 ? label.slice(0, 59) + "…" : label)}</text>`);
+  }
+  if (!repeats(plan.def)) return;
   const needed = new Set(plan.steps.flatMap((s) => s.needs));
   const ends = plan.steps.filter((s) => !needed.has(s.id)).map((s) => at(s.id)).filter(Boolean);
   const starts = plan.steps.filter((s) => !s.needs.length).map((s) => at(s.id)).filter(Boolean);
   if (!ends.length || !starts.length) return;
   const x = (r) => r.left + r.width / 2 - box.left + g.scrollLeft;
   const bottom = (r) => r.bottom - box.top + g.scrollTop;
-  const y = Math.max(...[...ends, ...starts].map(bottom)) + 22; // the line runs back below every node
+  const y = Math.max(...[...ends, ...starts].map(bottom)) + 22 + lane * 22; // below every node and loop
   const r = 10;
   let d = "";
   // Down from each last node, along the bottom, up into each first node.
@@ -404,7 +451,8 @@ function factoryTimelineHtml(S) {
   const level = plan ? stepLevels(plan.steps) : new Map();
   const rows = (plan?.steps ?? []).map((st) => {
     const r = run?.nodes.find((n) => n.id === st.id);
-    const spans = r?.started_at ? [{ at: r.started_at, end: r.ended_at ?? (st.state === "running" || st.state === "needs" || st.state === "checking" ? null : r.started_at), view: st.state }] : [];
+    const spans = (r?.rounds ?? []).filter((x) => x.started_at).map((x) => ({ at: x.started_at, end: x.ended_at ?? x.started_at, view: x.state }));
+    if (r?.started_at) spans.push({ at: r.started_at, end: r.ended_at ?? (st.state === "running" || st.state === "needs" || st.state === "checking" ? null : r.started_at), view: st.state });
     return {
       id: st.id, name: st.title, agent: stepModelName(st), level: level.get(st.id) ?? 0, view: st.state, spans,
       tokens: { known: !!(r?.input_tokens || r?.output_tokens), input: r?.input_tokens ?? 0, output: r?.output_tokens ?? 0 },
@@ -427,7 +475,7 @@ function factoryTimelineHtml(S) {
       <div class="tk-state st-${esc(run?.state ?? "draft")}">${esc(run ? RUN_STATE_TEXT[run.state] ?? run.state : "not run yet")}</div>
     </aside>`;
   return timelineCore({
-    rows, selected: S.factory.selected, side, label: "node", legend: [["checking", "checking"]],
+    rows, selected: S.factory.selected, side, label: "node", legend: [["checking", "checking"]], again: "rounds",
     empty: run ? "This run hasn't started any node yet." : "Nothing has run yet. Each node shows here as it runs, on one time line.",
     foot: (total) => {
       const failed = run?.nodes.filter((n) => n.state === "failed").length ?? 0;
@@ -470,6 +518,13 @@ function factorySideHtml(S, plan, f) {
   if (node.when) {
     const w = node.when;
     parts.push(`<label class="tk-lbl">Runs only when</label><div>${esc(title(w.from))}'s answer ${[w.matches && `matches <code>${esc(w.matches)}</code>`, w.not_matches && `doesn't match <code>${esc(w.not_matches)}</code>`].filter(Boolean).join(" and ")}</div>`);
+  }
+  if (node.loop) {
+    const max = Math.min(Math.max(node.loop.max ?? 3, 1), 20);
+    parts.push(`<label class="tk-lbl">Loops</label><div>Back to ${esc(title(node.loop.back_to))} until its answer ${esc(untilText(node.loop.until))}, at most ${max} round${max === 1 ? "" : "s"}${node.loop.on_max === "continue" ? "; then it goes on anyway" : "; then it fails"}.${r ? ` <span class="tk-dim">Round ${Math.max(r.round ?? 1, 1)} of ${max}.</span>` : ""}</div>`);
+  }
+  if (r?.feedback) {
+    parts.push(`<details class="tk-fold" open><summary>Sent back by ${esc(title(r.feedback.from))} in round ${r.feedback.round}</summary><div class="tk-md">${renderMarkdown(clipEnd(r.feedback.text, 4000))}</div></details>`);
   }
   if (node.wait) {
     parts.push(`<label class="tk-lbl">Waits until this succeeds</label><div class="tk-pre">${esc(node.wait)}</div><div class="tk-dim">Checks every ${esc(node.every || "30s")}${node.timeout ? `, gives up after ${esc(node.timeout)}` : ""}${r?.checks ? ` · checked ${r.checks} time${r.checks === 1 ? "" : "s"}` : ""}</div>`);

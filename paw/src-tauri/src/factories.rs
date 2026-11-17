@@ -166,6 +166,63 @@ pub struct Node {
     /// Give up after this long (wait nodes, and agent nodes' turns).
     #[serde(default)]
     pub timeout: Option<String>,
+    /// Send the run back to an earlier node until this node's answer meets a
+    /// condition, for at most `max` rounds.
+    #[serde(default, rename = "loop")]
+    pub repeat_until: Option<Loop>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Loop {
+    /// The node the run goes back to (this one, or one it needs).
+    pub back_to: String,
+    /// The loop ends when this node's answer matches (or doesn't match) this.
+    pub until: Until,
+    /// At most this many rounds, the first one included (default 3).
+    #[serde(default)]
+    pub max: Option<u32>,
+    /// When the last round still doesn't meet it: fail (default) or continue.
+    #[serde(default)]
+    pub on_max: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Until {
+    #[serde(default)]
+    pub matches: Option<String>,
+    #[serde(default)]
+    pub not_matches: Option<String>,
+}
+
+pub const LOOP_MAX: u32 = 20;
+
+impl Loop {
+    pub fn max_rounds(&self) -> u32 {
+        self.max.unwrap_or(3).clamp(1, LOOP_MAX)
+    }
+    /// Does the answer end the loop?
+    pub fn done(&self, answer: &str) -> bool {
+        when_holds(&When { from: String::new(), matches: self.until.matches.clone(), not_matches: self.until.not_matches.clone() }, answer)
+    }
+}
+
+/// The nodes a loop runs again: `back_to`, `node`, and every node on a path
+/// between them (`back_to` .. `node`), in the factory's order.
+pub fn loop_region(nodes: &[Node], back_to: &str, node: &str) -> Vec<String> {
+    if back_to == node {
+        return vec![node.to_string()];
+    }
+    let up = ancestors(nodes, node);
+    let mut out = vec![];
+    for n in nodes {
+        let between = n.id == back_to || n.id == node || (up.contains(&n.id) && ancestors(nodes, &n.id).contains(back_to));
+        if between {
+            out.push(n.id.clone());
+        }
+    }
+    out
 }
 
 fn yes() -> bool {
@@ -337,6 +394,25 @@ pub fn check(f: &Factory) -> Result<(), String> {
             }
             for p in [&w.matches, &w.not_matches].into_iter().flatten() {
                 regex(p).map_err(|e| at(format!("its condition “{p}” isn't a valid pattern ({e}).")))?;
+            }
+        }
+        if let Some(l) = &n.repeat_until {
+            if l.back_to != n.id && !ancestors(&f.nodes, &n.id).contains(&l.back_to) {
+                return Err(at(format!("its loop goes back to “{}”, which has to be this node or one it needs (directly or not).", l.back_to)));
+            }
+            if l.until.matches.is_none() && l.until.not_matches.is_none() {
+                return Err(at("its loop needs until: { matches: … } or { not_matches: … }.".into()));
+            }
+            for p in [&l.until.matches, &l.until.not_matches].into_iter().flatten() {
+                regex(p).map_err(|e| at(format!("its loop's “{p}” isn't a valid pattern ({e}).")))?;
+            }
+            if l.max.is_some_and(|m| m == 0 || m > LOOP_MAX) {
+                return Err(at(format!("its loop's max should be 1 to {LOOP_MAX} rounds.")));
+            }
+            if let Some(x) = &l.on_max {
+                if x != "fail" && x != "continue" {
+                    return Err(at(format!("its loop's on_max “{x}” should be fail or continue.")));
+                }
             }
         }
         if let Some(tools) = &n.tools {
@@ -632,6 +708,20 @@ nodes:
         assert!(with("  watch: ./x.sh\n  every: 30s\n  fires: always").unwrap_err().contains("each or change"));
         assert!(with("  every: 30s\n  fires: each").unwrap_err().contains("goes with watch"));
         assert_eq!(at_times("9:05,17:30"), Some(vec![(9, 5), (17, 30)]));
+    }
+
+    #[test]
+    fn loops_are_checked_and_cover_the_path_back() {
+        let base = |l: &str| format!("name: x\nnodes:\n  - {{ id: plan, prompt: p }}\n  - {{ id: fix, needs: [plan], prompt: f }}\n  - {{ id: test, needs: [fix], prompt: t }}\n  - {{ id: review, needs: [test, plan], prompt: r, {l} }}\n  - {{ id: ship, needs: [review], prompt: s }}\n");
+        let f = parse(&base("loop: { back_to: fix, until: { matches: approved }, max: 4 }")).unwrap();
+        let l = f.nodes[3].repeat_until.as_ref().unwrap();
+        assert_eq!((l.max_rounds(), l.done("Verdict: APPROVED"), l.done("needs work")), (4, true, false));
+        assert_eq!(loop_region(&f.nodes, "fix", "review"), ["fix", "test", "review"], "plan isn't on the way back");
+        assert_eq!(loop_region(&f.nodes, "review", "review"), ["review"]);
+        assert!(parse(&base("loop: { back_to: ship, until: { matches: x } }")).unwrap_err().contains("has to be this node or one it needs"));
+        assert!(parse(&base("loop: { back_to: fix, until: {} }")).unwrap_err().contains("needs until"));
+        assert!(parse(&base("loop: { back_to: fix, until: { matches: x }, max: 0 }")).unwrap_err().contains("1 to 20"));
+        assert!(parse(&base("loop: { back_to: fix, until: { matches: x }, on_max: retry }")).unwrap_err().contains("fail or continue"));
     }
 
     #[test]

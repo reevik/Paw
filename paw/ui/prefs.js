@@ -953,7 +953,8 @@ function renderAllowed(agentId) {
     const li = document.createElement("li");
     const folder = r.folder.replace(/^\/Users\/[^/]+/, "~");
     const where = r.agent.startsWith("factory:") ? tx("{folder} · factory {id}", { folder, id: r.agent.slice(8) }) : folder;
-    li.innerHTML = `<code title="${esc(r.label)}">${esc(r.label)}</code><span class="dim" title="${esc(where)}">${esc(where)}</span><button class="icon-btn" title="${esc(tx("Remove"))}">×</button>`;
+    // The command (up to two lines, all of it on hover), and under it where it's allowed.
+    li.innerHTML = `<div class="al-main"><code title="${esc(r.label)}">${esc(r.label)}</code><span class="dim" title="${esc(where)}">${esc(where)}</span></div><button class="icon-btn" title="${esc(tx("Remove"))}">×</button>`;
     li.querySelector("button").onclick = () => {
       settings.allow_rules = settings.allow_rules.filter((x) => x !== r);
       save();

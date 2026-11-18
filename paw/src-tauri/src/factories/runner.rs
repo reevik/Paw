@@ -1119,6 +1119,8 @@ fn pump_in(r: &mut Run, limit: usize, busy: &mut usize, editing: &mut HashSet<Pa
                 dir: dir.as_ref().map(|d| d.join("nodes").join(&def.id)),
                 ask: true,
                 shared: dir.as_ref().map(|d| d.join("files")),
+                // The factory's sandbox over Settings' (none: Settings' as it is).
+                sandbox: r.def.sandbox.as_ref().map(|s| s.over(&crate::paw_agent::sandbox::from_settings())),
             }),
         });
     }

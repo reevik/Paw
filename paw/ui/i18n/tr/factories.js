@@ -238,4 +238,6 @@ I18N.add("tr", {
   "The trigger is paused, so it isn't listening: only Run a task starts one.": "Tetikleyici duraklatıldı, dinlemiyor: Yalnızca Görev çalıştır bir çalıştırma başlatır.",
   "Stop task": "Görevi durdur",
   "Stop this task ({run})": "Bu görevi durdur ({run})",
+  // the sandbox
+  "No sandbox: its nodes run like a tab without one.": "Korumalı alan yok: düğümleri, korumalı alanı olmayan bir sekme gibi çalışır.",
 });

@@ -981,6 +981,11 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
 .tk-btn.primary:hover { filter: brightness(1.08); }
 .tk-btn.danger { color: var(--t-red); }
 .fa-paused-note { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.sl-sandbox { opacity: .75; }
+.sl-sandbox.on { color: var(--t-green); opacity: 1; }
+.sl-sandbox.on::before { content: "⛨ "; }
+.sb-blocked code { font: inherit; font-weight: 600; }
+.sb-acts { display: inline-flex; gap: 6px; margin-left: 6px; vertical-align: middle; }
 .tk-note { margin-top: 8px; padding: 6px 10px; border-radius: 7px; font-size: 12px; color: var(--t-yellow); background: color-mix(in srgb, var(--t-yellow) 10%, transparent); flex-shrink: 0; }
 .tk-empty { margin-top: 10px; color: var(--t-dim); }
 .tk-empty .spin-ch { color: var(--t-accent); font-family: var(--mono); }

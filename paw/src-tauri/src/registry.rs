@@ -268,6 +268,9 @@ pub struct Settings {
     pub providers: Providers,
     #[serde(default)]
     pub models: ModelPrefs,
+    /// Paw Agent's sandbox for new tabs and factories (Settings › Sandbox).
+    #[serde(default)]
+    pub sandbox: crate::paw_agent::sandbox::Policy,
 }
 
 /// One of Paw Agent's providers, as the scan found it.

@@ -27,7 +27,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 
 /// Events the daemon's modules emit; all go to the windows (and the log).
 pub const EVENTS: &[&str] = &[
-    "agent:output", "agent:status", "paw:delta", "paw:approval",
+    "agent:output", "agent:status", "paw:delta", "paw:approval", "paw:sandbox",
     "shell:output", "shell:raw", "shell:names", "shell:data", "shell:ready", "shell:done", "shell:exit",
 ];
 
@@ -35,7 +35,7 @@ pub const EVENTS: &[&str] = &[
 pub const COMMANDS: &[&str] = &[
     "spawn_agent", "send_input", "close_input", "stop_agent", "remove_agent", "list_agents", "agent_output",
     "shell_open", "shell_run", "shell_write", "shell_interrupt", "shell_close", "shell_write_raw", "shell_resize", "shell_raw_exit",
-    "paw_agent_start", "paw_agent_send", "paw_agent_note", "paw_agent_cancel", "paw_agent_close", "paw_agent_approve",
+    "paw_agent_start", "paw_agent_send", "paw_agent_note", "paw_agent_cancel", "paw_agent_close", "paw_agent_approve", "paw_agent_sandbox",
     "tray_update", "daemon_attach",
     "factory_list", "factory_get", "factory_run", "factory_stop", "factory_retry", "factory_skip", "factory_new", "factory_pause",
     "factory_answer", "factory_decide", "factory_conversation", "factory_set_parallel",
@@ -492,6 +492,7 @@ async fn dispatch(app: AppHandle, cmd: String, a: Value) -> Result<Value, String
         "paw_agent_note" => ok(paw_agent::paw_agent_note(app.state(), arg(&a, "id")?, arg(&a, "text")?).await?),
         "paw_agent_cancel" => ok(paw_agent::paw_agent_cancel(app.state(), arg(&a, "id")?).await?),
         "paw_agent_close" => ok(paw_agent::paw_agent_close(app.state(), arg(&a, "id")?).await?),
+        "paw_agent_sandbox" => ok(paw_agent::paw_agent_sandbox(app.state(), arg(&a, "id")?, arg(&a, "program")?).await?),
         "paw_agent_approve" => ok(paw_agent::paw_agent_approve(app.state(), arg(&a, "id")?, arg(&a, "request")?, arg(&a, "decision")?, arg(&a, "rule")?).await?),
         // Factories (factories::runner): they run here, in the background.
         "factory_list" => {

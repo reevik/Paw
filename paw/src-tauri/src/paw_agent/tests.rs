@@ -83,6 +83,7 @@ fn config(dir: &Path, approval: &str, conversation: &str) -> SessionConfig {
         tool_names: None,
         ask: false,
         shared: None,
+        sandbox: None,
     }
 }
 

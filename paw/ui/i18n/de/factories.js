@@ -238,4 +238,6 @@ I18N.add("de", {
   "The trigger is paused, so it isn't listening: only Run a task starts one.": "Der Auslöser ist pausiert und hört nicht zu: Nur „Aufgabe starten“ startet einen Lauf.",
   "Stop task": "Aufgabe stoppen",
   "Stop this task ({run})": "Diese Aufgabe stoppen ({run})",
+  // the sandbox
+  "No sandbox: its nodes run like a tab without one.": "Keine Sandbox: Ihre Knoten laufen wie ein Tab ohne Sandbox.",
 });

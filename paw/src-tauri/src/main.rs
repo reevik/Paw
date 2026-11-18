@@ -460,6 +460,7 @@ fn main() {
             paw_agent::paw_agent_note,
             paw_agent::paw_agent_close,
             paw_agent::paw_agent_approve,
+            paw_agent::paw_agent_sandbox,
             paw_agent::paw_key_status,
             paw_agent::paw_key_sources,
             paw_agent::paw_key_set,

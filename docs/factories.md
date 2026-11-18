@@ -105,6 +105,10 @@ A run goes forward through the nodes, but a node can send it back for another ro
 
 When the answer doesn't meet `until`, `back_to`, the looping node and every node on the way between them run again; nodes before `back_to` don't. `back_to` gets the looping node's answer as feedback, together with its own answer from the round before. Nodes after the looping node wait until the loop is through. The board draws the loop as a line back to `back_to` with its round, and the timeline shows every round.
 
+### Sandbox
+
+A `sandbox:` section gives the factory's nodes their own [sandbox](sandbox.md): `write` (folders it may also change), `run` (only these programs) and `network` (`true`, `false`, or the programs that may use it). Without it, Settings › Sandbox decides. A project's `.paw/sandbox.yaml` can make it stricter.
+
 ### Approvals
 
 Nodes run without a window, so pick approval levels that let them work on their own. `auto` (the default for nodes that change files) allows edits inside the folder and safe commands. When a node does need you, it shows **needs you** and a badge in the sidebar. Its approval waits in the factory view until you answer it. **Allow** lets that one call through. **Always allow** remembers it for the factory in the folder its run works in: its other nodes, later rounds and later runs there don't ask again (in another folder they ask once there too). Nodes also get what you allowed for Paw Agent in that folder from a tab (**Always in this folder**). **Settings › Agents › Paw Agent** lists these rules, the factories' marked with their name, and removes them.

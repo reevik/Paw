@@ -47,6 +47,10 @@ pub struct Factory {
     /// Run a task always starts one.
     #[serde(default)]
     pub parallel: Option<u32>,
+    /// Its nodes' sandbox: on, with what it says over Settings' policy
+    /// (`write`, `run`, `network`); `enabled: false` turns it off.
+    #[serde(default)]
+    pub sandbox: Option<crate::paw_agent::sandbox::Spec>,
     pub nodes: Vec<Node>,
 }
 
@@ -369,6 +373,9 @@ pub fn parse(text: &str) -> Result<Factory, String> {
 pub fn check(f: &Factory) -> Result<(), String> {
     if f.name.trim().is_empty() {
         return Err("The factory needs a name.".into());
+    }
+    if let Some(sb) = &f.sandbox {
+        sb.check()?;
     }
     if f.parallel.is_some_and(|p| p == 0 || p > PARALLEL_MAX) {
         return Err(format!("parallel should be 1 to {PARALLEL_MAX} runs."));

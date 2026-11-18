@@ -27,6 +27,7 @@
 - **Keeps running.** Agents run in a background process with a menu bar icon, so closing the window doesn't stop their work.
 - **Sessions.** Each session's conversation, scripts and files are kept in `~/.paw`; reopen past sessions and see your usage per day, week and month.
 - **Plugins.** Extend Paw with commands, status bar items and plan board views, from the [official catalog](plugins) or your own.
+- **Sandbox.** Paw Agent can work in macOS's sandbox: changes only in its project folder, only the programs you allow, and the network only if you let it. See [Sandbox](docs/sandbox.md).
 - **Your look and language.** Themes for light and dark, your choice of font and size, and Paw in English, German or Turkish; Paw Agent answers in the language you pick.
 
 ## Factories

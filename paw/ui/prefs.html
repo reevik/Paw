@@ -22,6 +22,10 @@
         <svg viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4M9 12h.01M15 12h.01M9 16h6"/></svg>
         Agents
       </button>
+      <button data-tab="sandbox">
+        <svg viewBox="0 0 24 24"><path d="M12 3 4.5 6v5.5c0 4.6 3.2 8.4 7.5 9.5 4.3-1.1 7.5-4.9 7.5-9.5V6L12 3Z"/><path d="m9 12 2 2 4-4"/></svg>
+        Sandbox
+      </button>
       <button data-tab="plugins">
         <svg viewBox="0 0 24 24"><path d="M9 3v3M15 3v3M7 6h10a1 1 0 0 1 1 1v4a6 6 0 0 1-12 0V7a1 1 0 0 1 1-1ZM12 17v4"/></svg>
         Plugins
@@ -586,6 +590,51 @@
 
   <!-- About -->
   <!-- Plugins -->
+  <!-- Sandbox -->
+  <section class="pane" id="pane-sandbox">
+    <div class="form-grid">
+      <span>Sandbox</span>
+      <div>
+        <label class="check"><input type="checkbox" id="sb-enabled" /> Run Paw Agent in a sandbox</label>
+        <p class="hint" data-i18n>For new tabs and for factories (a factory's file can say otherwise). A tab can turn it off or on with the sandbox button under its prompt, and a project's <code>.paw/sandbox.yaml</code> can make it stricter.</p>
+      </div>
+
+      <span>Where it may write</span>
+      <div>
+        <p class="hint">Always the folder it works in, its session's scripts, a factory run's shared files and temp. Add folders it may also change:</p>
+        <ul class="allowed-list sb-list" id="sb-write"></ul>
+        <form class="inline-row sb-add" id="sb-write-add"><input id="sb-write-new" placeholder="~/.cargo" spellcheck="false" /><button type="submit">Add</button></form>
+      </div>
+
+      <label for="sb-programs-mode">Programs</label>
+      <div>
+        <select id="sb-programs-mode">
+          <option value="any">Any program</option>
+          <option value="only">Only these programs</option>
+        </select>
+        <div id="sb-programs-box">
+          <div class="sb-chips" id="sb-programs"></div>
+          <form class="inline-row sb-add" id="sb-program-add"><input id="sb-program-new" placeholder="make" spellcheck="false" /><button type="submit">Add</button><button type="button" id="sb-starter">Starter list</button></form>
+          <p class="hint">Their helpers come along (git-remote-https with git). A command that names another program is stopped before it runs, and its tab offers to allow it.</p>
+        </div>
+      </div>
+
+      <label for="sb-network">Network</label>
+      <div>
+        <select id="sb-network">
+          <option value="on">On</option>
+          <option value="off">Off</option>
+          <option value="listed">Only for these programs</option>
+        </select>
+        <div id="sb-net-box">
+          <div class="sb-chips" id="sb-net-programs"></div>
+          <form class="inline-row sb-add" id="sb-net-add"><input id="sb-net-new" placeholder="git" spellcheck="false" /><button type="submit">Add</button></form>
+        </div>
+        <p class="hint">Off still lets commands reach this Mac (localhost), so local servers and tests work.</p>
+      </div>
+    </div>
+  </section>
+
   <section class="pane" id="pane-plugins">
     <div class="ap-wrap">
       <div class="ap-section">

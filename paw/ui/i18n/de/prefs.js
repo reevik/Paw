@@ -278,4 +278,18 @@ I18N.add("de", {
   "Couldn't install {name}: {error}": "{name} konnte nicht installiert werden: {error}",
   "Remove “{name}”? What it stored is removed too.": "„{name}“ entfernen? Was es gespeichert hat, wird auch entfernt.",
   "{folder} · factory {id}": "{folder} · Fabrik {id}",
+  // the sandbox
+  "Sandbox": "Sandbox",
+  "Run Paw Agent in a sandbox": "Paw Agent in einer Sandbox ausführen",
+  "For new tabs and for factories (a factory's file can say otherwise). A tab can turn it off or on with the sandbox button under its prompt, and a project's <code>.paw/sandbox.yaml</code> can make it stricter.": "Für neue Tabs und für Fabriken (die Datei einer Fabrik kann etwas anderes sagen). Ein Tab kann sie mit dem Sandbox-Knopf unter seiner Eingabe aus- oder einschalten, und die <code>.paw/sandbox.yaml</code> eines Projekts kann sie strenger machen.",
+  "Where it may write": "Wo es schreiben darf",
+  "Always the folder it works in, its session's scripts, a factory run's shared files and temp. Add folders it may also change:": "Immer der Ordner, in dem es arbeitet, die Skripte seiner Sitzung, die gemeinsamen Dateien eines Fabriklaufs und temp. Füge Ordner hinzu, die es auch ändern darf:",
+  "Programs": "Programme",
+  "Any program": "Jedes Programm",
+  "Only these programs": "Nur diese Programme",
+  "Starter list": "Startliste",
+  "Their helpers come along (git-remote-https with git). A command that names another program is stopped before it runs, and its tab offers to allow it.": "Ihre Hilfsprogramme gehören dazu (git-remote-https zu git). Ein Befehl, der ein anderes Programm nennt, wird vor dem Start gestoppt, und sein Tab bietet an, es zu erlauben.",
+  "Network": "Netzwerk",
+  "Only for these programs": "Nur für diese Programme",
+  "Off still lets commands reach this Mac (localhost), so local servers and tests work.": "Auch bei „Aus“ erreichen Befehle diesen Mac (localhost), damit lokale Server und Tests funktionieren.",
 });

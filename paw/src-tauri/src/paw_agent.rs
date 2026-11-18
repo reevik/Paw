@@ -215,6 +215,8 @@ pub trait Sink: Send + Sync + 'static {
     /// The assistant text written so far in the current part ("" clears it).
     fn delta(&self, id: u32, text: &str);
     fn approval(&self, req: &ApprovalRequest);
+    /// The sandbox stopped something (a program not on its list, a file outside its folders).
+    fn sandbox_blocked(&self, _event: &Value) {}
     fn status(&self, info: &AgentInfo);
     /// A question for the user (factory nodes only).
     fn question(&self, _q: &QuestionRequest) {}
@@ -251,6 +253,10 @@ impl Sink for TauriSink {
     fn question(&self, q: &QuestionRequest) {
         use tauri::Emitter;
         let _ = self.app.emit("paw:question", q);
+    }
+    fn sandbox_blocked(&self, event: &Value) {
+        use tauri::Emitter;
+        let _ = self.app.emit("paw:sandbox", event);
     }
 }
 
@@ -358,6 +364,8 @@ pub struct SessionConfig {
     pub ask: bool,
     /// A folder as fine to change as `cwd` in auto mode (a factory run's shared files).
     pub shared: Option<PathBuf>,
+    /// Its sandbox, when it has one (the session's own copy changes as the user allows more).
+    pub sandbox: Option<sandbox::Policy>,
 }
 
 impl SessionConfig {
@@ -381,6 +389,8 @@ pub struct Session {
     pending: Mutex<HashMap<u64, oneshot::Sender<bool>>>,
     /// Questions (`ask_user`) waiting for the user's answer.
     questions: Mutex<HashMap<u64, oneshot::Sender<String>>>,
+    /// The sandbox as it is now (the user may allow more programs in this tab).
+    sandbox: Mutex<Option<sandbox::Policy>>,
     /// Present while a prompt runs; sending (or dropping) it stops the turn.
     cancel: Mutex<Option<oneshot::Sender<()>>>,
     seen: Seen,
@@ -555,6 +565,13 @@ impl Session {
             if let Some(p) = &self.cfg.path_env {
                 launcher = launcher.with_env("PATH", p.clone());
             }
+            // In a sandbox, every command runs under macOS's sandbox with the
+            // profile written for it just before it runs (see the gate below).
+            if let Some(p) = self.sandbox.lock().unwrap().clone() {
+                let path = self.sandbox_profile_path();
+                let _ = std::fs::write(&path, sandbox::profile(&p, &self.sandbox_roots(&p), p.network == "on"));
+                launcher = launcher.wrapped([std::ffi::OsString::from("/usr/bin/sandbox-exec"), std::ffi::OsString::from("-f"), path.into_os_string()]);
+            }
             // A factory node may have only some of the built-in tools.
             let has = |t: &str| self.cfg.has_tool(t);
             if has("read") {
@@ -603,6 +620,58 @@ fn factory_folder(cwd: &Path, given: &str) -> Option<String> {
 }
 
 impl Session {
+    /// The folders its sandbox lets it write.
+    fn sandbox_roots(&self, p: &sandbox::Policy) -> Vec<PathBuf> {
+        let also: Vec<PathBuf> = self.cfg.scripts.iter().cloned().chain(self.cfg.shared.clone()).collect();
+        sandbox::roots(p, &self.cfg.cwd, &also)
+    }
+
+    fn sandbox_profile_path(&self) -> PathBuf {
+        sandbox::profile_path(self.cfg.scripts.as_deref().and_then(Path::parent), self.id)
+    }
+
+    /// The sandbox's word on a tool call: None lets it go on (a command's
+    /// profile written for it), Some(reason) stops it (and tells the window).
+    fn sandbox_gate(&self, tool: &str, args: &Value) -> Option<String> {
+        let p = self.sandbox.lock().unwrap().clone()?;
+        let blocked = |what: Value, reason: String| {
+            let mut ev = json!({ "id": self.id, "reason": reason });
+            if let (Value::Object(m), Value::Object(w)) = (&mut ev, what) {
+                m.extend(w);
+            }
+            self.sink.sandbox_blocked(&ev);
+            Some(reason)
+        };
+        match tool {
+            "shell" => {
+                let line = arg(args, "command");
+                match sandbox::check(&p, line) {
+                    sandbox::Verdict::Blocked { program } => blocked(
+                        json!({ "program": program, "command": line }),
+                        format!("Blocked by the sandbox: `{program}` isn't on the list of programs this session may run. Tell the user it's needed and why, so they can allow it; don't try to get around it."),
+                    ),
+                    sandbox::Verdict::Run { network } => {
+                        let _ = std::fs::write(self.sandbox_profile_path(), sandbox::profile(&p, &self.sandbox_roots(&p), network));
+                        None
+                    }
+                }
+            }
+            "write" | "edit" | "delete" | "move" => {
+                let roots = self.sandbox_roots(&p);
+                let path = |k: &str| {
+                    let v = arg(args, k);
+                    (!v.is_empty()).then(|| if Path::new(v).is_absolute() { PathBuf::from(v) } else { self.cfg.cwd.join(v) })
+                };
+                let outside = ["path", "from", "to", "destination"].iter().filter_map(|k| path(k)).find(|p| !sandbox::may_write(&roots, p))?;
+                blocked(
+                    json!({ "path": outside.display().to_string() }),
+                    format!("Blocked by the sandbox: {} is outside the folders this session may change. Tell the user, so they can allow the folder (Settings › Sandbox); don't try to get around it.", outside.display()),
+                )
+            }
+            _ => None,
+        }
+    }
+
     /// run_factory, factory_status and reply_to_factory.
     fn factory_tools(self: &Arc<Self>) -> Vec<rig_core::tool::DynamicTool> {
         use rig_core::tool::{DynamicTool, ToolExecutionError, ToolOutput};
@@ -780,6 +849,10 @@ impl AgentHook for GateHook {
             return DispatchAction::proceed();
         }
         let args: Value = ev.tool_args().and_then(|a| serde_json::from_str(a).ok()).unwrap_or(Value::Null);
+        // The sandbox first: no use asking about something it won't let run.
+        if let Some(reason) = self.sess.sandbox_gate(&tool, &args) {
+            return DispatchAction::skip(reason);
+        }
         // The factory tools: reading how runs go, and passing on what the user said, need no approval.
         if (tool == FACTORY_STATUS || tool == FACTORY_REPLY) && !self.sess.cfg.ask {
             return DispatchAction::proceed();
@@ -1094,6 +1167,7 @@ impl PawAgents {
             notes: Mutex::new(notes),
             pending: Mutex::default(),
             questions: Mutex::default(),
+            sandbox: Mutex::new(cfg.sandbox.clone()),
             cancel: Mutex::default(),
             seen: Seen::default(),
             sink: sink.clone(),
@@ -1180,6 +1254,17 @@ impl PawAgents {
         for id in ids {
             self.close(id);
         }
+    }
+
+    /// The user allowed a program the sandbox blocked (in this session).
+    pub fn sandbox_allow(&self, id: u32, program: &str) -> Result<(), String> {
+        let sess = self.get(id).ok_or("This Paw Agent session has ended")?;
+        let mut p = sess.sandbox.lock().unwrap();
+        let p = p.as_mut().ok_or("This session has no sandbox")?;
+        if !p.programs.iter().any(|x| x == program) {
+            p.programs.push(program.to_string());
+        }
+        Ok(())
     }
 
     /// The user's answer to a question (`ask_user`).
@@ -1638,6 +1723,10 @@ pub struct StartOpts {
     /// A folder as fine to change as `cwd` in auto mode (a factory run's shared files).
     #[serde(skip)]
     pub shared: Option<PathBuf>,
+    /// The sandbox it asks for (a tab's, a factory's); None: Settings'. A
+    /// project's `.paw/sandbox.yaml` can only make it stricter.
+    #[serde(default)]
+    pub sandbox: Option<sandbox::Policy>,
 }
 
 fn valid_conversation_id(s: &str) -> bool {
@@ -1739,6 +1828,15 @@ pub async fn paw_agent_start(
             }
         }
     }
+    // The sandbox: the one asked for (else Settings'), made stricter by the project's file.
+    let sandbox = sandbox::effective(opts.sandbox.clone(), &cwd);
+    let preamble = match &sandbox {
+        Some(p) => {
+            let also: Vec<PathBuf> = scripts.iter().cloned().chain(opts.shared.clone()).collect();
+            format!("{preamble}\n\n{}", sandbox::describe(p, &sandbox::roots(p, &cwd, &also)))
+        }
+        None => preamble,
+    };
     let cfg = SessionConfig {
         name: opts.name,
         provider,
@@ -1756,6 +1854,7 @@ pub async fn paw_agent_start(
         tool_names: opts.tools,
         ask: opts.ask,
         shared: opts.shared,
+        sandbox,
     };
     let id = procs.alloc_id();
     let sink: Arc<dyn Sink> = Arc::new(TauriSink { app, seq: Mutex::default() });
@@ -1792,6 +1891,11 @@ pub async fn paw_agent_cancel(paw: tauri::State<'_, PawAgents>, id: u32) -> Resu
 pub async fn paw_agent_close(paw: tauri::State<'_, PawAgents>, id: u32) -> Result<(), String> {
     paw.close(id);
     Ok(())
+}
+
+#[tauri::command]
+pub async fn paw_agent_sandbox(paw: tauri::State<'_, PawAgents>, id: u32, program: String) -> Result<(), String> {
+    paw.sandbox_allow(id, program.trim())
 }
 
 #[tauri::command]
@@ -2011,6 +2115,7 @@ pub async fn paw_openrouter_cancel_sign_in() -> Result<(), String> {
 }
 
 pub mod auto;
+pub mod sandbox;
 pub mod chatgpt;
 pub mod claude;
 pub mod compatible;

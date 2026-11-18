@@ -278,4 +278,18 @@ I18N.add("tr", {
   "Couldn't install {name}: {error}": "{name} yüklenemedi: {error}",
   "Remove “{name}”? What it stored is removed too.": "“{name}” kaldırılsın mı? Sakladığı veriler de silinir.",
   "{folder} · factory {id}": "{folder} · {id} fabrikası",
+  // the sandbox
+  "Sandbox": "Korumalı Alan",
+  "Run Paw Agent in a sandbox": "Paw Agent'ı korumalı alanda çalıştır",
+  "For new tabs and for factories (a factory's file can say otherwise). A tab can turn it off or on with the sandbox button under its prompt, and a project's <code>.paw/sandbox.yaml</code> can make it stricter.": "Yeni sekmeler ve fabrikalar için (bir fabrikanın dosyası farklı bir şey söyleyebilir). Bir sekme, isteminin altındaki korumalı alan düğmesiyle onu kapatıp açabilir; bir projenin <code>.paw/sandbox.yaml</code> dosyası onu daha sıkı hale getirebilir.",
+  "Where it may write": "Nereye yazabilir",
+  "Always the folder it works in, its session's scripts, a factory run's shared files and temp. Add folders it may also change:": "Her zaman çalıştığı klasör, oturumunun betikleri, bir fabrika çalıştırmasının ortak dosyaları ve temp. Değiştirebileceği başka klasörler ekleyin:",
+  "Programs": "Programlar",
+  "Any program": "Her program",
+  "Only these programs": "Yalnızca bu programlar",
+  "Starter list": "Başlangıç listesi",
+  "Their helpers come along (git-remote-https with git). A command that names another program is stopped before it runs, and its tab offers to allow it.": "Yardımcıları da dahildir (git ile git-remote-https). Başka bir programı çağıran komut çalışmadan durdurulur ve sekmesi ona izin vermeyi önerir.",
+  "Network": "Ağ",
+  "Only for these programs": "Yalnızca bu programlar için",
+  "Off still lets commands reach this Mac (localhost), so local servers and tests work.": "Kapalıyken de komutlar bu Mac'e (localhost) ulaşabilir; böylece yerel sunucular ve testler çalışır.",
 });

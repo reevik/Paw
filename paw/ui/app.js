@@ -25,7 +25,7 @@ const tauriListen = window.__TAURI__.event.listen;
 const DAEMON_COMMANDS = new Set([
   "spawn_agent", "send_input", "close_input", "stop_agent", "remove_agent", "list_agents", "agent_output",
   "shell_open", "shell_run", "shell_write", "shell_interrupt", "shell_close", "shell_write_raw", "shell_resize", "shell_raw_exit",
-  "paw_agent_start", "paw_agent_send", "paw_agent_note", "paw_agent_cancel", "paw_agent_close", "paw_agent_approve",
+  "paw_agent_start", "paw_agent_send", "paw_agent_note", "paw_agent_cancel", "paw_agent_close", "paw_agent_approve", "paw_agent_sandbox",
   "factory_answer", "factory_decide", "factory_conversation", "factory_set_parallel",
   "tray_update", "daemon_attach",
   "factory_list", "factory_get", "factory_run", "factory_stop", "factory_retry", "factory_skip", "factory_new", "factory_pause",
@@ -62,7 +62,7 @@ function replayEvents(events) {
 // pane being rendered (activePane). Everything else is a normal page id.
 const PANE_IDS = new Set(["session", "terminal", "output", "xterm-wrap", "xterm-title", "xterm-int", "xterm-back",
   "xterm-hosts", "busy", "busy-spin", "busy-text", "busy-time", "ac", "prompt-line", "att-tray", "input",
-  "attach-btn", "mode-pill", "task-split", "task-lower", "task-timeline", "sl-left", "sl-path", "sl-path-text", "sl-plugins", "sl-sessions", "eof", "prompt-glyph", "task-view"]);
+  "attach-btn", "mode-pill", "task-split", "task-lower", "task-timeline", "sl-left", "sl-sandbox", "sl-path", "sl-path-text", "sl-plugins", "sl-sessions", "eof", "prompt-glyph", "task-view"]);
 let activePane = null;
 const $ = (id) => (PANE_IDS.has(id) ? activePane?.root.querySelector(`[data-id="${id}"]`) : document.getElementById(id));
 /** The session shown in the pane being rendered (the focused one, normally). */
@@ -443,6 +443,7 @@ async function pawStart(S, { resume = false } = {}) {
       cwd: S.cwd,
       approval: S.approval,
       allow_rules: saved,
+      sandbox: tabSandbox(S),
       session: resume && S.session ? S.session : null,
       key_source: settings.providers?.anthropic?.key_source || "",
       paw_session: S.pawId,
@@ -469,6 +470,95 @@ listen("paw:delta", ({ payload: d }) => {
   S.partial = d.text || null;
   S.partialMd = true;
   inPane(S, () => renderPartial(S));
+});
+
+// ---------- the sandbox ----------
+/** A tab's sandbox: Settings' policy, turned on or off for this tab, with the programs allowed in it. */
+function tabSandbox(S) {
+  const p = structuredClone(settings.sandbox ?? {});
+  if (S.sandboxMode === "on") p.enabled = true;
+  else if (S.sandboxMode === "off") p.enabled = false;
+  if (S.sandboxPrograms?.length) p.programs = [...new Set([...(p.programs ?? []), ...S.sandboxPrograms])];
+  return p;
+}
+
+/** The sandbox in a few words (the status-bar button's tooltip). */
+function sandboxSummary(p) {
+  const programs = p.any_program !== false ? tx("any program") : tx("{n} programs", { n: (p.programs ?? []).length });
+  const net = p.network === "off" ? tx("no network") : p.network === "listed" ? tx("network for {list}", { list: (p.network_programs ?? []).join(", ") }) : tx("network");
+  const extra = (p.write ?? []).length ? ` · ${tx("also writes {list}", { list: p.write.join(", ") })}` : "";
+  return tx("Sandbox: changes only in its folder{extra} · {programs} · {net}", { extra, programs, net });
+}
+
+function renderSandboxPill(S) {
+  const b = $("sl-sandbox");
+  if (!b) return;
+  const show = isPaw(S.agent) && !S.nodeOf;
+  b.classList.toggle("hidden", !show);
+  if (!show) return;
+  const p = tabSandbox(S);
+  b.classList.toggle("on", !!p.enabled);
+  b.textContent = p.enabled ? tx("Sandbox") : tx("No sandbox");
+  b.title = p.enabled ? sandboxSummary(p) : tx("Paw Agent runs without a sandbox in this tab. Click to turn it on.");
+}
+
+/** The status-bar button: this tab's sandbox on or off (the conversation goes on), or Settings. */
+function sandboxMenu(e) {
+  const S = curS();
+  if (!S) return;
+  const on = !!tabSandbox(S).enabled;
+  const r = e.currentTarget.getBoundingClientRect();
+  contextMenu(r.left, r.top - 90, [
+    { label: on ? tx("Turn the sandbox off in this tab") : tx("Turn the sandbox on in this tab"), run: async () => {
+      S.sandboxMode = on ? "off" : "on";
+      saveWorkspaceSoon();
+      await restart(S, on ? tx("sandbox off · conversation continues") : tx("sandbox on · conversation continues"), { resume: true });
+      renderHeader();
+    } },
+    { label: tx("Settings › Sandbox…"), run: () => invoke("open_preferences", { tab: "sandbox" }) },
+  ]);
+}
+
+// Paw Agent's sandbox stopped something: say so, and offer to allow it.
+listen("paw:sandbox", ({ payload: e }) => {
+  const S = sessions.get(procToSid.get(e.id));
+  if (!S || S.proc !== e.id) return;
+  // A factory node's tab: its sandbox is the factory's (its file, or Settings').
+  if (S.nodeOf) {
+    info(S, `<span class="sb-blocked">${e.program ? tx("Blocked by the sandbox: {program} isn't on the list of programs this tab may run.", { program: `<code>${esc(e.program)}</code>` })
+      : tx("Blocked by the sandbox: {path} is outside the folders this tab may change.", { path: `<code>${esc(tildify(e.path ?? ""))}</code>` })}</span> <span class="dim">${tx("Allow it in the factory's sandbox section, or in Settings › Sandbox.")}</span>`);
+    return;
+  }
+  if (e.program) {
+    info(S, `<span class="sb-blocked">${tx("Blocked by the sandbox: {program} isn't on the list of programs this tab may run.", { program: `<code>${esc(e.program)}</code>` })}</span>` +
+      ` <span class="sb-acts"><button class="tk-btn" data-sb-allow="${esc(e.program)}">${tx("Allow in this tab")}</button><button class="tk-btn" data-sb-add="${esc(e.program)}">${tx("Add to the list")}</button></span>`);
+  } else if (e.path) {
+    info(S, `<span class="sb-blocked">${tx("Blocked by the sandbox: {path} is outside the folders this tab may change.", { path: `<code>${esc(tildify(e.path))}</code>` })}</span>` +
+      ` <span class="sb-acts"><button class="tk-btn" data-sb-settings>${tx("Settings › Sandbox…")}</button></span>`);
+  }
+});
+
+document.addEventListener("click", async (e) => {
+  const b = e.target.closest?.("[data-sb-allow], [data-sb-add], [data-sb-settings]");
+  if (!b) return;
+  const S = curS();
+  if (b.dataset.sbSettings !== undefined) { invoke("open_preferences", { tab: "sandbox" }); return; }
+  if (!S) return;
+  const program = b.dataset.sbAllow ?? b.dataset.sbAdd;
+  const acts = b.closest(".sb-acts");
+  if (b.dataset.sbAllow) {
+    S.sandboxPrograms = [...new Set([...(S.sandboxPrograms ?? []), program])];
+    saveWorkspaceSoon();
+  } else {
+    settings.sandbox ??= {};
+    settings.sandbox.programs ??= [];
+    if (!settings.sandbox.programs.includes(program)) settings.sandbox.programs.push(program);
+    await invoke("save_settings", { settings }).catch(() => {});
+  }
+  if (S.proc != null) await invoke("paw_agent_sandbox", { id: S.proc, program }).catch(() => {});
+  if (acts) acts.innerHTML = `<span class="dim">${esc(b.dataset.sbAllow ? tx("{program} may run in this tab now: ask Paw Agent to try again.", { program })
+    : tx("{program} is on the list now (Settings › Sandbox): ask Paw Agent to try again.", { program }))}</span>`;
+  renderHeader();
 });
 
 listen("paw:approval", ({ payload: r }) => {
@@ -663,10 +753,14 @@ async function sendToAgent(S, text, atts = [], opts = {}) {
     return;
   }
 
-  // The shell moved (cd) since the agent started: follow it. Claude keeps
-  // conversations per folder, so this starts a fresh one.
+  // The shell moved (cd) since the agent started: follow it. Paw Agent keeps
+  // its conversation (its sandbox moves with it); Claude keeps conversations
+  // per folder, so a CLI agent starts a fresh one.
   if (isRunning(S) && S.agentCwd && S.agentCwd !== S.cwd) {
-    await restart(S, tx("agent moved to {folder} (new conversation)", { folder: tildify(S.cwd) }), { resume: false });
+    const keep = isPaw(S.agent);
+    await restart(S, keep ? tx("agent moved to {folder} (conversation continues)", { folder: tildify(S.cwd) })
+      : tx("agent moved to {folder} (new conversation)", { folder: tildify(S.cwd) }), { resume: keep });
+    if (keep && isRunning(S)) invoke("paw_agent_note", { id: S.proc, text: `The user moved this session to ${S.cwd}: work there from now on.` }).catch(() => {});
   }
   if (!isRunning(S)) {
     sys(S, tx("agent was not running — starting it"));
@@ -2124,6 +2218,8 @@ function tabSnapshot(S) {
       task: taskSnapshot(S) ?? undefined,
       factory: S.factory ?? undefined,
       stepOf: S.stepOf ?? undefined,
+      sandboxMode: S.sandboxMode ?? undefined,
+      sandboxPrograms: S.sandboxPrograms?.length ? S.sandboxPrograms : undefined,
       nodeOf: S.nodeOf ?? undefined,
       // Its processes in the daemon: a window that starts again re-attaches.
       live: daemon.instance && (S.proc != null || S.shell != null) ? {
@@ -2333,6 +2429,8 @@ async function restoreTab(t, note = null) {
   if (t.factory) S.factory = t.factory;
   if (t.stepOf) S.stepOf = t.stepOf;
   if (t.nodeOf) S.nodeOf = t.nodeOf;
+  if (t.sandboxMode) S.sandboxMode = t.sandboxMode;
+  if (t.sandboxPrograms) S.sandboxPrograms = t.sandboxPrograms;
   if (t.group) S.group = t.group;
   sessions.set(S.sid, S);
   openTabs.push(S.sid);
@@ -3451,6 +3549,7 @@ function renderHeader() {
   updateGlyph();
   $("sl-left").textContent = [S.agent.name, S.model || tx("default model")].join("  ·  ") + "  ·";
   $("sl-path-text").textContent = shortPath(S.cwd);
+  renderSandboxPill(S);
   $("sl-path").title = tx("{folder} — click to open in Finder", { folder: tildify(S.cwd) });
   renderModePill();
   renderBusy();
@@ -5047,6 +5146,7 @@ function bindPane(P) {
     });
 
     $("mode-pill").onclick = () => { const S = curS(); if (S) { cycleInputMode(S); $("input").focus(); } };
+    $("sl-sandbox").onclick = sandboxMenu;
     $("prompt-glyph").onclick = () => $("mode-pill").click();
     $("eof").onclick = () => { const S = curS(); if (S && isRunning(S)) invoke("close_input", { id: S.proc }); };
   });

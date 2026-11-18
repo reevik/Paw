@@ -289,6 +289,10 @@ trigger:           # optional: what starts runs on its own (any of these; Paw's 
   watch: "./check.sh"  # a run each time this command STARTS succeeding (it must fail in between); with watch, every is how often it's checked
   webhook: s3cret  # a run when something POSTs to http://127.0.0.1:4747/factories/<file name>; the body reaches the nodes (true: no secret); ?folder=~/path runs it in that project folder
   file: ./inbox    # a run when this file or folder changes
+sandbox:           # optional: its nodes' sandbox (without it, Settings › Sandbox decides); a section turns it on unless enabled: false
+  write: ["~/.cargo"]       # folders it may also change, besides the one it works in
+  run: [git, gh, npm]       # only these programs may run (and their helpers)
+  network: [git, gh]        # only these may use the network (true / false for all)
 parallel: 1        # optional: how many runs triggers and repeat may have going at once (default 1); Run a task (the view's button) always starts one. Each run has its own execution id (a UUID) and can work in its own project folder
 repeat: true       # optional: start the next run when one finishes (or { after: 10s, on_failure: continue }); a failed run stops the loop unless on_failure: continue
 nodes:             # required; ids use letters, digits, - and _
@@ -770,6 +774,9 @@ function factorySummaryHtml(S, plan, f) {
   const parts = [`<div class="tk-side-title">${esc(def.name)}</div>`];
   if (def.description?.trim()) parts.push(`<div class="tk-goal">${esc(def.description.trim())}</div>`);
   parts.push(`<div class="tk-dim"><code class="fa-id" title="${esc(tx("The factory's id (its file name)"))}">${esc(S.factory.id)}</code> · ${(def.nodes.length === 1 ? tx("{n} node", { n: 1 }) : tx("{n} nodes", { n: def.nodes.length }))} · ${tx("works in {folder}", { folder: esc(def.folder?.trim() || "~") })}${def.model ? ` · ${esc(modelShort(def.model))}` : ""}</div>`);
+  // Its nodes' sandbox: the file's section over Settings', or Settings' as it is.
+  const sb = def.sandbox ? factorySandbox(def.sandbox) : settings.sandbox;
+  parts.push(`<div class="tk-dim">${sb?.enabled ? esc(sandboxSummary(sb)) : tx("No sandbox: its nodes run like a tab without one.")}</div>`);
   // The trigger as the file has it now (the run may be of an older version).
   parts.push(triggerHtml(S.factory.id, f?.factory ?? def));
   if (run && f?.factory && JSON.stringify(f.factory) !== JSON.stringify(def)) {
@@ -794,6 +801,18 @@ function factorySummaryHtml(S, plan, f) {
   }
   parts.push(`<div class="tk-dim fa-path">${esc(tildify(f?.path ?? ""))}</div>`);
   return parts.join("");
+}
+
+/** A factory's sandbox section over Settings' policy (as the background process applies it). */
+function factorySandbox(spec) {
+  const p = structuredClone(settings.sandbox ?? {});
+  p.enabled = spec.enabled !== false;
+  if (spec.write) p.write = spec.write;
+  if (spec.run) { p.any_program = false; p.programs = spec.run; }
+  if (spec.network === true) p.network = "on";
+  else if (spec.network === false) p.network = "off";
+  else if (Array.isArray(spec.network)) { p.network = "listed"; p.network_programs = spec.network; }
+  return p;
 }
 
 /** Clicks on a factory board (bindTaskView passes them here). */

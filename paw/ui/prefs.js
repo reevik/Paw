@@ -63,6 +63,7 @@ function renderGeneral() {
   $("g-max-agents").value = settings.general.max_agents ?? 3;
   $("g-max-waiting").value = settings.general.max_waiting ?? 20;
   $("g-language").value = I18N.pick(settings.general.language);
+  renderSandbox();
   showSessionCount();
   $("g-mode").value = settings.general.input_mode || "auto";
   $("g-approval").value = settings.general.approval || "edits";
@@ -941,6 +942,72 @@ keyForm("d-keyform", "d-apikey", "d-keydel", "d-keystatus", () => "anthropic");
 keyForm("d-or-keyform", "d-or-apikey", "d-or-keydel", "d-or-keystatus", () => "openrouter");
 keyForm("d-cu-keyform", "d-cu-apikey", "d-cu-keydel", "d-cu-keystatus", () => sel.id);
 refreshKeyStatus();
+
+// ---------- Sandbox ----------
+// Paw Agent's sandbox for new tabs and factories: where it may write, which
+// programs its commands may run, and their network.
+const SB_STARTER = ["git", "gh", "npm", "npx", "node", "pnpm", "yarn", "bun", "deno", "cargo", "rustc", "rustup", "make", "cmake", "python3", "python",
+  "pip3", "pip", "uv", "go", "swift", "swiftc", "xcodebuild", "xcrun", "java", "javac", "mvn", "gradle", "ls", "cat", "head", "tail",
+  "grep", "rg", "sed", "awk", "find", "wc", "sort", "uniq", "cut", "tr", "diff", "mkdir", "cp", "mv", "rm", "rmdir", "touch", "ln", "chmod",
+  "echo", "printf", "pwd", "which", "env", "dirname", "basename", "realpath", "date", "tee", "xargs", "test", "true", "false", "sleep",
+  "tar", "gzip", "gunzip", "unzip", "zip", "jq", "file", "stat", "du", "df"];
+function sandbox() {
+  settings.sandbox ??= {};
+  const s = settings.sandbox;
+  s.enabled ??= false; s.write ??= []; s.any_program ??= true; s.programs ??= [...SB_STARTER];
+  s.network ??= "on"; s.network_programs ??= ["git", "gh", "npm", "npx", "pnpm", "yarn", "cargo", "pip3", "pip", "uv", "go"];
+  return s;
+}
+/** Chips with ×, for a list of programs. */
+function sbChips(el, list, onChange) {
+  el.innerHTML = "";
+  for (const name of list) {
+    const c = document.createElement("span");
+    c.className = "sb-chip";
+    c.innerHTML = `<code>${esc(name)}</code><button type="button" title="${esc(tx("Remove"))}">×</button>`;
+    c.querySelector("button").onclick = () => { list.splice(list.indexOf(name), 1); onChange(); };
+    el.appendChild(c);
+  }
+}
+function renderSandbox() {
+  const s = sandbox();
+  $("sb-enabled").checked = !!s.enabled;
+  $("sb-programs-mode").value = s.any_program ? "any" : "only";
+  $("sb-programs-box").classList.toggle("hidden", s.any_program);
+  $("sb-network").value = s.network;
+  $("sb-net-box").classList.toggle("hidden", s.network !== "listed");
+  const changed = () => { save(); renderSandbox(); };
+  sbChips($("sb-programs"), s.programs, changed);
+  sbChips($("sb-net-programs"), s.network_programs, changed);
+  const ul = $("sb-write");
+  ul.innerHTML = "";
+  for (const w of s.write) {
+    const li = document.createElement("li");
+    li.innerHTML = `<div class="al-main"><code>${esc(w)}</code></div><button class="icon-btn" title="${esc(tx("Remove"))}">×</button>`;
+    li.querySelector("button").onclick = () => { s.write.splice(s.write.indexOf(w), 1); changed(); };
+    ul.appendChild(li);
+  }
+}
+$("sb-enabled").addEventListener("change", (e) => { sandbox().enabled = e.target.checked; save(); });
+$("sb-programs-mode").addEventListener("change", (e) => { sandbox().any_program = e.target.value === "any"; save(); renderSandbox(); });
+$("sb-network").addEventListener("change", (e) => { sandbox().network = e.target.value; save(); renderSandbox(); });
+$("sb-starter").addEventListener("click", () => { sandbox().programs = [...SB_STARTER]; save(); renderSandbox(); });
+/** An "add" form: a program name (no paths or spaces) or a folder. */
+function sbAdd(formId, inputId, list, folder = false) {
+  $(formId).addEventListener("submit", (e) => {
+    e.preventDefault();
+    const v = $(inputId).value.trim();
+    if (!v || (!folder && /[\s/]/.test(v))) return;
+    const l = list();
+    if (!l.includes(v)) l.push(v);
+    $(inputId).value = "";
+    save();
+    renderSandbox();
+  });
+}
+sbAdd("sb-write-add", "sb-write-new", () => sandbox().write, true);
+sbAdd("sb-program-add", "sb-program-new", () => sandbox().programs);
+sbAdd("sb-net-add", "sb-net-new", () => sandbox().network_programs);
 
 /** Actions the user chose "Always in this folder" for, on approval cards. Paw Agent's are keyed "paw". */
 function renderAllowed(agentId) {

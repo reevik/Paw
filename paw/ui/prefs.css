@@ -301,6 +301,15 @@ body.prefs { display: flex; flex-direction: column; height: 100vh; }
 .approval-grid label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--text-2); }
 .approval-grid input { font: 11.5px var(--mono); }
 
+.sb-chips { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0 6px; }
+.sb-chip { display: inline-flex; align-items: center; gap: 2px; padding: 1px 2px 1px 7px; border-radius: 6px; background: var(--card-2); font-size: 12px; }
+.sb-chip code { font: 11.5px var(--mono); background: none; padding: 0; }
+.sb-chip button { border: 0; background: none; color: var(--text-3); cursor: pointer; padding: 0 4px; font-size: 13px; line-height: 1; }
+.sb-chip button:hover { color: var(--text); }
+.sb-add { margin-top: 6px; }
+.sb-add input { width: 180px; }
+.sb-add button { white-space: nowrap; }
+.sb-list { margin-top: 6px; }
 .allowed-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 /* One row per rule, all the same width: the command and its folder on the left, × on the right. */
 .allowed-list li {

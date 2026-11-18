@@ -107,6 +107,16 @@ function triggerHtml(id, def) {
   if (t.webhook !== undefined && t.webhook !== false && t.webhook !== null) rows.push("When its webhook is called");
   if (rep) rows.push(rep);
   const parts = [`<label class="tk-lbl">Trigger${st?.paused ? ` <span class="fa-paused">paused</span>` : ""}</label><div>${rows.join("<br>")}</div>`];
+  // How many runs it may have going at once (the file's parallel), and the ones waiting.
+  const par = st?.parallel ?? def.parallel ?? 1;
+  if (st?.waiting) {
+    parts.push(`<div class="fa-waiting"><div><b>${st.waiting} queued</b> · runs of this factory go ${par === 1 ? "one at a time" : `${par} at a time`}</div>
+      <button class="tk-btn primary" data-fact="par-up" title="Let one more run go at the same time">Allow ${par + 1} at once</button></div>`);
+  }
+  const edits = def.nodes.some((n) => !n.wait && n.edits !== false);
+  parts.push(`<div class="fa-par"><span class="tk-dim">Runs at once</span>
+    <button class="fa-zb" data-fact="par-down" title="Fewer runs at the same time"${par <= 1 ? " disabled" : ""}>−</button><b>${par}</b><button class="fa-zb" data-fact="par-up" title="More runs at the same time"${par >= 20 ? " disabled" : ""}>+</button></div>`);
+  if (par > 1 && edits) parts.push(`<div class="tk-dim">These runs share ${esc(def.folder?.trim() || "~")} unless they're started in another folder: they take turns changing files there, but they'd also switch its git branch under each other.</div>`);
   if (!st) {
     parts.push(`<div class="tk-dim">Paw's background process hasn't picked this up yet.</div>`);
     return parts.join("");
@@ -362,8 +372,9 @@ function renderFactoryView(S, host) {
   const runs = runsOf(S.factory.id);
   const going = runs.filter((r) => r.state === "running").length;
   const state = run ? run.state : f?.error ? "failed" : "draft";
+  const waiting = triggerOf(S.factory.id)?.waiting ?? 0;
   const stateText = (run ? `${RUN_STATE_TEXT[run.state] ?? run.state} · ${runProgress(run)}` : f?.error ? "can't run" : "ready") +
-    (going > 1 ? ` · ${going} runs going` : "");
+    (going > 1 ? ` · ${going} runs going` : "") + (waiting ? ` · ${waiting} queued` : "");
   const buttons = [
     f?.factory && `<button class="tk-btn primary" data-fact="run" title="Start a run in ${esc(f.factory.folder?.trim() || "~")}${going ? " (alongside the runs going)" : ""}">Run now</button>`,
     run?.state === "running" && `<button class="tk-btn" data-fact="stop" title="Stop this run (${esc(shortRunId(run.id))})">Stop</button>`,
@@ -765,6 +776,13 @@ async function factoryClick(S, e, P) {
     switch (b.dataset.fact) {
       case "run": await startFactoryRun(S, P, null, null); break;
       case "rundir": if (run) await invoke("open_folder", { path: runDir(run) }); break;
+      case "par-up": case "par-down": {
+        const f = factoryById(S.factory.id);
+        const now = triggerOf(S.factory.id)?.parallel ?? f?.factory?.parallel ?? 1;
+        const to = Math.max(1, Math.min(20, now + (b.dataset.fact === "par-up" ? 1 : -1)));
+        if (to !== now) { await invoke("factory_set_parallel", { factory: S.factory.id, parallel: to }); await loadFactories(); }
+        break;
+      }
       case "zoom-in": case "zoom-out": setZoom(S, withPane(P, () => $("task-view")), b.dataset.fact.slice(5)); break;
       case "zoom-100": setZoom(S, withPane(P, () => $("task-view")), 1); break;
       case "zoom-fit": setZoom(S, withPane(P, () => $("task-view")), "fit"); break;

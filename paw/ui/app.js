@@ -26,7 +26,7 @@ const DAEMON_COMMANDS = new Set([
   "spawn_agent", "send_input", "close_input", "stop_agent", "remove_agent", "list_agents", "agent_output",
   "shell_open", "shell_run", "shell_write", "shell_interrupt", "shell_close", "shell_write_raw", "shell_resize", "shell_raw_exit",
   "paw_agent_start", "paw_agent_send", "paw_agent_note", "paw_agent_cancel", "paw_agent_close", "paw_agent_approve",
-  "factory_answer", "factory_decide", "factory_conversation",
+  "factory_answer", "factory_decide", "factory_conversation", "factory_set_parallel",
   "tray_update", "daemon_attach",
   "factory_list", "factory_get", "factory_run", "factory_stop", "factory_retry", "factory_skip", "factory_new", "factory_pause",
 ]);

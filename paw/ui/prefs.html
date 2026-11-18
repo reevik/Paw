@@ -98,6 +98,15 @@
         <p class="hint">Across all tabs and task steps. A prompt beyond it waits its turn and starts when an agent finishes. 0: no limit.</p>
       </div>
 
+      <label for="g-max-waiting">Queued runs</label>
+      <div>
+        <div class="inline-row">
+          <input id="g-max-waiting" type="number" min="0" max="1000" step="1" class="num" />
+          <span class="unit">per factory</span>
+        </div>
+        <p class="hint">When a factory's trigger fires while its runs are going, the new run is queued and starts when one ends. Beyond this many queued runs, more are turned away (a webhook caller hears “try again later”). 0: no limit.</p>
+      </div>
+
       <label for="g-max-sessions">Closed sessions</label>
       <div>
         <div class="inline-row">

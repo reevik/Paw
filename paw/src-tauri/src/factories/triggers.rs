@@ -51,6 +51,10 @@ pub struct Status {
     pub webhook: Option<String>,
     pub webhook_secret: bool,
     pub watching_file: Option<String>,
+    /// Runs it may have going at once (the file's `parallel`, default 1).
+    pub parallel: usize,
+    /// Runs waiting for their turn.
+    pub waiting: usize,
 }
 
 #[derive(Default)]
@@ -74,22 +78,46 @@ struct Entry {
 }
 
 /// A trigger that fired: why, its payload, the project folder ("": the factory's).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct Fired {
     why: String,
     payload: Option<String>,
     folder: String,
+    /// Each one counts (a webhook's body, a `fires: each` check): never merged.
+    #[serde(default)]
+    own: bool,
 }
 
-const QUEUE_MAX: usize = 20;
+/// Runs that may wait per factory (Settings › General), 0: no limit.
+fn max_waiting() -> usize {
+    crate::paths::home()
+        .and_then(|h| std::fs::read_to_string(h.join("settings.json")).ok())
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        .and_then(|v| v.pointer("/general/max_waiting").and_then(Value::as_u64))
+        .map_or(20, |n| n as usize)
+}
+
+/// Where a factory's waiting runs are kept, so a restart doesn't lose them.
+fn waiting_path(id: &str) -> Option<PathBuf> {
+    valid_id(id).then(|| super::runner::factories_dir().map(|d| d.join(id).join(".waiting.json"))).flatten()
+}
 
 impl Entry {
-    /// Wait for room; a later event for the same folder replaces an earlier one.
-    fn enqueue(&mut self, f: Fired) {
-        self.queued.retain(|q| q.folder != f.folder);
-        if self.queued.len() < QUEUE_MAX {
-            self.queued.push(f);
+    /// Wait for a turn: false when the queue is full. A schedule's, a file's
+    /// or a watch's event stands in for an earlier one of the same kind (one
+    /// more run is enough); an event with its own content always waits.
+    fn enqueue(&mut self, f: Fired, max: usize) -> bool {
+        if !f.own {
+            if let Some(q) = self.queued.iter_mut().find(|q| !q.own && q.folder == f.folder) {
+                *q = f;
+                return true;
+            }
         }
+        if max > 0 && self.queued.len() >= max {
+            return false;
+        }
+        self.queued.push(f);
+        true
     }
 }
 
@@ -192,7 +220,7 @@ impl Triggers {
     }
 
     /// Read the factory files again; a changed file starts its trigger afresh.
-    fn rescan(&self) {
+    pub fn rescan(&self) {
         let found = super::runner::factories_dir().as_deref().map(load_all).unwrap_or_default();
         let mut changed = false;
         {
@@ -204,8 +232,23 @@ impl Triggers {
                 let Some(def) = f.factory.as_ref().filter(|d| wants(d)) else { continue };
                 let none = Trigger::default();
                 let trig = def.trigger.as_ref().unwrap_or(&none);
-                if entries.get(&f.id).is_some_and(|e| e.modified == f.modified && e.trigger.as_ref() == Some(trig)) {
-                    continue;
+                // The same trigger (another part of the file changed, like
+                // `parallel`): it goes on as it was, schedule and watch included.
+                let here = {
+                    let d = def.folder.trim();
+                    crate::agents::expand_home(if d.is_empty() { "~" } else { d })
+                };
+                if let Some(e) = entries.get_mut(&f.id) {
+                    let same = e.trigger.as_ref() == Some(trig) && e.folder == here && e.status.kinds.iter().any(|k| k == "repeat") == repeat_of(def).is_some();
+                    if same {
+                        if e.modified != f.modified || e.parallel != def.parallel_runs() {
+                            e.modified = f.modified;
+                            e.parallel = def.parallel_runs();
+                            e.status.parallel = e.parallel;
+                            changed = true;
+                        }
+                        continue;
+                    }
                 }
                 changed = true;
                 let folder = {
@@ -215,7 +258,11 @@ impl Triggers {
                 let every = trig.every.as_deref().and_then(parse_duration);
                 let mut e = Entry { modified: f.modified, trigger: Some(trig.clone()), folder: folder.clone(), parallel: def.parallel_runs(), ..Default::default() };
                 let mut old = entries.remove(&f.id);
-                e.queued = old.as_mut().map(|o| std::mem::take(&mut o.queued)).unwrap_or_default();
+                // Waiting runs carry over (from disk, when Paw has just started).
+                e.queued = match old.as_mut() {
+                    Some(o) => std::mem::take(&mut o.queued),
+                    None => waiting_path(&f.id).and_then(|p| std::fs::read_to_string(p).ok()).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default(),
+                };
                 e.status = Status {
                     kinds: [
                         trig.watch.as_ref().map(|_| "watch"),
@@ -262,6 +309,7 @@ impl Triggers {
         let now = Instant::now();
         let today = local_now();
         let mut fire: Vec<(String, Fired)> = vec![];
+        let mut status_changed = false;
         let mut checks: Vec<(String, String, PathBuf)> = vec![];
         {
             let mut entries = self.entries.lock().unwrap();
@@ -274,14 +322,24 @@ impl Triggers {
                 if e.status.next != next {
                     e.status.next = next;
                 }
+                // How many may go at once, and how many wait (for the view).
+                let (parallel, waiting) = (e.parallel.max(1), e.queued.len());
+                if (e.status.parallel, e.status.waiting) != (parallel, waiting) {
+                    (e.status.parallel, e.status.waiting) = (parallel, waiting);
+                    status_changed = true;
+                }
                 if e.status.paused {
                     continue;
                 }
                 // Fired when there was no room: their turn comes as runs end.
                 if !e.queued.is_empty() {
                     let room = e.parallel.max(1).saturating_sub(self.runner.running(id));
-                    for f in e.queued.drain(..room.min(e.queued.len())) {
-                        fire.push((id.clone(), f));
+                    let n = room.min(e.queued.len());
+                    if n > 0 {
+                        for f in e.queued.drain(..n) {
+                            fire.push((id.clone(), f));
+                        }
+                        save_waiting(id, &e.queued);
                     }
                 }
                 if let (Some(cmd), Some(due)) = (&t.watch, e.next_check) {
@@ -336,13 +394,17 @@ impl Triggers {
                     rose && !e.status.paused
                 };
                 if fire {
-                    me.fire(&id, Fired { why: "its watch".into(), payload: Some(out.1), ..Default::default() });
+                    let own = me.entries.lock().unwrap().get(&id).and_then(|e| e.trigger.as_ref()).and_then(|t| t.fires.as_deref()) == Some("each");
+                    me.fire(&id, Fired { why: "its watch".into(), payload: Some(out.1), own, ..Default::default() });
                 }
                 me.publish();
             });
         }
         for (id, f) in fire {
             self.fire(&id, f);
+        }
+        if status_changed {
+            self.publish();
         }
     }
 
@@ -353,14 +415,22 @@ impl Triggers {
     }
 
     /// Start a run (if there's room, else it waits its turn); what happened,
-    /// and the run's execution id.
+    /// and the run's execution id. None and no note: the queue was full.
     fn fire(self: &Arc<Self>, id: &str, f: Fired) -> (String, Option<String>) {
         let why = f.why.clone();
         let (note, run) = if !self.room(id) {
-            if let Some(e) = self.entries.lock().unwrap().get_mut(id) {
-                e.enqueue(f);
+            let max = max_waiting();
+            let queued = self.entries.lock().unwrap().get_mut(id).map(|e| {
+                let ok = e.enqueue(f, max);
+                save_waiting(id, &e.queued);
+                e.status.waiting = e.queued.len();
+                ok
+            });
+            if queued == Some(false) {
+                (format!("{why}: {max} runs were already queued, so this one was turned away (Settings › General › Queued runs)"), None)
+            } else {
+                (format!("{why}: runs were going, so this one is queued"), None)
             }
-            (format!("{why}: runs were going, so another starts when one ends"), None)
         } else {
             let folder = Some(f.folder).filter(|s| !s.is_empty());
             match self.runner.start(id, &why, f.payload, folder) {
@@ -480,6 +550,7 @@ impl Triggers {
             404 => "Not Found",
             405 => "Method Not Allowed",
             409 => "Conflict",
+            429 => "Too Many Requests",
             413 => "Payload Too Large",
             _ => "Error",
         };
@@ -532,13 +603,25 @@ impl Triggers {
             return (400, json!({ "error": format!("The folder doesn't exist: {folder}") }));
         }
         let payload = (!body.trim().is_empty()).then_some(body);
-        match self.fire(id, Fired { why: "its webhook".into(), payload, folder }) {
+        match self.fire(id, Fired { why: "its webhook".into(), payload, folder, own: true }) {
             (_, Some(run)) => (202, json!({ "run": run })),
             (note, None) if note.contains("couldn't start") => (500, json!({ "error": note })),
+            (note, None) if note.contains("turned away") => (429, json!({ "error": "Too many runs are queued; try again later." })),
             _ => (202, json!({ "queued": true })),
         }
     }
 
+}
+
+/// Keep a factory's waiting runs on disk (none: no file).
+fn save_waiting(id: &str, queued: &[Fired]) {
+    let Some(p) = waiting_path(id) else { return };
+    if queued.is_empty() {
+        let _ = std::fs::remove_file(p);
+    } else if let Ok(text) = serde_json::to_string(queued) {
+        let _ = std::fs::create_dir_all(p.parent().unwrap());
+        let _ = std::fs::write(p, text);
+    }
 }
 
 /// `%xx` and `+` in a query value.
@@ -575,12 +658,19 @@ mod tests {
     }
 
     #[test]
-    fn a_later_event_for_a_folder_replaces_its_earlier_one() {
+    fn events_with_content_all_wait_and_schedules_merge() {
         let mut e = Entry::default();
-        e.enqueue(Fired { why: "1".into(), folder: "a".into(), ..Default::default() });
-        e.enqueue(Fired { why: "2".into(), folder: "b".into(), ..Default::default() });
-        e.enqueue(Fired { why: "3".into(), folder: "a".into(), ..Default::default() });
-        assert_eq!(e.queued.iter().map(|f| f.why.as_str()).collect::<Vec<_>>(), ["2", "3"]);
+        let ev = |why: &str, folder: &str, own: bool| Fired { why: why.into(), folder: folder.into(), own, ..Default::default() };
+        assert!(e.enqueue(ev("tick", "a", false), 5));
+        assert!(e.enqueue(ev("tick 2", "a", false), 5), "a schedule stands in for its earlier event");
+        assert!(e.enqueue(ev("query 1", "", true), 5));
+        assert!(e.enqueue(ev("query 2", "", true), 5), "each webhook body waits, same folder or not");
+        assert!(e.enqueue(ev("tick", "b", false), 5));
+        assert_eq!(e.queued.iter().map(|f| f.why.as_str()).collect::<Vec<_>>(), ["tick 2", "query 1", "query 2", "tick"]);
+        assert!(e.enqueue(ev("query 3", "", true), 5));
+        assert!(!e.enqueue(ev("query 4", "", true), 5), "full: turned away");
+        assert!(e.enqueue(ev("tick 3", "a", false), 5), "a merge needs no room");
+        assert!(e.enqueue(ev("query 5", "", true), 0), "0: no limit");
     }
 
     #[test]

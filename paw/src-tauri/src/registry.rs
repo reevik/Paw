@@ -100,8 +100,16 @@ pub struct General {
     /// Agents working at the same time, across tabs and task steps; more
     /// prompts wait their turn. 0: no limit.
     pub max_agents: usize,
+    /// Factory runs that may wait for their turn, per factory (a trigger that
+    /// fires while its runs are going); more are turned away. 0: no limit.
+    #[serde(default = "default_max_waiting")]
+    pub max_waiting: usize,
     /// Where Settings › Plugins finds plugins: a URL or a folder; empty: the official catalog.
     pub plugin_source: String,
+}
+
+fn default_max_waiting() -> usize {
+    20
 }
 
 impl Default for General {
@@ -116,6 +124,7 @@ impl Default for General {
             share_shell: true,
             max_sessions: 50,
             max_agents: 3,
+            max_waiting: default_max_waiting(),
             plugin_source: String::new(),
         }
     }

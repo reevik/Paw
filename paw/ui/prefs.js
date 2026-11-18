@@ -60,6 +60,7 @@ function renderGeneral() {
   $("g-history").value = settings.general.history_size ?? 1000;
   $("g-max-sessions").value = settings.general.max_sessions ?? 50;
   $("g-max-agents").value = settings.general.max_agents ?? 3;
+  $("g-max-waiting").value = settings.general.max_waiting ?? 20;
   showSessionCount();
   $("g-mode").value = settings.general.input_mode || "auto";
   $("g-approval").value = settings.general.approval || "edits";
@@ -117,6 +118,10 @@ async function showSessionCount() {
 }
 $("g-max-agents").addEventListener("input", (e) => {
   settings.general.max_agents = Math.max(0, Math.min(20, Math.floor(Number(e.target.value) || 0)));
+  save();
+});
+$("g-max-waiting").addEventListener("input", (e) => {
+  settings.general.max_waiting = Math.max(0, Math.min(1000, Math.floor(Number(e.target.value) || 0)));
   save();
 });
 let sessionsTimer = null;

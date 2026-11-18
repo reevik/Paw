@@ -1226,6 +1226,14 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
   padding: 0 5px; border-radius: 5px; font: 500 11px var(--mono, ui-monospace, monospace);
   color: var(--text-3); background: var(--t-hover); user-select: text;
 }
+.fa-par { display: flex; align-items: center; gap: 4px; margin-top: 6px; }
+.fa-par .tk-dim { margin-right: 4px; }
+.fa-par b { min-width: 18px; text-align: center; font-variant-numeric: tabular-nums; }
+.fa-zb:disabled { opacity: .35; cursor: default; }
+.fa-waiting {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-top: 6px; padding: 7px 9px; border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--t-yellow) 55%, transparent); background: color-mix(in srgb, var(--t-yellow) 9%, transparent);
+}
 .fa-exec { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-top: 4px; font-size: 11.5px; }
 .fa-exec code { font: 11px var(--mono, ui-monospace, monospace); user-select: text; overflow-wrap: anywhere; }
 .fa-desc { margin: 6px 0 2px; color: var(--t-fg); }

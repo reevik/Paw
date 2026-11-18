@@ -590,6 +590,43 @@ pub fn load(id: &str, path: &Path) -> Found {
     Found { id: id.to_string(), path: path.to_path_buf(), factory, error, modified }
 }
 
+/// The file text with `parallel: n` set: the line changed (its comment kept),
+/// added before `trigger`, `repeat` or `nodes`, or (n = 1, the default) taken out.
+pub fn with_parallel(text: &str, n: u32) -> String {
+    let re = regex::Regex::new(r"^parallel\s*:\s*[^#\s]*").unwrap();
+    let mut lines: Vec<String> = text.lines().map(String::from).collect();
+    match lines.iter().position(|l| re.is_match(l)) {
+        Some(i) if n == 1 => {
+            lines.remove(i);
+        }
+        Some(i) => lines[i] = re.replace(&lines[i], format!("parallel: {n}").as_str()).into_owned(),
+        None if n == 1 => {}
+        None => {
+            let at = lines.iter().position(|l| ["trigger:", "repeat:", "nodes:"].iter().any(|k| l.starts_with(k))).unwrap_or(lines.len());
+            lines.insert(at, format!("parallel: {n}"));
+        }
+    }
+    let mut out = lines.join("\n");
+    if text.ends_with('\n') {
+        out.push('\n');
+    }
+    out
+}
+
+/// Set how many runs a factory's triggers may have going at once, in its file.
+pub fn set_parallel(id: &str, n: u32) -> Result<(), String> {
+    let n = n.clamp(1, PARALLEL_MAX);
+    let d = crate::paths::home().map(|h| dir(&h)).ok_or("Paw can't find its folder (~/.paw).")?;
+    let path = valid_id(id)
+        .then(|| ["yaml", "yml"].iter().map(|e| d.join(format!("{id}.{e}"))).find(|p| p.is_file()))
+        .flatten()
+        .ok_or(format!("There's no factory “{id}”."))?;
+    let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let new = with_parallel(&text, n);
+    parse(&new).map_err(|e| format!("Paw couldn't change {id}.yaml safely: {e}"))?;
+    std::fs::write(&path, new).map_err(|e| e.to_string())
+}
+
 /// A factory by its id or its name (any case): its id and definition.
 pub fn find(dir: &Path, which: &str) -> Result<(String, Factory), String> {
     let all = load_all(dir);
@@ -774,6 +811,17 @@ nodes:
         assert!(parse("name: x\nnodes:\n  - { id: w, wait: 'true', approve: true }\n").unwrap_err().contains("approve is for agent nodes"));
         assert!(parse(&base("loop: { back_to: fix, until: { matches: x }, max: 0 }")).unwrap_err().contains("1 to 20"));
         assert!(parse(&base("loop: { back_to: fix, until: { matches: x }, on_max: retry }")).unwrap_err().contains("fail or continue"));
+    }
+
+    #[test]
+    fn parallel_is_written_into_the_file() {
+        let base = "# my factory\nname: x\ntrigger:\n  webhook: true\nnodes:\n  - { id: a, prompt: hi }\n";
+        let two = with_parallel(base, 2);
+        assert_eq!(two, "# my factory\nname: x\nparallel: 2\ntrigger:\n  webhook: true\nnodes:\n  - { id: a, prompt: hi }\n");
+        assert_eq!(parse(&two).unwrap().parallel_runs(), 2);
+        assert_eq!(with_parallel("name: x\nparallel: 3   # busy hours\nnodes: []\n", 5), "name: x\nparallel: 5   # busy hours\nnodes: []\n", "the comment stays");
+        assert_eq!(with_parallel(&two, 1), base, "1 is the default: the line goes");
+        assert_eq!(with_parallel(base, 1), base);
     }
 
     #[test]

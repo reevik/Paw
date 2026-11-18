@@ -34,7 +34,7 @@ I18N.add("de", {
   "Starts again when a run finishes, even a failed one": "Startet erneut, wenn ein Lauf endet, auch nach einem fehlgeschlagenen",
   "Starts again when a run finishes; a failed run stops the loop": "Startet erneut, wenn ein Lauf endet; ein fehlgeschlagener Lauf beendet die Schleife",
   "Trigger": "Auslöser",
-  "Manual: Run now. Add a trigger to the file (every, at, watch, webhook or file) to start runs on their own, or repeat: true to loop.": "Manuell: Jetzt starten. Füge der Datei einen Auslöser hinzu (every, at, watch, webhook oder file), damit Läufe von selbst starten, oder repeat: true für eine Schleife.",
+  "Manual: Run a task. Add a trigger to the file (every, at, watch, webhook or file) to start runs on their own, or repeat: true to loop.": "Manuell: Aufgabe starten. Füge der Datei einen Auslöser hinzu (every, at, watch, webhook oder file), damit Läufe von selbst starten, oder repeat: true für eine Schleife.",
   "When <code>{cmd}</code> starts succeeding (checked every {every})": "Wenn <code>{cmd}</code> erfolgreich wird (geprüft alle {every})",
   "Every {every}": "Alle {every}",
   "At {at}": "Um {at}",
@@ -61,18 +61,17 @@ I18N.add("de", {
   "for example": "zum Beispiel",
 
   // the view's head
-  "— factory {id}: ask {agent} below to change it (nodes, prompts, models, triggers). Run now runs it in the background.": "— Fabrik {id}: Sag {agent} unten, was du ändern willst (Knoten, Anweisungen, Modelle, Auslöser). „Jetzt starten“ führt sie im Hintergrund aus.",
+  "— factory {id}: ask {agent} below to change it (nodes, prompts, models, triggers). Run a task runs it in the background.": "— Fabrik {id}: Sag {agent} unten, was du ändern willst (Knoten, Anweisungen, Modelle, Auslöser). „Aufgabe starten“ führt sie im Hintergrund aus.",
   "Reading the factory…": "Fabrik wird gelesen…",
   "can't run": "nicht ausführbar",
   "ready": "bereit",
   "{n} queued": "{n} in der Warteschlange",
   "Start a run in {folder} (alongside the runs going)": "Einen Lauf in {folder} starten (neben den laufenden)",
   "Start a run in {folder}": "Einen Lauf in {folder} starten",
-  "Run now": "Jetzt starten",
-  "Stop this run ({run})": "Diesen Lauf stoppen ({run})",
+  "Run a task": "Aufgabe starten",
   "Stop": "Stoppen",
   "Let the trigger start runs again": "Den Auslöser wieder Läufe starten lassen",
-  "Stop the trigger from starting runs (Run now still works)": "Den Auslöser keine Läufe mehr starten lassen („Jetzt starten“ funktioniert weiter)",
+  "Stop the trigger from starting runs (Run a task still works)": "Den Auslöser keine Läufe mehr starten lassen („Aufgabe starten“ funktioniert weiter)",
   "Resume trigger": "Auslöser fortsetzen",
   "Pause trigger": "Auslöser pausieren",
   "Edit file": "Datei bearbeiten",
@@ -210,7 +209,7 @@ I18N.add("de", {
   "The run's execution id": "Die Ausführungs-ID des Laufs",
   "Open its folder": "Ordner öffnen",
   "Task": "Aufgabe",
-  "Click a node to see its task. Run now runs the factory in the background: it keeps going if you close the window. Nodes that don't need each other run side by side, as many as Settings › General › Agents at once allows; nodes that change files run one at a time.": "Klicke auf einen Knoten, um seine Aufgabe zu sehen. „Jetzt starten“ führt die Fabrik im Hintergrund aus: Sie läuft weiter, auch wenn du das Fenster schließt. Knoten, die einander nicht brauchen, laufen nebeneinander, so viele, wie Einstellungen › Allgemein › Agenten gleichzeitig erlaubt; Knoten, die Dateien ändern, laufen nacheinander.",
+  "Click a node to see its task. Run a task runs the factory in the background: it keeps going if you close the window. Nodes that don't need each other run side by side, as many as Settings › General › Agents at once allows; nodes that change files run one at a time.": "Klicke auf einen Knoten, um seine Aufgabe zu sehen. „Aufgabe starten“ führt die Fabrik im Hintergrund aus: Sie läuft weiter, auch wenn du das Fenster schließt. Knoten, die einander nicht brauchen, laufen nebeneinander, so viele, wie Einstellungen › Allgemein › Agenten gleichzeitig erlaubt; Knoten, die Dateien ändern, laufen nacheinander.",
 
   // a node's tab
   "— {node} in run {run}: live. When it asks you something, type your answer here. —": "— {node} in Lauf {run}: live. Wenn er dich etwas fragt, tippe deine Antwort hier ein. —",
@@ -236,5 +235,7 @@ I18N.add("de", {
   "last run {when}": "letzter Lauf {when}",
   "Open this factory": "Diese Fabrik öffnen",
   "Factories ({n})": "Fabriken ({n})",
-  "The trigger is paused, so it isn't listening: only Run now starts runs.": "Der Auslöser ist pausiert und hört nicht zu: Nur „Jetzt starten“ startet Läufe.",
+  "The trigger is paused, so it isn't listening: only Run a task starts one.": "Der Auslöser ist pausiert und hört nicht zu: Nur „Aufgabe starten“ startet einen Lauf.",
+  "Stop task": "Aufgabe stoppen",
+  "Stop this task ({run})": "Diese Aufgabe stoppen ({run})",
 });

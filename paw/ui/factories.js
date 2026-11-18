@@ -4,7 +4,7 @@
 //
 // A factory tab looks like a task tab: the factory's graph on top (click a
 // node for its task, settings and last run beside it), and below, Paw Agent,
-// who can change the factory file for you. Run now starts a run in the
+// who can change the factory file for you. Run a task starts a run in the
 // background; every change to a run comes back as a `factory:run` event.
 //
 // Loaded before app.js; everything here only runs when app.js calls it.
@@ -102,7 +102,7 @@ function repeatText(r) {
 function triggerHtml(id, def) {
   const t = def.trigger ?? {};
   const rep = def.repeat && def.repeat !== false ? repeatText(def.repeat) : "";
-  if (!def.trigger && !rep) return `<label class="tk-lbl">${tx("Trigger")}</label><div class="tk-dim">${tx("Manual: Run now. Add a trigger to the file (every, at, watch, webhook or file) to start runs on their own, or repeat: true to loop.")}</div>`;
+  if (!def.trigger && !rep) return `<label class="tk-lbl">${tx("Trigger")}</label><div class="tk-dim">${tx("Manual: Run a task. Add a trigger to the file (every, at, watch, webhook or file) to start runs on their own, or repeat: true to loop.")}</div>`;
   const st = triggerOf(id);
   const rows = [];
   if (t.watch) rows.push(tx("When <code>{cmd}</code> starts succeeding (checked every {every})", { cmd: esc(t.watch), every: esc(t.every) }));
@@ -259,7 +259,7 @@ function factoryDotState(S) {
 }
 
 function factoryBanner(S) {
-  pushLine(S, { stream: "system", ts: Date.now(), text: tx("— factory {id}: ask {agent} below to change it (nodes, prompts, models, triggers). Run now runs it in the background.", { id: S.factory.id, agent: S.agent.name }) });
+  pushLine(S, { stream: "system", ts: Date.now(), text: tx("— factory {id}: ask {agent} below to change it (nodes, prompts, models, triggers). Run a task runs it in the background.", { id: S.factory.id, agent: S.agent.name }) });
 }
 
 // ---------- the prompt: Paw Agent changes the factory file ----------
@@ -275,7 +275,7 @@ trigger:           # optional: what starts runs on its own (any of these; Paw's 
   watch: "./check.sh"  # a run each time this command STARTS succeeding (it must fail in between); with watch, every is how often it's checked
   webhook: s3cret  # a run when something POSTs to http://127.0.0.1:4747/factories/<file name>; the body reaches the nodes (true: no secret); ?folder=~/path runs it in that project folder
   file: ./inbox    # a run when this file or folder changes
-parallel: 1        # optional: how many runs triggers and repeat may have going at once (default 1); Run now always starts one. Each run has its own execution id (a UUID) and can work in its own project folder
+parallel: 1        # optional: how many runs triggers and repeat may have going at once (default 1); Run a task (the view's button) always starts one. Each run has its own execution id (a UUID) and can work in its own project folder
 repeat: true       # optional: start the next run when one finishes (or { after: 10s, on_failure: continue }); a failed run stops the loop unless on_failure: continue
 nodes:             # required; ids use letters, digits, - and _
   - id: triage
@@ -386,11 +386,11 @@ function renderFactoryView(S, host) {
     (going > 1 ? ` · ${tx("{n} runs going", { n: going })}` : "") + (waiting ? ` · ${tx("{n} queued", { n: waiting })}` : "");
   const runFolderNow = f?.factory?.folder?.trim() || "~";
   const buttons = [
-    f?.factory && `<button class="tk-btn primary" data-fact="run" title="${esc(going ? tx("Start a run in {folder} (alongside the runs going)", { folder: runFolderNow }) : tx("Start a run in {folder}", { folder: runFolderNow }))}">${tx("Run now")}</button>`,
-    run?.state === "running" && `<button class="tk-btn" data-fact="stop" title="${esc(tx("Stop this run ({run})", { run: shortRunId(run.id) }))}">${tx("Stop")}</button>`,
+    f?.factory && `<button class="tk-btn primary" data-fact="run" title="${esc(going ? tx("Start a run in {folder} (alongside the runs going)", { folder: runFolderNow }) : tx("Start a run in {folder}", { folder: runFolderNow }))}">${tx("Run a task")}</button>`,
+    run?.state === "running" && `<button class="tk-btn" data-fact="stop" title="${esc(tx("Stop this task ({run})", { run: shortRunId(run.id) }))}">${tx("Stop task")}</button>`,
     f && `<button class="tk-btn" data-fact="edit" title="${esc(tildify(f.path))}">${tx("Edit file")}</button>`,
-    // Last, away from Run now: pausing stops the trigger from listening.
-    triggerOf(S.factory.id) && `<button class="tk-btn" data-fact="pause" title="${esc(triggerOf(S.factory.id).paused ? tx("Let the trigger start runs again") : tx("Stop the trigger from starting runs (Run now still works)"))}">${triggerOf(S.factory.id).paused ? tx("Resume trigger") : tx("Pause trigger")}</button>`,
+    // Last, away from Run a task: pausing stops the trigger from listening.
+    triggerOf(S.factory.id) && `<button class="tk-btn" data-fact="pause" title="${esc(triggerOf(S.factory.id).paused ? tx("Let the trigger start runs again") : tx("Stop the trigger from starting runs (Run a task still works)"))}">${triggerOf(S.factory.id).paused ? tx("Resume trigger") : tx("Pause trigger")}</button>`,
   ].filter(Boolean).join("");
   const picker = runs.length ? `<select class="tk-in fa-runs" data-fact="pick" title="${esc(tx("Show a run"))}">${
     `<option value=""${S.factory.run ? "" : " selected"}>${tx("Latest run")}</option>` +
@@ -399,7 +399,7 @@ function renderFactoryView(S, host) {
       <span class="tk-title fa-title" title="${esc([`id: ${S.factory.id}`, f?.factory?.description].filter(Boolean).join("\n"))}"><span class="fa-ico" aria-hidden="true"></span>${esc(f?.factory?.name || S.factory.id)}</span>
       <span class="tk-state st-${esc(state)}">${esc(stateText)}</span>
       ${picker}<span class="grow"></span>${buttons}
-    </div>${triggerOf(S.factory.id)?.paused ? `<div class="tk-note fa-paused-note"><span>${tx("The trigger is paused, so it isn't listening: only Run now starts runs.")}</span><button class="tk-btn primary" data-fact="pause">${tx("Resume trigger")}</button></div>` : ""}${run?.note ? `<div class="tk-note">${esc(run.note)}</div>` : ""}`;
+    </div>${triggerOf(S.factory.id)?.paused ? `<div class="tk-note fa-paused-note"><span>${tx("The trigger is paused, so it isn't listening: only Run a task starts one.")}</span><button class="tk-btn primary" data-fact="pause">${tx("Resume trigger")}</button></div>` : ""}${run?.note ? `<div class="tk-note">${esc(run.note)}</div>` : ""}`;
   let body;
   if (!f && !run) {
     body = `<div class="tk-empty">${tx("There's no factory “{id}” in {dir} any more.", { id: esc(S.factory.id), dir: esc(tildify(factoryState.dir)) })}</div>`;
@@ -776,7 +776,7 @@ function factorySummaryHtml(S, plan, f) {
         `<div class="tk-out"><div class="tk-dim">${esc(def.nodes.find((d) => d.id === n.id)?.title || n.id)}</div><div class="tk-md">${renderMarkdown(clipEnd(String(n.result ?? ""), 4000))}</div></div>`).join("")}`);
     }
   } else {
-    parts.push(`<div class="tk-hint">${tx("Click a node to see its task. Run now runs the factory in the background: it keeps going if you close the window. Nodes that don't need each other run side by side, as many as Settings › General › Agents at once allows; nodes that change files run one at a time.")}</div>`);
+    parts.push(`<div class="tk-hint">${tx("Click a node to see its task. Run a task runs the factory in the background: it keeps going if you close the window. Nodes that don't need each other run side by side, as many as Settings › General › Agents at once allows; nodes that change files run one at a time.")}</div>`);
   }
   parts.push(`<div class="tk-dim fa-path">${esc(tildify(f?.path ?? ""))}</div>`);
   return parts.join("");

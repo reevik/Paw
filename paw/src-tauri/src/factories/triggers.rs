@@ -1,4 +1,4 @@
-//! What starts factory runs besides Run now, in the background process:
+//! What starts factory runs besides Run a task, in the background process:
 //!
 //! - `every: 15m`: a run every so often (the first one `every` after Paw starts).
 //! - `at: "09:00, 17:30"`: a run at these times of day.

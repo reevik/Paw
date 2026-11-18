@@ -34,7 +34,7 @@ I18N.add("tr", {
   "Starts again when a run finishes, even a failed one": "Bir çalıştırma bittiğinde yeniden başlar, başarısız olsa bile",
   "Starts again when a run finishes; a failed run stops the loop": "Bir çalıştırma bittiğinde yeniden başlar; başarısız bir çalıştırma döngüyü durdurur",
   "Trigger": "Tetikleyici",
-  "Manual: Run now. Add a trigger to the file (every, at, watch, webhook or file) to start runs on their own, or repeat: true to loop.": "Elle: Şimdi çalıştır. Çalıştırmaların kendiliğinden başlaması için dosyaya bir tetikleyici ekleyin (every, at, watch, webhook ya da file) ya da döngü için repeat: true yazın.",
+  "Manual: Run a task. Add a trigger to the file (every, at, watch, webhook or file) to start runs on their own, or repeat: true to loop.": "Elle: Görev çalıştır. Çalıştırmaların kendiliğinden başlaması için dosyaya bir tetikleyici ekleyin (every, at, watch, webhook ya da file) ya da döngü için repeat: true yazın.",
   "When <code>{cmd}</code> starts succeeding (checked every {every})": "<code>{cmd}</code> başarılı olmaya başladığında (her {every} denetlenir)",
   "Every {every}": "Her {every}",
   "At {at}": "Saat {at}",
@@ -61,18 +61,17 @@ I18N.add("tr", {
   "for example": "örneğin",
 
   // the view's head
-  "— factory {id}: ask {agent} below to change it (nodes, prompts, models, triggers). Run now runs it in the background.": "— fabrika {id}: değiştirmek için aşağıda {agent} ile konuşun (düğümler, istemler, modeller, tetikleyiciler). Şimdi çalıştır onu arka planda çalıştırır.",
+  "— factory {id}: ask {agent} below to change it (nodes, prompts, models, triggers). Run a task runs it in the background.": "— fabrika {id}: değiştirmek için aşağıda {agent} ile konuşun (düğümler, istemler, modeller, tetikleyiciler). Görev çalıştır onu arka planda çalıştırır.",
   "Reading the factory…": "Fabrika okunuyor…",
   "can't run": "çalıştırılamaz",
   "ready": "hazır",
   "{n} queued": "{n} sırada",
   "Start a run in {folder} (alongside the runs going)": "{folder} içinde bir çalıştırma başlat (sürenlerin yanında)",
   "Start a run in {folder}": "{folder} içinde bir çalıştırma başlat",
-  "Run now": "Şimdi çalıştır",
-  "Stop this run ({run})": "Bu çalıştırmayı durdur ({run})",
+  "Run a task": "Görev çalıştır",
   "Stop": "Durdur",
   "Let the trigger start runs again": "Tetikleyicinin yeniden çalıştırma başlatmasına izin ver",
-  "Stop the trigger from starting runs (Run now still works)": "Tetikleyicinin çalıştırma başlatmasını durdur (Şimdi çalıştır yine çalışır)",
+  "Stop the trigger from starting runs (Run a task still works)": "Tetikleyicinin çalıştırma başlatmasını durdur (Görev çalıştır yine çalışır)",
   "Resume trigger": "Tetikleyiciyi sürdür",
   "Pause trigger": "Tetikleyiciyi duraklat",
   "Edit file": "Dosyayı düzenle",
@@ -210,7 +209,7 @@ I18N.add("tr", {
   "The run's execution id": "Çalıştırmanın yürütme kimliği",
   "Open its folder": "Klasörünü aç",
   "Task": "Görev",
-  "Click a node to see its task. Run now runs the factory in the background: it keeps going if you close the window. Nodes that don't need each other run side by side, as many as Settings › General › Agents at once allows; nodes that change files run one at a time.": "Görevini görmek için bir düğüme tıklayın. Şimdi çalıştır, fabrikayı arka planda çalıştırır: pencereyi kapatsanız da sürer. Birbirine ihtiyaç duymayan düğümler, Ayarlar › Genel › Aynı anda çalışan ajanlar ayarının izin verdiği kadar yan yana çalışır; dosyaları değiştiren düğümler birer birer çalışır.",
+  "Click a node to see its task. Run a task runs the factory in the background: it keeps going if you close the window. Nodes that don't need each other run side by side, as many as Settings › General › Agents at once allows; nodes that change files run one at a time.": "Görevini görmek için bir düğüme tıklayın. Görev çalıştır, fabrikayı arka planda çalıştırır: pencereyi kapatsanız da sürer. Birbirine ihtiyaç duymayan düğümler, Ayarlar › Genel › Aynı anda çalışan ajanlar ayarının izin verdiği kadar yan yana çalışır; dosyaları değiştiren düğümler birer birer çalışır.",
 
   // a node's tab
   "— {node} in run {run}: live. When it asks you something, type your answer here. —": "— {run} çalıştırmasında {node}: canlı. Size bir şey sorduğunda yanıtınızı buraya yazın. —",
@@ -236,5 +235,7 @@ I18N.add("tr", {
   "last run {when}": "son çalıştırma {when}",
   "Open this factory": "Bu fabrikayı aç",
   "Factories ({n})": "Fabrikalar ({n})",
-  "The trigger is paused, so it isn't listening: only Run now starts runs.": "Tetikleyici duraklatıldı, dinlemiyor: Çalıştırmaları yalnızca Şimdi çalıştır başlatır.",
+  "The trigger is paused, so it isn't listening: only Run a task starts one.": "Tetikleyici duraklatıldı, dinlemiyor: Yalnızca Görev çalıştır bir çalıştırma başlatır.",
+  "Stop task": "Görevi durdur",
+  "Stop this task ({run})": "Bu görevi durdur ({run})",
 });

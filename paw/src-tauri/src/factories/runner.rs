@@ -309,7 +309,7 @@ pub fn global() -> Option<Arc<Runner>> {
     GLOBAL.get().cloned()
 }
 
-/// Was this run given a task by you (Run now / Run in…, or a chat with Paw Agent)?
+/// Was this run given a task by you (Run a task, or a chat with Paw Agent)?
 pub fn has_task(trigger: &str) -> bool {
     trigger == "manual" || trigger == "chat"
 }
@@ -678,7 +678,7 @@ impl Runner {
                         r.note = if r.note.is_empty() { when } else { format!("{} {when}", r.note) };
                         repeats.push((r.factory.clone(), r.folder.clone(), r.payload.clone(), after));
                     } else {
-                        r.note = format!("{} It repeats, but stops after a failed run: fix it and press Run now.", r.note).trim().to_string();
+                        r.note = format!("{} It repeats, but stops after a failed run: fix it and press Run a task.", r.note).trim().to_string();
                     }
                 }
                 st.dirty.insert(id);
@@ -693,7 +693,7 @@ impl Runner {
             let me = self.clone();
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(after).await;
-                // Paused meanwhile, or going again in this folder (Run now): nothing to do.
+                // Paused meanwhile, or going again in this folder (Run a task): nothing to do.
                 if me.is_paused(&factory) || me.running_in(&factory, &folder) {
                     return;
                 }

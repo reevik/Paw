@@ -37,14 +37,14 @@ pub struct Factory {
     /// Approval level for nodes that change files (default: auto).
     #[serde(default)]
     pub approval: String,
-    /// What starts a run besides Run now (schedule, watch, webhook, file).
+    /// What starts a run besides Run a task (schedule, watch, webhook, file).
     #[serde(default)]
     pub trigger: Option<Trigger>,
     /// Start again when a run finishes: `true`, or `{ after: 10s, on_failure: continue }`.
     #[serde(default)]
     pub repeat: Option<Repeat>,
     /// How many runs triggers and repeat may have going at once (default 1).
-    /// Run now always starts one.
+    /// Run a task always starts one.
     #[serde(default)]
     pub parallel: Option<u32>,
     pub nodes: Vec<Node>,

@@ -237,19 +237,26 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         }
         app_menu.append(&MenuItem::with_id(app, "quit", i18n::t("Quit Paw"), true, Some("CmdOrCtrl+Q"))?)?;
     }
-    // View › Show/Hide Sidebar (⌃⌘S, the macOS convention).
+    // View: the splits (⌘D, ⌘⇧D, like iTerm2) and the two side panels (⌃⌘S,
+    // the macOS convention for a sidebar; ⌃⌘M). In the menu, the keys work
+    // wherever the focus is, an embedded terminal included, and can be found.
+    let split_row = MenuItem::with_id(app, "split-row", i18n::t("Split Side by Side"), true, Some("CmdOrCtrl+D"))?;
+    let split_col = MenuItem::with_id(app, "split-column", i18n::t("Split Stacked"), true, Some("CmdOrCtrl+Shift+D"))?;
     let toggle = MenuItem::with_id(app, "toggle-sidebar", i18n::t("Toggle Sidebar"), true, Some("Ctrl+Cmd+S"))?;
+    let panel = MenuItem::with_id(app, "toggle-panel", i18n::t("Toggle Right Panel"), true, Some("Ctrl+Cmd+M"))?;
     let view = menu
         .items()?
         .into_iter()
         .filter_map(|i| i.as_submenu().cloned())
         .find(|s| s.text().map(|t| t == "View").unwrap_or(false));
+    let sep = || PredefinedMenuItem::separator(app);
     match view {
         Some(view) => {
-            view.prepend(&PredefinedMenuItem::separator(app)?)?;
-            view.prepend(&toggle)?;
+            for item in [&sep()? as &dyn tauri::menu::IsMenuItem<tauri::Wry>, &panel, &toggle, &sep()?, &split_col, &split_row] {
+                view.prepend(item)?;
+            }
         }
-        None => menu.append(&Submenu::with_items(app, "View", true, &[&toggle])?)?,
+        None => menu.append(&Submenu::with_items(app, "View", true, &[&split_row, &split_col, &sep()?, &toggle, &panel])?)?,
     }
     Ok(menu)
 }
@@ -323,6 +330,8 @@ fn main() {
                 let _ = show_preferences(app, None);
             } else if event.id() == "toggle-sidebar" {
                 let _ = app.emit_to("main", "ui:toggle-sidebar", ());
+            } else if ["split-row", "split-column", "toggle-panel"].contains(&event.id().as_ref()) {
+                let _ = app.emit_to("main", "ui:menu", event.id().as_ref());
             } else if event.id() == "quit" {
                 // The window quits; the agents keep running in the daemon.
                 app.exit(0);

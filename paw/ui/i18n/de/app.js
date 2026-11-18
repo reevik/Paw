@@ -474,4 +474,5 @@ I18N.add("de", {
   "{n} programs": "{n} Programme",
   "{program} is on the list now (Settings › Sandbox): ask Paw Agent to try again.": "{program} steht jetzt auf der Liste (Einstellungen › Sandbox): Bitte Paw Agent, es noch einmal zu versuchen.",
   "{program} may run in this tab now: ask Paw Agent to try again.": "{program} darf in diesem Tab jetzt laufen: Bitte Paw Agent, es noch einmal zu versuchen.",
+  "delete to the start of the line · the word before the cursor": "bis zum Zeilenanfang löschen · das Wort vor dem Cursor",
 });

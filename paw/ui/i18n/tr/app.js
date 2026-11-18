@@ -474,4 +474,5 @@ I18N.add("tr", {
   "{n} programs": "{n} program",
   "{program} is on the list now (Settings › Sandbox): ask Paw Agent to try again.": "{program} artık listede (Ayarlar › Korumalı Alan): Paw Agent'tan tekrar denemesini isteyin.",
   "{program} may run in this tab now: ask Paw Agent to try again.": "{program} artık bu sekmede çalışabilir: Paw Agent'tan tekrar denemesini isteyin.",
+  "delete to the start of the line · the word before the cursor": "satır başına kadar sil · imleçten önceki sözcüğü sil",
 });

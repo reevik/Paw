@@ -871,6 +871,7 @@ function helpHtml(S) {
     row("⌘T · ⌘⇧T · ⌘W", CLI_AGENTS ? tx("new tab · new tab with another agent · close tab") : tx("new tab · new tab with another model · close tab")),
     row("⌘1–9 · ⌘⇧[ ]", tx("go to tab · previous / next tab")),
     row("⌘D · ⌘⇧D", tx("split side by side · split stacked")),
+    row("⌃U · ⌃W", tx("delete to the start of the line · the word before the cursor")),
     row("⌘⌥ arrows", tx("move between panes")),
     row("⌃⌘S · ⌃⌘M · ⌘,", tx("show / hide the sidebar (specs, factories, sessions) · the right panel (MCPs, skills) · settings")),
   );
@@ -5133,6 +5134,21 @@ function bindPane(P) {
         ta.setSelectionRange(ta.value.length, ta.value.length);
         autosize();
       }
+      // ⌃U and ⌃W, like a shell's line editing: delete from the start of the
+      // line, or the word, before the cursor (⌃A, ⌃E and ⌃K come with macOS).
+      if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && (e.key === "u" || e.key === "w")) {
+        e.preventDefault();
+        const end = ta.selectionStart;
+        const before = ta.value.slice(0, end);
+        const start = e.key === "u" ? before.lastIndexOf("\n") + 1 : before.replace(/\S+\s*$/, "").length;
+        if (start < end || ta.selectionEnd > end) {
+          ta.setSelectionRange(start, Math.max(end, ta.selectionEnd));
+          // As an edit (⌘Z undoes it), and the prompt reacts as to typing.
+          if (!document.execCommand("delete")) ta.setRangeText("", start, Math.max(end, ta.selectionEnd), "end");
+          ta.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+        return;
+      }
       // Ctrl-C with nothing selected interrupts, like a terminal.
       if (e.ctrlKey && e.key === "c" && S && ta.selectionStart === ta.selectionEnd) {
         e.preventDefault();
@@ -5290,6 +5306,12 @@ const toggleSidebar = () => setSidebar(!sidebarVisible());
 $("sidebar-toggle").onclick = toggleSidebar;
 // ⌃⌘S is a menu accelerator (View › Toggle Sidebar); the menu forwards it here.
 listen("ui:toggle-sidebar", toggleSidebar);
+// The View menu's splits and right panel (their keys are the menu's, so they work wherever the focus is).
+listen("ui:menu", ({ payload: id }) => {
+  if (id === "split-row") splitPane("row");
+  else if (id === "split-column") splitPane("column");
+  else if (id === "toggle-panel") setPanel(!panel.open);
+});
 try { setSidebar(localStorage.getItem("paw.sidebar") !== "0", false); } catch { setSidebar(true, false); }
 
 // ---------- side panels give way to the prompt ----------
@@ -5371,7 +5393,9 @@ $("settings-btn").onclick = () => invoke("open_preferences", {});
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") closeMenu();
   if (!e.metaKey) return;
-  if (e.ctrlKey && (e.key === "m" || e.key === "M")) { e.preventDefault(); setPanel(!panel.open); return; }
+  // ⌘D, ⌘⇧D and ⌃⌘M come from the View menu (ui:menu), like ⌃⌘S: handling them
+  // here too would act twice. Without a native menu (a browser), they're handled here.
+  if (!window.__TAURI_INTERNALS__ && e.ctrlKey && (e.key === "m" || e.key === "M")) { e.preventDefault(); setPanel(!panel.open); return; }
   // ⌘+ (also ⌘= without shift) / ⌘− / ⌘0: the transcript's font size, or a
   // factory diagram's zoom while the pointer is over it.
   if (!e.ctrlKey && !e.altKey && ["=", "+", "-", "_", "0"].includes(e.key)) {
@@ -5383,7 +5407,7 @@ document.addEventListener("keydown", (e) => {
   const S = curS();
   if (e.altKey && e.key.startsWith("Arrow")) { e.preventDefault(); focusNeighbour(e.key); return; }
   if (e.key === ",") { e.preventDefault(); invoke("open_preferences", {}); }
-  else if (e.key === "d" || e.key === "D") { e.preventDefault(); splitPane(e.shiftKey ? "column" : "row"); }
+  else if ((e.key === "d" || e.key === "D") && !window.__TAURI_INTERNALS__) { e.preventDefault(); splitPane(e.shiftKey ? "column" : "row"); }
   else if (e.key === "t" || e.key === "n") { e.preventDefault(); e.shiftKey ? openMenu() : newSession(); }
   else if (e.key === "w" && S) { e.preventDefault(); closeSession(S.sid); }
   else if (e.key === "k" && S) { e.preventDefault(); S.lines = []; renderOutput(); }

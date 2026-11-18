@@ -51,6 +51,13 @@ impl Drop for Tmp {
 }
 
 #[test]
+fn the_language_rule_keeps_exact_markers() {
+    let r = language_rule("German");
+    assert!(r.contains("The user's language is German"));
+    assert!(r.contains("exactly as given"), "factory markers like VERDICT: approved stay as written");
+}
+
+#[test]
 fn a_run_from_a_chat_works_in_the_tabs_folder_unless_its_home() {
     let home = PathBuf::from(std::env::var("HOME").unwrap());
     assert_eq!(factory_folder(Path::new("/work/app"), ""), Some("/work/app".into()));

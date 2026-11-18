@@ -34,6 +34,7 @@ function selectTab(tab) {
   try { localStorage.setItem("paw.prefsTab", tab); } catch {}
 }
 window.selectTab = selectTab;
+document.title = tx("Settings");
 document.querySelectorAll("#ptabs button").forEach((b) => (b.onclick = () => selectTab(b.dataset.tab)));
 
 // ---------- saving ----------
@@ -61,6 +62,7 @@ function renderGeneral() {
   $("g-max-sessions").value = settings.general.max_sessions ?? 50;
   $("g-max-agents").value = settings.general.max_agents ?? 3;
   $("g-max-waiting").value = settings.general.max_waiting ?? 20;
+  $("g-language").value = I18N.pick(settings.general.language);
   showSessionCount();
   $("g-mode").value = settings.general.input_mode || "auto";
   $("g-approval").value = settings.general.approval || "edits";
@@ -72,7 +74,7 @@ function renderGeneral() {
     pick.innerHTML = "";
     for (const a of sortedAgents().filter((a) => a.enabled)) {
       const d = detections[a.id];
-      pick.appendChild(new Option(a.name + (d && !d.installed ? " (not installed)" : ""), a.id));
+      pick.appendChild(new Option(d && !d.installed ? tx("{name} (not installed)", { name: a.name }) : a.name, a.id));
     }
     pick.value = settings.general.default_agent ?? "";
     if (!pick.value && pick.options.length) pick.value = pick.options[0].value;
@@ -87,8 +89,8 @@ $("g-share-shell").addEventListener("change", (e) => { settings.general.share_sh
 // Shell history size
 async function showHistoryCount() {
   const n = (await invoke("history_list")).length;
-  $("g-history-hint").textContent =
-    `${n} command${n === 1 ? "" : "s"} saved. Shared by all tabs and kept between launches. 0 turns it off.`;
+  $("g-history-hint").textContent = tx(n === 1 ? "{n} command saved." : "{n} commands saved.", { n }) + " " +
+    tx("Shared by all tabs and kept between launches. 0 turns it off.");
 }
 let trimTimer = null;
 $("g-history").addEventListener("input", (e) => {
@@ -100,7 +102,7 @@ $("g-history").addEventListener("input", (e) => {
   trimTimer = setTimeout(async () => { await invoke("history_trim"); showHistoryCount(); }, 500);
 });
 $("g-history-clear").onclick = async () => {
-  if (!confirm("Clear the shell history for all tabs? This can't be undone.")) return;
+  if (!confirm(tx("Clear the shell history for all tabs? This can't be undone."))) return;
   await invoke("history_clear");
   showHistoryCount();
 };
@@ -112,13 +114,22 @@ async function showSessionCount() {
     const open = new Set((ws?.tabs ?? []).map((t) => t.id).filter(Boolean));
     const closed = list.filter((x) => !open.has(x.id));
     const mb = closed.reduce((n, x) => n + x.size, 0) / 1048576;
-    $("g-sessions-hint").textContent = `${closed.length} closed session${closed.length === 1 ? "" : "s"} kept (${mb < 0.1 ? "<0.1" : mb.toFixed(1)} MB). ` +
-      "A tab's folder (~/.paw/session) stays after you close it, so /sessions can reopen it. Beyond this number the oldest go first. 0 keeps all.";
+    const size = mb < 0.1 ? "<0.1" : mb.toLocaleString(I18N.locale(), { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+    $("g-sessions-hint").textContent =
+      tx(closed.length === 1 ? "{n} closed session kept ({mb} MB)." : "{n} closed sessions kept ({mb} MB).", { n: closed.length, mb: size }) + " " +
+      tx("A tab's folder (~/.paw/session) stays after you close it, so /sessions can reopen it. Beyond this number the oldest go first. 0 keeps all.");
   } catch { /* keep the plain hint */ }
 }
 $("g-max-agents").addEventListener("input", (e) => {
   settings.general.max_agents = Math.max(0, Math.min(20, Math.floor(Number(e.target.value) || 0)));
   save();
+});
+// The language: saved, then this window and Paw's main window show it.
+$("g-language").addEventListener("change", async (e) => {
+  settings.general.language = I18N.pick(e.target.value);
+  I18N.remember(settings.general.language);
+  await saveNow().catch(() => {});
+  location.reload();
 });
 $("g-max-waiting").addEventListener("input", (e) => {
   settings.general.max_waiting = Math.max(0, Math.min(1000, Math.floor(Number(e.target.value) || 0)));
@@ -227,9 +238,9 @@ const cliAgents = () => sortedAgents().filter((a) => a.io !== "paw");
 // Deprecated: CLI agents (CLI_AGENTS).
 function statusText(a) {
   const d = detections[a.id];
-  if (!d) return "Checking…";
-  if (!d.installed) return "Not installed";
-  return d.version ? d.version.slice(0, 40) : "Installed";
+  if (!d) return tx("Checking…");
+  if (!d.installed) return tx("Not installed");
+  return d.version ? d.version.slice(0, 40) : tx("Installed");
 }
 
 /** Each provider, with its models below it. */
@@ -245,18 +256,18 @@ function renderList() {
     return li;
   };
   const views = providerViews();
-  if (!views) row("alist-note", "Looking for models…");
+  if (!views) row("alist-note", esc(tx("Looking for models…")));
   for (const v of views ?? []) {
     const on = sel?.kind === "provider" && sel.id === v.id;
     row(`alist-prov${on ? " active" : ""}`,
-      `<span class="pdot${v.connected ? " ok" : ""}" title="${v.connected ? "Connected" : "Not connected"}"></span>` +
+      `<span class="pdot${v.connected ? " ok" : ""}" title="${esc(v.connected ? tx("Connected") : tx("Not connected"))}"></span>` +
       `<div class="meta"><div class="nm">${esc(providerName(v.id))}</div></div>`,
       () => select("provider", v.id)).title = v.status;
     for (const m of providerModels(v.id)) {
       const id = `${v.id}/${m}`;
       const active = sel?.kind === "model" && sel.id === id;
       row(`alist-model${active ? " active" : ""}${isHidden(id) ? " dimmed" : ""}`,
-        `<div class="meta"><div class="nm" title="${esc(m)}">${esc(m)}</div></div>${isDefault(id) ? `<span class="tag">Default</span>` : ""}`,
+        `<div class="meta"><div class="nm" title="${esc(m)}">${esc(m)}</div></div>${isDefault(id) ? `<span class="tag">${esc(tx("Default"))}</span>` : ""}`,
         () => select("model", id));
     }
   }
@@ -314,10 +325,10 @@ function renderHead(provider, title) {
 function renderProvider(p) {
   const v = providerView(p);
   renderHead(p, providerName(p));
-  $("d-status").innerHTML = `<span class="${v?.connected ? "ok" : "missing"}">●</span><span>${esc(v?.status ?? "Checking…")}</span>`;
+  $("d-status").innerHTML = `<span class="${v?.connected ? "ok" : "missing"}">●</span><span>${esc(v?.status ?? tx("Checking…"))}</span>`;
   renderConnection(p);
 
-  $("d-msrc").textContent = v?.connected ? "" : "In the menus once it's connected";
+  $("d-msrc").textContent = v?.connected ? "" : tx("In the menus once it's connected");
   const ul = $("d-models");
   ul.innerHTML = "";
   const custom = customModels(p);
@@ -326,9 +337,9 @@ function renderProvider(p) {
     const li = document.createElement("li");
     li.innerHTML = `
       <span class="lbl">${esc(m)}</span>
-      ${isDefault(id) ? `<span class="tag">Default</span>` : ""}
-      ${isHidden(id) ? `<span class="tag">Hidden</span>` : ""}
-      ${custom.includes(m) ? `<button class="rm" title="Remove">×</button>` : ""}`;
+      ${isDefault(id) ? `<span class="tag">${esc(tx("Default"))}</span>` : ""}
+      ${isHidden(id) ? `<span class="tag">${esc(tx("Hidden"))}</span>` : ""}
+      ${custom.includes(m) ? `<button class="rm" title="${esc(tx("Remove"))}">×</button>` : ""}`;
     li.onclick = (e) => { if (!e.target.classList.contains("rm")) select("model", id); };
     const rm = li.querySelector(".rm");
     if (rm) rm.onclick = () => {
@@ -342,8 +353,8 @@ function renderProvider(p) {
     ul.appendChild(li);
   }
   if (!ul.children.length) {
-    const none = v?.available?.length ? "None yet: add the ones you want below." : "No models found yet.";
-    ul.innerHTML = `<li><span class="lbl plain">${none}</span></li>`;
+    const none = v?.available?.length ? tx("None yet: add the ones you want below.") : tx("No models found yet.");
+    ul.innerHTML = `<li><span class="lbl plain">${esc(none)}</span></li>`;
   }
   renderAvailable(p);
 }
@@ -356,7 +367,7 @@ function renderAvailable(p) {
   $("d-avail").classList.toggle("hidden", !all.length);
   if (availableFor !== p) { availableFor = p; $("d-msearch").value = ""; }
   if (!all.length) return;
-  $("d-msearch").placeholder = `Search ${all.length} models…`;
+  $("d-msearch").placeholder = tx("Search {n} models…", { n: all.length });
   const q = $("d-msearch").value.trim().toLowerCase();
   const hits = q ? all.filter((m) => m.toLowerCase().includes(q)) : all;
   const added = new Set(customModels(p));
@@ -365,10 +376,10 @@ function renderAvailable(p) {
   ul.innerHTML = hits.slice(0, AVAILABLE_ROWS).map((m) => {
     const on = added.has(m);
     return `<li><span class="lbl" title="${esc(m)}">${esc(m)}</span>` +
-      `<button class="btn-ghost small${on ? " added" : ""}" type="button" data-model="${esc(m)}">${on ? "Added" : "Add"}</button></li>`;
-  }).join("") || `<li><span class="lbl plain">No model matches.</span></li>`;
+      `<button class="btn-ghost small${on ? " added" : ""}" type="button" data-model="${esc(m)}">${esc(on ? tx("Added") : tx("Add"))}</button></li>`;
+  }).join("") || `<li><span class="lbl plain">${esc(tx("No model matches."))}</span></li>`;
   ul.scrollTop = top;
-  $("d-mavail-note").textContent = hits.length > AVAILABLE_ROWS ? `Showing ${AVAILABLE_ROWS} of ${hits.length}: narrow the search.` : "";
+  $("d-mavail-note").textContent = hits.length > AVAILABLE_ROWS ? tx("Showing {shown} of {n}: narrow the search.", { shown: AVAILABLE_ROWS, n: hits.length }) : "";
 }
 $("d-msearch").addEventListener("input", () => { if (sel?.kind === "provider") renderAvailable(sel.id); });
 $("d-mavail").addEventListener("click", (e) => {
@@ -388,9 +399,9 @@ function renderNewProvider() {
   $("d-avatar").className = "avatar off";
   $("d-avatar").setAttribute("style", avatarStyle("new-provider"));
   $("d-avatar").textContent = "+";
-  $("d-name").value = "New Provider";
+  $("d-name").value = tx("New Provider");
   $("d-name").readOnly = true;
-  $("d-status").innerHTML = `<span>Any service with an OpenAI-compatible API</span>`;
+  $("d-status").innerHTML = `<span>${esc(tx("Any service with an OpenAI-compatible API"))}</span>`;
 }
 $("a-addprov").onclick = () => {
   $("d-np-form").reset();
@@ -403,7 +414,7 @@ $("d-np-form").addEventListener("submit", async (e) => {
   const name = $("d-np-name").value.trim();
   const base_url = $("d-np-baseurl").value.trim();
   const key = $("d-np-apikey").value.trim();
-  if (!name || !base_url) { $("d-np-status").textContent = "It needs a name and a base URL."; return; }
+  if (!name || !base_url) { $("d-np-status").textContent = tx("It needs a name and a base URL."); return; }
   const id = newProviderId(name);
   settings.providers ??= {};
   (settings.providers.custom ??= []).push({ id, name, base_url, custom_models: [] });
@@ -411,7 +422,7 @@ $("d-np-form").addEventListener("submit", async (e) => {
     // The key command only takes providers in the saved settings.
     await saveNow();
     if (key) await invoke("paw_key_set", { provider: id, key });
-  } catch (err) { alert(`Couldn't save the key: ${err}`); }
+  } catch (err) { alert(tx("Couldn't save the key: {error}", { error: err })); }
   await refreshKeyStatus();
   select("provider", id);
   rescan();
@@ -421,15 +432,15 @@ function renderModel(id) {
   const p = providerOf(id);
   const connected = !!providerView(p)?.connected;
   renderHead(p, shortName(id));
-  $("d-status").innerHTML = `<span>${esc(providerName(p))}</span>${connected ? "" : `<span class="missing">· not connected</span>`}`;
+  $("d-status").innerHTML = `<span>${esc(providerName(p))}</span>${connected ? "" : `<span class="missing">${esc(tx("· not connected"))}</span>`}`;
   const hidden = isHidden(id);
   const def = isDefault(id);
   $("d-m-shown").checked = !hidden;
-  $("d-m-default").textContent = def ? "Default model for new sessions" : "Use for new sessions";
+  $("d-m-default").textContent = def ? tx("Default model for new sessions") : tx("Use for new sessions");
   $("d-m-default").disabled = def;
   $("d-m-default-hint").textContent = !def ? ""
-    : hidden ? "It's hidden from the menus, so new sessions start with the first model there."
-    : !connected ? "Its provider isn't connected, so new sessions start with the first model in the menus."
+    : hidden ? tx("It's hidden from the menus, so new sessions start with the first model there.")
+    : !connected ? tx("Its provider isn't connected, so new sessions start with the first model in the menus.")
     : "";
 }
 $("d-m-shown").addEventListener("change", (e) => {
@@ -474,15 +485,15 @@ function renderAgent(a) {
   $("d-name").readOnly = a.builtin;
   $("d-enabled").checked = a.enabled;
 
-  if (!d) $("d-status").innerHTML = `<span class="missing">Checking…</span>`;
-  else if (!d.installed) $("d-status").innerHTML = `<span class="missing">Not found on your PATH</span> <span>· looked for <code>${esc(a.binary)}</code></span>`;
-  else $("d-status").innerHTML = `<span class="ok">● Installed</span>${d.version ? `<span>· ${esc(d.version)}</span>` : ""}<span>· <code>${esc(d.path)}</code></span>`;
+  if (!d) $("d-status").innerHTML = `<span class="missing">${esc(tx("Checking…"))}</span>`;
+  else if (!d.installed) $("d-status").innerHTML = `<span class="missing">${esc(tx("Not found on your PATH"))}</span> <span>${tx("· looked for {binary}", { binary: `<code>${esc(a.binary)}</code>` })}</span>`;
+  else $("d-status").innerHTML = `<span class="ok">● ${esc(tx("Installed"))}</span>${d.version ? `<span>· ${esc(d.version)}</span>` : ""}<span>· <code>${esc(d.path)}</code></span>`;
 
   // Models
-  $("d-msrc").textContent = d ? (d.installed ? `Source: ${d.models_source}` : "") : "";
+  $("d-msrc").textContent = d ? (d.installed ? tx("Source: {source}", { source: d.models_source }) : "") : "";
   const ul = $("d-models");
   ul.innerHTML = "";
-  if (!needsModel(a)) ul.appendChild(modelRow(a, "", "Let the CLI decide", { plain: true }));
+  if (!needsModel(a)) ul.appendChild(modelRow(a, "", tx("Let the CLI decide"), { plain: true }));
   for (const m of allModels(a)) {
     ul.appendChild(modelRow(a, m, m, {
       configured: d?.configured_model === m,
@@ -501,7 +512,7 @@ function renderAgent(a) {
   for (const l of ["ask", "edits", "auto", "plan", "full"]) $(`d-ap-${l}`).value = a.approvals?.[l] ?? "";
   $("d-pattern").value = a.session_pattern || "";
   document.querySelectorAll(".d-session-only").forEach((el) => el.classList.toggle("hidden", (a.continuity || "replay") !== "session"));
-  $("d-reset").textContent = a.builtin ? "Restore Defaults" : "Remove Agent";
+  $("d-reset").textContent = a.builtin ? tx("Restore Defaults") : tx("Remove Agent");
   updatePreview();
 }
 
@@ -512,9 +523,9 @@ function modelRow(a, value, label, { plain, configured, custom } = {}) {
   li.innerHTML = `
     <input type="radio" name="defmodel" ${checked ? "checked" : ""} />
     <span class="lbl ${plain ? "plain" : ""}">${esc(label)}</span>
-    ${checked ? `<span class="tag">Default</span>` : ""}
-    ${configured ? `<span class="tag cfg" title="Set in the CLI's own config">CLI config</span>` : ""}
-    ${custom ? `<button class="rm" title="Remove">×</button>` : ""}`;
+    ${checked ? `<span class="tag">${esc(tx("Default"))}</span>` : ""}
+    ${configured ? `<span class="tag cfg" title="${esc(tx("Set in the CLI's own config"))}">${esc(tx("CLI config"))}</span>` : ""}
+    ${custom ? `<button class="rm" title="${esc(tx("Remove"))}">×</button>` : ""}`;
   li.onclick = (e) => {
     if (e.target.classList.contains("rm")) return;
     a.default_model = value || null;
@@ -584,7 +595,7 @@ function renderConnection(p) {
   // (the API tab); Copilot's and ChatGPT's come with the account.
   $("d-baseurl").value = providerConfig("ollama").base_url || "";
   $("d-baseurl").placeholder = "http://localhost:11434";
-  $("d-baseurl-hint").textContent = "Leave empty for the Ollama on this Mac.";
+  $("d-baseurl-hint").textContent = tx("Leave empty for the Ollama on this Mac.");
   $("d-api-baseurl").value = providerConfig("anthropic").base_url || "";
   for (const k of ["anthropic", "copilot", "chatgpt", "openrouter", "compatible"]) {
     document.querySelectorAll(`.d-${k}-only`).forEach((el) => el.classList.toggle("hidden", kind !== k));
@@ -615,12 +626,12 @@ let openrouterTab = "signin"; // the Login tab the user picked, while Settings i
 function renderOpenRouter() {
   const hasKey = !!keyStatus?.openrouter;
   $("d-or-status").textContent = openrouterError;
-  $("d-or-signin").textContent = hasKey ? "Sign In Again" : "Sign in with OpenRouter";
+  $("d-or-signin").textContent = hasKey ? tx("Sign In Again") : tx("Sign in with OpenRouter");
   $("d-or-signin").disabled = openrouterSigningIn;
   $("d-or-cancel").classList.toggle("hidden", !openrouterSigningIn);
   $("d-or-signout").classList.toggle("hidden", !hasKey || openrouterSigningIn);
   if (!openrouterSigningIn) $("d-or-waiting").classList.add("hidden");
-  $("d-or-keystatus").textContent = hasKey ? "A key is saved in your Keychain." : "";
+  $("d-or-keystatus").textContent = hasKey ? tx("A key is saved in your Keychain.") : "";
   $("d-or-keydel").disabled = !hasKey;
   showLoginTab($("d-or-tabs"), openrouterTab);
 }
@@ -636,7 +647,7 @@ $("d-or-signin").onclick = async () => {
   try {
     await invoke("paw_openrouter_sign_in");
   } catch (err) {
-    openrouterError = cancelled(err) ? "" : `Couldn't sign in: ${err}`;
+    openrouterError = cancelled(err) ? "" : tx("Couldn't sign in: {error}", { error: err });
   }
   openrouterSigningIn = false;
   await refreshKeyStatus();
@@ -644,7 +655,7 @@ $("d-or-signin").onclick = async () => {
 };
 $("d-or-cancel").onclick = () => invoke("paw_openrouter_cancel_sign_in").catch(() => {});
 $("d-or-signout").onclick = async () => {
-  if (!confirm("Sign Paw out of OpenRouter? This removes its key from your Keychain.")) return;
+  if (!confirm(tx("Sign Paw out of OpenRouter? This removes its key from your Keychain."))) return;
   openrouterError = "";
   try { await invoke("paw_key_delete", { provider: "openrouter" }); } catch (err) { openrouterError = String(err); }
   await refreshKeyStatus();
@@ -660,10 +671,10 @@ let chatgptSigningIn = false;
 let chatgptError = "";
 function renderChatGPT() {
   const st = chatgptStatus;
-  const text = chatgptError || (st?.signed_in && !chatgptSigningIn ? `Signed in${st.login ? ` as ${st.login}` : ""}.` : "");
+  const text = chatgptError || (st?.signed_in && !chatgptSigningIn ? (st.login ? tx("Signed in as {login}.", { login: st.login }) : tx("Signed in.")) : "");
   $("d-gpt-status").textContent = text;
   $("d-gpt-status").classList.toggle("hidden", !text);
-  $("d-gpt-signin").textContent = st?.signed_in ? "Sign In Again" : "Sign in with ChatGPT";
+  $("d-gpt-signin").textContent = st?.signed_in ? tx("Sign In Again") : tx("Sign in with ChatGPT");
   $("d-gpt-signin").disabled = chatgptSigningIn;
   $("d-gpt-cancel").classList.toggle("hidden", !chatgptSigningIn);
   $("d-gpt-signout").classList.toggle("hidden", !st?.signed_in || chatgptSigningIn);
@@ -693,7 +704,7 @@ $("d-gpt-signin").onclick = async () => {
   try {
     await invoke("paw_chatgpt_sign_in");
   } catch (err) {
-    chatgptError = cancelled(err) ? "" : `Couldn't sign in: ${err}`;
+    chatgptError = cancelled(err) ? "" : tx("Couldn't sign in: {error}", { error: err });
   }
   chatgptSigningIn = false;
   await refreshKeyStatus();
@@ -701,7 +712,7 @@ $("d-gpt-signin").onclick = async () => {
 };
 $("d-gpt-cancel").onclick = () => invoke("paw_chatgpt_cancel_sign_in").catch(() => {});
 $("d-gpt-signout").onclick = async () => {
-  if (!confirm("Sign Paw out of ChatGPT?")) return;
+  if (!confirm(tx("Sign Paw out of ChatGPT?"))) return;
   chatgptError = "";
   try { await invoke("paw_chatgpt_sign_out"); } catch (err) { chatgptError = String(err); }
   await refreshKeyStatus();
@@ -716,7 +727,7 @@ function renderCompatible(p) {
   for (const [id, value] of [["d-cu-name", c.name], ["d-cu-baseurl", c.base_url]]) {
     if (document.activeElement !== $(id)) $(id).value = value ?? "";
   }
-  $("d-cu-keystatus").textContent = keyStatus?.[p] ? "A key is saved in your Keychain." : "No key: requests go without one.";
+  $("d-cu-keystatus").textContent = keyStatus?.[p] ? tx("A key is saved in your Keychain.") : tx("No key: requests go without one.");
   $("d-cu-keydel").disabled = !keyStatus?.[p];
 }
 $("d-cu-name").addEventListener("input", (e) => {
@@ -736,7 +747,7 @@ $("d-cu-baseurl").addEventListener("input", (e) => {
 for (const id of ["d-cu-name", "d-cu-baseurl"]) $(id).addEventListener("change", () => rescan());
 $("d-cu-remove").onclick = async () => {
   const c = customEntry(sel?.id);
-  if (!c || !confirm(`Remove “${providerName(c.id)}”? Its API key goes from your Keychain too.`)) return;
+  if (!c || !confirm(tx("Remove “{name}”? Its API key goes from your Keychain too.", { name: providerName(c.id) }))) return;
   // The key command only takes providers in the saved settings: delete the key first.
   if (keyStatus?.[c.id]) {
     try { await invoke("paw_key_delete", { provider: c.id }); } catch (err) { $("d-cu-keystatus").textContent = String(err); return; }
@@ -760,14 +771,14 @@ let copilotSigningIn = false;
 let copilotError = "";
 function renderCopilot() {
   const st = copilotStatus;
-  const who = st?.login ? ` as ${st.login}` : "";
   $("d-cp-status").textContent = copilotError ? copilotError
-    : st == null ? "Checking…"
-    : copilotSigningIn ? "Waiting for you to approve Paw on GitHub…"
-    : st.signed_in ? `Signed in to GitHub${who}. Paw Agent uses this sign-in.`
-    : st.cli ? `Not signed in. Paw Agent uses Copilot CLI's sign-in (${st.cli}) for now.`
-    : "Not signed in, and Copilot CLI isn't signed in either.";
-  $("d-cp-signin").textContent = st?.signed_in ? "Sign In Again" : "Sign in with GitHub";
+    : st == null ? tx("Checking…")
+    : copilotSigningIn ? tx("Waiting for you to approve Paw on GitHub…")
+    : st.signed_in ? (st.login ? tx("Signed in to GitHub as {login}. Paw Agent uses this sign-in.", { login: st.login })
+      : tx("Signed in to GitHub. Paw Agent uses this sign-in."))
+    : st.cli ? tx("Not signed in. Paw Agent uses Copilot CLI's sign-in ({cli}) for now.", { cli: st.cli })
+    : tx("Not signed in, and Copilot CLI isn't signed in either.");
+  $("d-cp-signin").textContent = st?.signed_in ? tx("Sign In Again") : tx("Sign in with GitHub");
   $("d-cp-signin").disabled = copilotSigningIn;
   $("d-cp-cancel").classList.toggle("hidden", !copilotSigningIn);
   $("d-cp-signout").classList.toggle("hidden", !st?.signed_in || copilotSigningIn);
@@ -787,7 +798,7 @@ $("d-cp-signin").onclick = async () => {
   try {
     await invoke("paw_copilot_sign_in");
   } catch (err) {
-    copilotError = String(err) === "Sign-in cancelled." ? "" : `Couldn't sign in: ${err}`;
+    copilotError = String(err) === "Sign-in cancelled." ? "" : tx("Couldn't sign in: {error}", { error: err });
   }
   copilotSigningIn = false;
   await refreshKeyStatus();
@@ -799,7 +810,7 @@ $("d-cp-open").onclick = (e) => {
   if (e.target.dataset.url) invoke("open_url", { url: e.target.dataset.url }).catch(() => {});
 };
 $("d-cp-signout").onclick = async () => {
-  if (!confirm("Sign Paw out of GitHub Copilot? Paw Agent then uses Copilot CLI's sign-in, if there is one.")) return;
+  if (!confirm(tx("Sign Paw out of GitHub Copilot? Paw Agent then uses Copilot CLI's sign-in, if there is one."))) return;
   copilotError = "";
   try { await invoke("paw_copilot_sign_out"); } catch (err) { copilotError = String(err); }
   await refreshKeyStatus();
@@ -814,7 +825,7 @@ function renderClaude() {
   // Only a failed sign-in needs words; the buttons show the rest.
   $("d-cl-status").textContent = claudeError;
   $("d-cl-status").classList.toggle("hidden", !claudeError);
-  $("d-cl-signin").textContent = st?.signed_in ? "Sign In Again" : "Sign in with Claude";
+  $("d-cl-signin").textContent = st?.signed_in ? tx("Sign In Again") : tx("Sign in with Claude");
   $("d-cl-signin").disabled = claudeSigningIn;
   $("d-cl-cancel").classList.toggle("hidden", !claudeSigningIn);
   $("d-cl-signout").classList.toggle("hidden", !st?.signed_in || claudeSigningIn);
@@ -832,7 +843,7 @@ $("d-cl-signin").onclick = async () => {
   try {
     await invoke("paw_claude_sign_in");
   } catch (err) {
-    claudeError = String(err) === "Sign-in cancelled." ? "" : `Couldn't sign in: ${err}`;
+    claudeError = String(err) === "Sign-in cancelled." ? "" : tx("Couldn't sign in: {error}", { error: err });
   }
   claudeSigningIn = false;
   await refreshKeyStatus();
@@ -844,7 +855,7 @@ $("d-cl-open").onclick = (e) => {
   if (e.target.dataset.url) invoke("open_url", { url: e.target.dataset.url }).catch(() => {});
 };
 $("d-cl-signout").onclick = async () => {
-  if (!confirm("Sign Paw out of Claude? Paw Agent then uses the next key or sign-in Key from finds.")) return;
+  if (!confirm(tx("Sign Paw out of Claude? Paw Agent then uses the next key or sign-in Key from finds."))) return;
   claudeError = "";
   try { await invoke("paw_claude_sign_out"); } catch (err) { claudeError = String(err); }
   await refreshKeyStatus();
@@ -864,10 +875,10 @@ function renderKeySources() {
     o.value = value; o.textContent = text; o.disabled = disabled;
     pick.appendChild(o);
   };
-  add("", keySources == null ? "Automatic (looking…)" : usable.length ? `Automatic — ${name(usable[0])}` : "Automatic — no usable key or sign-in found yet");
+  add("", keySources == null ? tx("Automatic (looking…)") : usable.length ? tx("Automatic — {source}", { source: name(usable[0]) }) : tx("Automatic — no usable key or sign-in found yet"));
   for (const k of usable) add(k.id, name(k));
   // A saved choice that isn't there any more stays visible, so it can be changed.
-  if (keySource && !usable.some((k) => k.id === keySource)) add(keySource, `${keySource} (not found now)`);
+  if (keySource && !usable.some((k) => k.id === keySource)) add(keySource, tx("{source} (not found now)", { source: keySource }));
   pick.value = keySource || "";
   const fill = (ul, items) => {
     ul.innerHTML = "";
@@ -915,12 +926,12 @@ function keyForm(form, input, del, status, provider) {
     try {
       await invoke("paw_key_set", { provider: provider(), key });
       $(input).value = "";
-    } catch (err) { $(status).textContent = `Couldn't save the key: ${err}`; return; }
+    } catch (err) { $(status).textContent = tx("Couldn't save the key: {error}", { error: err }); return; }
     await refreshKeyStatus();
     rescan();
   });
   $(del).onclick = async () => {
-    if (!confirm(`Remove the ${providerName(provider())} API key from your Keychain?`)) return;
+    if (!confirm(tx("Remove the {provider} API key from your Keychain?", { provider: providerName(provider()) }))) return;
     try { await invoke("paw_key_delete", { provider: provider() }); } catch (err) { $(status).textContent = String(err); return; }
     await refreshKeyStatus();
     rescan();
@@ -940,7 +951,7 @@ function renderAllowed(agentId) {
   for (const r of rules) {
     const li = document.createElement("li");
     const folder = r.folder.replace(/^\/Users\/[^/]+/, "~");
-    li.innerHTML = `<code title="${esc(r.label)}">${esc(r.label)}</code><span class="dim" title="${esc(folder)}">${esc(folder)}</span><button class="icon-btn" title="Remove">×</button>`;
+    li.innerHTML = `<code title="${esc(r.label)}">${esc(r.label)}</code><span class="dim" title="${esc(folder)}">${esc(folder)}</span><button class="icon-btn" title="${esc(tx("Remove"))}">×</button>`;
     li.querySelector("button").onclick = () => {
       settings.allow_rules = settings.allow_rules.filter((x) => x !== r);
       save();
@@ -996,7 +1007,7 @@ if (CLI_AGENTS) {
       const def = await invoke("reset_agent", { id: a.id });
       if (def) Object.assign(a, def);
     } else {
-      if (!confirm(`Remove “${a.name}”?`)) return;
+      if (!confirm(tx("Remove “{name}”?", { name: a.name }))) return;
       settings.agents = settings.agents.filter((x) => x.id !== a.id);
       sel = defaultSelection();
     }
@@ -1009,7 +1020,7 @@ if (CLI_AGENTS) {
   $("a-add").onclick = () => {
     const id = "custom-" + Math.random().toString(36).slice(2, 8);
     settings.agents.push({
-      id, name: "New Agent", binary: "my-agent", template: "{bin} {prompt}", io: "text",
+      id, name: tx("New Agent"), binary: "my-agent", template: "{bin} {prompt}", io: "text",
       enabled: true, builtin: false, default_model: null, custom_models: [],
     });
     sel = { kind: "agent", id };
@@ -1110,8 +1121,8 @@ function renderFont() {
   $("ap-line-height").style.setProperty("--fill", `${((lh - 1.2) / 1.0) * 100}%`);
   const ok = !name.trim() || fontInstalled(name.trim());
   $("ap-font-hint").textContent = ok
-    ? "For the transcript, the prompt and the terminal view. Empty: the system's monospace (SF Mono)."
-    : `“${name.trim()}” isn't installed, so SF Mono is used. Install it, or pick one from the list.`;
+    ? tx("For the transcript, the prompt and the terminal view. Empty: the system's monospace (SF Mono).")
+    : tx("“{name}” isn't installed, so SF Mono is used. Install it, or pick one from the list.", { name: name.trim() });
   $("ap-font-hint").classList.toggle("warn", !ok);
   const pv = $("ap-font-preview").style;
   pv.setProperty("--pv-family", name.trim() ? `"${name.trim().replace(/["\\]/g, "")}", ${MONO}` : MONO);
@@ -1150,16 +1161,16 @@ function renderAppearance() {
     row.innerHTML = "";
     const themes = T.allThemes(settings).filter((t) => t.appearance === mode);
     const groups = [
-      ["Default", themes.filter((t) => t.id === `paw-${mode}`)],
-      ["Custom", themes.filter((t) => !t.builtin)],
-      ["Built-in", themes.filter((t) => t.builtin && t.id !== `paw-${mode}`)],
+      [tx("Default"), themes.filter((t) => t.id === `paw-${mode}`)],
+      [tx("Custom"), themes.filter((t) => !t.builtin)],
+      [tx("Built-in"), themes.filter((t) => t.builtin && t.id !== `paw-${mode}`)],
     ];
     const selected = ap()[mode];
     for (const [label, list] of groups) {
       if (!list.length) continue;
       const g = document.createElement("div");
       g.className = "ap-group";
-      g.innerHTML = `<div class="ap-group-label">${label}</div><div class="ap-cards"></div>`;
+      g.innerHTML = `<div class="ap-group-label">${esc(label)}</div><div class="ap-cards"></div>`;
       for (const t of list) {
         const card = document.createElement("button");
         card.type = "button";
@@ -1170,7 +1181,7 @@ function renderAppearance() {
         if (!t.builtin) {
           const edit = document.createElement("span");
           edit.className = "tedit";
-          edit.title = "Edit theme";
+          edit.title = tx("Edit theme");
           edit.textContent = "✎";
           edit.onclick = (e) => { e.stopPropagation(); openEditor(mode, t); };
           card.appendChild(edit);
@@ -1206,7 +1217,8 @@ function openEditor(mode, theme, isNew = false) {
       const input = document.createElement("input");
       input.type = "color";
       input.value = editing.theme.palette[offset + i];
-      input.title = ["Black", "Red", "Green", "Yellow", "Blue", "Magenta", "Cyan", "White"][i] + (offset ? " (bright)" : "");
+      const color = [tx("Black"), tx("Red"), tx("Green"), tx("Yellow"), tx("Blue"), tx("Magenta"), tx("Cyan"), tx("White")][i];
+      input.title = offset ? tx("{color} (bright)", { color }) : color;
       input.oninput = () => { editing.theme.palette[offset + i] = input.value; updateEditorPreview(); };
       el.appendChild(input);
     }
@@ -1236,7 +1248,7 @@ $("te-form").addEventListener("submit", (e) => {
   updateEditorPreview();
   const t = editing.theme;
   const stored = {
-    id: t.id, name: t.name.trim() || "Untitled", appearance: t.appearance,
+    id: t.id, name: t.name.trim() || tx("Untitled"), appearance: t.appearance,
     background: t.background, foreground: t.foreground, cursor: t.cursor, selection: t.selection, palette: t.palette,
   };
   const list = ap().custom;
@@ -1251,7 +1263,7 @@ $("te-form").addEventListener("submit", (e) => {
 
 $("te-delete").onclick = () => {
   const t = editing.theme;
-  if (!confirm(`Delete the theme “${t.name}”?`)) return;
+  if (!confirm(tx("Delete the theme “{name}”?", { name: t.name }))) return;
   ap().custom = ap().custom.filter((x) => x.id !== t.id);
   for (const mode of ["light", "dark"]) if (ap()[mode] === t.id) ap()[mode] = `paw-${mode}`;
   save();
@@ -1263,8 +1275,10 @@ document.querySelectorAll(".ap-new").forEach((b) => {
   b.onclick = () => {
     const mode = b.dataset.new;
     const base = T.activeTheme(settings, mode).theme;
-    const n = ap().custom.filter((t) => (t.name || "").startsWith("Custom")).length + 1;
-    openEditor(mode, { ...base, id: "custom-" + Math.random().toString(36).slice(2, 9), name: `Custom ${n}`, builtin: false }, true);
+    // New themes are named "Custom 1", "Custom 2"… in the user's language.
+    const prefix = tx("Custom {n}", { n: "" }).trim();
+    const n = ap().custom.filter((t) => (t.name || "").startsWith(prefix)).length + 1;
+    openEditor(mode, { ...base, id: "custom-" + Math.random().toString(36).slice(2, 9), name: tx("Custom {n}", { n }), builtin: false }, true);
   };
 });
 
@@ -1285,9 +1299,10 @@ $("ap-import").onclick = async () => {
     ap()[t.appearance] = t.id;
     save();
     renderAppearance();
-    msg.textContent = `Imported “${t.name}” as a ${t.appearance} theme and selected it.`;
+    msg.textContent = t.appearance === "dark" ? tx("Imported “{name}” as a dark theme and selected it.", { name: t.name })
+      : tx("Imported “{name}” as a light theme and selected it.", { name: t.name });
   } catch (e) {
-    msg.textContent = `Couldn't import that file: ${e.message ?? e}`;
+    msg.textContent = tx("Couldn't import that file: {error}", { error: e.message ?? e });
     msg.classList.add("error");
   }
 };
@@ -1312,7 +1327,7 @@ document.addEventListener("keydown", (e) => {
 });
 
 // About: the version, and the About window for the license and the projects Paw is built on.
-invoke("about_info").then((i) => { $("about-version").textContent = `Version ${i.version}`; }).catch(() => {});
+invoke("about_info").then((i) => { $("about-version").textContent = tx("Version {version}", { version: i.version }); }).catch(() => {});
 document.querySelector("#pane-about .about-links").addEventListener("click", (e) => {
   const b = e.target.closest("[data-about]");
   if (b) invoke("open_about", { view: b.dataset.about }).catch(() => {});
@@ -1322,14 +1337,14 @@ document.querySelector("#pane-about .about-links").addEventListener("click", (e)
 // The catalog (index.json) from Paw's repository, or another URL or folder
 // (General's plugin_source); installed plugins live in ~/.paw/plugins.
 const PERMISSION_TEXT = {
-  commands: "add slash commands and print in your tabs",
-  statusbar: "show text in the status bar",
-  events: "see your prompts, agent turns (time, tokens) and shell commands",
-  prompt: "put text in your prompt or send it to an agent",
-  shell: "run commands in your tab's shell",
-  network: "connect to the internet",
-  tasks: "read your plans and follow their progress",
-  views: "draw on a plan's board, next to its graph",
+  commands: tx("add slash commands and print in your tabs"),
+  statusbar: tx("show text in the status bar"),
+  events: tx("see your prompts, agent turns (time, tokens) and shell commands"),
+  prompt: tx("put text in your prompt or send it to an agent"),
+  shell: tx("run commands in your tab's shell"),
+  network: tx("connect to the internet"),
+  tasks: tx("read your plans and follow their progress"),
+  views: tx("draw on a plan's board, next to its graph"),
 };
 const plState = { catalog: null, installed: [], error: "", loading: false, busy: new Set(), appVersion: "" };
 const older = (a, b) => {
@@ -1349,7 +1364,8 @@ async function loadPluginLists() {
     plState.catalog = await invoke("plugins_catalog", { source: plSource() });
   } catch (e) {
     plState.catalog = null;
-    plState.error = String(e) + (plSource() ? "" : " — if Paw's repository is private, set the catalog to a folder (its plugins folder in a checkout).");
+    plState.error = plSource() ? String(e)
+      : tx("{error} — if Paw's repository is private, set the catalog to a folder (its plugins folder in a checkout).", { error: String(e) });
   }
   plState.loading = false;
   renderPlugins();
@@ -1361,19 +1377,19 @@ function permsHtml(perms) {
 
 function pluginCard(m, { installed, enabled, update, needs }) {
   const busy = plState.busy.has(m.id);
-  const meta = [m.version && `v${m.version}`, m.author && `by ${m.author}`, m.license].filter(Boolean).map(esc).join(" · ");
-  const link = m.homepage ? ` · <a href="#" data-url="${esc(m.homepage)}">website</a>` : "";
+  const meta = [m.version && `v${m.version}`, m.author && tx("by {author}", { author: m.author }), m.license].filter(Boolean).map(esc).join(" · ");
+  const link = m.homepage ? ` · <a href="#" data-url="${esc(m.homepage)}">${esc(tx("website"))}</a>` : "";
   const actions = installed
-    ? `${update ? `<button type="button" class="btn-primary small" data-pl-update="${esc(m.id)}" ${busy ? "disabled" : ""}>Update to v${esc(update)}</button>` : ""}
-       <button type="button" class="btn-ghost small" data-pl-folder="${esc(m.id)}">Show Files</button>
-       <button type="button" class="btn-ghost small danger" data-pl-remove="${esc(m.id)}" ${busy ? "disabled" : ""}>Remove</button>`
+    ? `${update ? `<button type="button" class="btn-primary small" data-pl-update="${esc(m.id)}" ${busy ? "disabled" : ""}>${esc(tx("Update to v{version}", { version: update }))}</button>` : ""}
+       <button type="button" class="btn-ghost small" data-pl-folder="${esc(m.id)}">${esc(tx("Show Files"))}</button>
+       <button type="button" class="btn-ghost small danger" data-pl-remove="${esc(m.id)}" ${busy ? "disabled" : ""}>${esc(tx("Remove"))}</button>`
     : needs
-      ? `<span class="hint">Needs Paw ${esc(needs)}</span>`
-      : `<button type="button" class="btn-primary small" data-pl-install="${esc(m.id)}" ${busy ? "disabled" : ""}>${busy ? "Installing…" : "Install"}</button>`;
+      ? `<span class="hint">${esc(tx("Needs Paw {version}", { version: needs }))}</span>`
+      : `<button type="button" class="btn-primary small" data-pl-install="${esc(m.id)}" ${busy ? "disabled" : ""}>${esc(busy ? tx("Installing…") : tx("Install"))}</button>`;
   return `<div class="pl-card${installed && !enabled ? " off" : ""}">
     <div class="pl-top">
       <div class="pl-title"><b>${esc(m.name)}</b> <span class="hint">${meta}${link}</span></div>
-      ${installed ? `<label class="switch" title="${enabled ? "On" : "Off"}"><input type="checkbox" data-pl-toggle="${esc(m.id)}" ${enabled ? "checked" : ""} /><span></span></label>` : ""}
+      ${installed ? `<label class="switch" title="${esc(enabled ? tx("On") : tx("Off"))}"><input type="checkbox" data-pl-toggle="${esc(m.id)}" ${enabled ? "checked" : ""} /><span></span></label>` : ""}
     </div>
     ${m.description ? `<div class="pl-desc">${esc(m.description)}</div>` : ""}
     <div class="pl-bottom"><div class="pl-perms">${permsHtml(m.permissions)}</div><div class="pl-actions">${actions}</div></div>
@@ -1390,34 +1406,39 @@ function renderPlugins() {
       const newer = cat.get(p.manifest.id);
       return pluginCard(p.manifest, { installed: true, enabled: p.enabled, update: newer && older(p.manifest.version, newer.version) ? newer.version : null });
     }).join("")
-    : `<div class="pl-empty">No plugins installed yet.</div>`;
+    : `<div class="pl-empty">${esc(tx("No plugins installed yet."))}</div>`;
   const ids = new Set(inst.map((p) => p.manifest.id));
   const avail = [...cat.values()].filter((m) => !ids.has(m.id));
   $("pl-available").innerHTML = plState.loading
-    ? `<div class="pl-empty">Loading the catalog…</div>`
+    ? `<div class="pl-empty">${esc(tx("Loading the catalog…"))}</div>`
     : plState.error
       ? `<div class="pl-empty err">${esc(plState.error)}</div>`
       : avail.length
         ? avail.map((m) => pluginCard(m, { installed: false, needs: m.min_paw && plState.appVersion && older(plState.appVersion, m.min_paw) ? m.min_paw : null })).join("")
-        : `<div class="pl-empty">${cat.size ? "Every plugin in the catalog is installed." : "The catalog has no plugins."}</div>`;
+        : `<div class="pl-empty">${esc(cat.size ? tx("Every plugin in the catalog is installed.") : tx("The catalog has no plugins."))}</div>`;
 }
 
-async function installPlugin(id, verb = "Install") {
+/** Installs plugin `id` from the catalog; `update` when it replaces an installed version. */
+async function installPlugin(id, update = false) {
   const m = plState.catalog?.plugins.find((x) => x.id === id);
   if (!m) return;
   // An update marks what the installed version couldn't do yet.
   const had = plState.installed?.find((p) => p.manifest.id === id)?.manifest.permissions;
   const perms = m.permissions ?? [];
-  const can = perms.map((p) => `• ${PERMISSION_TEXT[p] ?? p}${had && !had.includes(p) ? "  (new)" : ""}`).join("\n") || "• nothing beyond running in its sandbox";
-  if (!confirm(`${verb} “${m.name}” ${m.version}${m.author ? ` by ${m.author}` : ""}?\n\nIt will be able to:\n${can}\n\nPlugins run in a sandbox and can only do what's listed.`)) return;
+  const can = perms.map((p) => `• ${PERMISSION_TEXT[p] ?? p}${had && !had.includes(p) ? `  ${tx("(new)")}` : ""}`).join("\n") || `• ${tx("nothing beyond running in its sandbox")}`;
+  const vars = { name: m.name, version: m.version, author: m.author };
+  const head = update
+    ? (m.author ? tx("Update “{name}” {version} by {author}?", vars) : tx("Update “{name}” {version}?", vars))
+    : (m.author ? tx("Install “{name}” {version} by {author}?", vars) : tx("Install “{name}” {version}?", vars));
+  if (!confirm(`${head}\n\n${tx("It will be able to:")}\n${can}\n\n${tx("Plugins run in a sandbox and can only do what's listed.")}`)) return;
   plState.busy.add(id);
   renderPlugins();
   try {
     // Paw refuses the plugin if its own manifest asks for more than this.
     await invoke("plugin_install", { source: plSource(), id, permissions: perms });
-    $("pl-msg").textContent = `${m.name} ${m.version} is installed and on. Its commands are in /help and /plugins.`;
+    $("pl-msg").textContent = tx("{name} {version} is installed and on. Its commands are in /help and /plugins.", { name: m.name, version: m.version });
   } catch (e) {
-    alert(`Couldn't install ${m.name}: ${e}`);
+    alert(tx("Couldn't install {name}: {error}", { name: m.name, error: e }));
   }
   plState.busy.delete(id);
   try { plState.installed = await invoke("plugins_installed", { withCode: false }); } catch {}
@@ -1429,11 +1450,11 @@ document.addEventListener("click", async (e) => {
   const inst = t.closest?.("[data-pl-install]");
   if (inst) return installPlugin(inst.dataset.plInstall);
   const upd = t.closest?.("[data-pl-update]");
-  if (upd) return installPlugin(upd.dataset.plUpdate, "Update");
+  if (upd) return installPlugin(upd.dataset.plUpdate, true);
   const rm = t.closest?.("[data-pl-remove]");
   if (rm) {
     const p = plState.installed.find((x) => x.manifest.id === rm.dataset.plRemove);
-    if (!p || !confirm(`Remove “${p.manifest.name}”? What it stored is removed too.`)) return;
+    if (!p || !confirm(tx("Remove “{name}”? What it stored is removed too.", { name: p.manifest.name }))) return;
     try { await invoke("plugin_remove", { id: p.manifest.id }); } catch (err) { alert(String(err)); }
     try { plState.installed = await invoke("plugins_installed", { withCode: false }); } catch {}
     return renderPlugins();

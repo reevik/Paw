@@ -106,6 +106,13 @@ pub struct General {
     pub max_waiting: usize,
     /// Where Settings › Plugins finds plugins: a URL or a folder; empty: the official catalog.
     pub plugin_source: String,
+    /// The language Paw speaks, and Paw Agent answers in: "en" (default), "de" or "tr".
+    #[serde(default = "default_language")]
+    pub language: String,
+}
+
+fn default_language() -> String {
+    "en".into()
 }
 
 fn default_max_waiting() -> usize {
@@ -126,6 +133,7 @@ impl Default for General {
             max_agents: 3,
             max_waiting: default_max_waiting(),
             plugin_source: String::new(),
+            language: default_language(),
         }
     }
 }

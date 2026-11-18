@@ -965,8 +965,9 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
 }
 .task-view.hidden { display: none; }
 .tk-head { display: flex; align-items: center; gap: 8px; min-height: 26px; flex-shrink: 0; }
-.tk-title { font-weight: 600; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.tk-state { flex-shrink: 0; font-size: 11px; padding: 2px 8px; border-radius: 10px; background: var(--tk-card); color: var(--t-dim); white-space: nowrap; }
+.tk-title { font-weight: 600; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: min(120px, 30%); flex-shrink: 1; }
+/* The status gives way first when the head is crowded (longer languages): the title keeps some room. */
+.tk-state { flex-shrink: 3; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 11px; padding: 2px 8px; border-radius: 10px; background: var(--tk-card); color: var(--t-dim); white-space: nowrap; }
 .tk-state.st-running, .tk-state.st-planning { color: var(--t-accent); background: color-mix(in srgb, var(--t-accent) 14%, transparent); }
 .tk-state.st-done { color: var(--t-green); background: color-mix(in srgb, var(--t-green) 14%, transparent); }
 .tk-state.st-failed { color: var(--t-red); background: color-mix(in srgb, var(--t-red) 14%, transparent); }

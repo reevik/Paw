@@ -39,14 +39,24 @@
       <label for="g-cwd">Default working directory</label>
       <div>
         <input id="g-cwd" placeholder="~" />
-        <p class="hint">Where new sessions start. <code>~</code> is your home folder; use <code>/cd</code> in a tab to move.</p>
+        <p class="hint" data-i18n>Where new sessions start. <code>~</code> is your home folder; use <code>/cd</code> in a tab to move.</p>
       </div>
 
       <!-- Deprecated: CLI agents (CLI_AGENTS). -->
       <label for="g-agent" class="cli-only">Default agent</label>
       <div class="cli-only">
         <select id="g-agent"></select>
-        <p class="hint">Opened by <code>⌘T</code>, the + button, and when Paw starts.</p>
+        <p class="hint" data-i18n>Opened by <code>⌘T</code>, the + button, and when Paw starts.</p>
+      </div>
+
+      <label for="g-language">Language</label>
+      <div>
+        <select id="g-language">
+          <option value="en">English</option>
+          <option value="de">Deutsch</option>
+          <option value="tr">Türkçe</option>
+        </select>
+        <p class="hint">Paw's own text, and the language Paw Agent answers in (in tabs, plans and factories).</p>
       </div>
 
       <label for="g-mode">Input mode</label>
@@ -56,7 +66,7 @@
           <option value="shell">Shell — every line runs in the shell</option>
           <option value="agent">Agent — every line goes to the agent</option>
         </select>
-        <p class="hint">Default for new tabs. Switch any tab with <code>⇧Tab</code> or by clicking the mode under the prompt; <code>!cmd</code> always runs in the shell.</p>
+        <p class="hint" data-i18n>Default for new tabs. Switch any tab with <code>⇧Tab</code> or by clicking the mode under the prompt; <code>!cmd</code> always runs in the shell.</p>
       </div>
 
       <span>Agent context</span>
@@ -75,7 +85,7 @@
           <option value="plan">Plan — read-only</option>
           <option value="full">Full — no confirmations</option>
         </select>
-        <p class="hint">For new tabs, on agents that support it (an agent without Auto starts at Edits). Change a tab with <code>/approval</code>.</p>
+        <p class="hint" data-i18n>For new tabs, on agents that support it (an agent without Auto starts at Edits). Change a tab with <code>/approval</code>.</p>
       </div>
 
       <label for="g-history">Shell history</label>
@@ -188,7 +198,7 @@
               <span id="ap-line-height-val">1.6</span>
             </div>
           </div>
-          <div class="ap-font-preview" id="ap-font-preview"><span class="pv-g">❯</span> fix the failing test in parser.rs
+          <div class="ap-font-preview" id="ap-font-preview" data-i18n><span class="pv-g">❯</span> fix the failing test in parser.rs
 <span class="pv-b">⏺</span> The test expects <code>parse("1_000")</code> to return 1000; the parser stops at "_".
   0O Il1 {} [] () =&gt; != -&gt; === // ligatures, if the font has them</div>
           <div class="ap-font-actions"><button type="button" class="btn-ghost small" id="ap-font-reset">Use Defaults</button></div>
@@ -307,7 +317,7 @@
           <span>Show in menus</span>
           <div>
             <label class="switch"><input type="checkbox" id="d-m-shown" /><span></span></label>
-            <p class="hint">Off leaves it out of the model menus, <code>/model</code> and task steps.</p>
+            <p class="hint" data-i18n>Off leaves it out of the model menus, <code>/model</code> and task steps.</p>
           </div>
 
           <span>New sessions</span>
@@ -344,7 +354,7 @@
           <div class="d-addr">
             <input id="d-baseurl" spellcheck="false" />
             <p class="hint" id="d-baseurl-hint"></p>
-            <p class="hint">Only models with tool support are listed (<code>ollama show &lt;model&gt;</code> lists “tools”).</p>
+            <p class="hint" data-i18n>Only models with tool support are listed (<code>ollama show &lt;model&gt;</code> lists “tools”).</p>
           </div>
 
           <span class="d-copilot-only">Sign-in</span>
@@ -449,7 +459,7 @@
           <label for="d-cu-baseurl" class="d-compatible-only">Base URL</label>
           <div class="d-compatible-only">
             <input id="d-cu-baseurl" spellcheck="false" placeholder="https://api.example.com/v1" />
-            <p class="hint">An OpenAI-compatible API. Paw lists its models from <code>/models</code>.</p>
+            <p class="hint" data-i18n>An OpenAI-compatible API. Paw lists its models from <code>/models</code>.</p>
           </div>
 
           <label for="d-cu-apikey" class="d-compatible-only">API key</label>
@@ -473,7 +483,7 @@
           </div>
 
           <span>How it works</span>
-          <p class="hint">Paw Agent runs inside Paw: it reads, searches and edits files in the tab's folder and runs commands there, asking first as the tab's approval level says (<code>/approval</code>). Once a provider is connected, its models show up in the model menus and <code>/model</code>.</p>
+          <p class="hint" data-i18n>Paw Agent runs inside Paw: it reads, searches and edits files in the tab's folder and runs commands there, asking first as the tab's approval level says (<code>/approval</code>). Once a provider is connected, its models show up in the model menus and <code>/model</code>.</p>
         </div>
       </div>
 
@@ -510,7 +520,7 @@
           <label for="d-template">Template</label>
           <div>
             <textarea id="d-template" rows="3" spellcheck="false"></textarea>
-            <p class="hint">Placeholders: <code>{bin}</code> <code>{prompt}</code> <code>{model}</code> <code>{permission}</code> <code>{session}</code>. Wrap optional parts in <code>[[ … ]]</code> — they're dropped when a placeholder inside is empty.</p>
+            <p class="hint" data-i18n>Placeholders: <code>{bin}</code> <code>{prompt}</code> <code>{model}</code> <code>{permission}</code> <code>{session}</code>. Wrap optional parts in <code>[[ … ]]</code> — they're dropped when a placeholder inside is empty.</p>
           </div>
 
           <span>Approval levels</span>
@@ -522,13 +532,13 @@
               <label>plan <input id="d-ap-plan" spellcheck="false" /></label>
               <label>full <input id="d-ap-full" spellcheck="false" /></label>
             </div>
-            <p class="hint">What <code>{permission}</code> becomes for each of Paw's levels (<code>/approval</code>). Leave a level empty if this agent can't express it.</p>
+            <p class="hint" data-i18n>What <code>{permission}</code> becomes for each of Paw's levels (<code>/approval</code>). Leave a level empty if this agent can't express it.</p>
           </div>
 
           <label for="d-allow">Allow one action</label>
           <div>
             <input id="d-allow" spellcheck="false" placeholder="e.g. --allowedTools {rule}" />
-            <p class="hint">Added at launch for each action you approve on an approval card; <code>{rule}</code> is the action. Empty: approval cards can't allow single actions for this agent.</p>
+            <p class="hint" data-i18n>Added at launch for each action you approve on an approval card; <code>{rule}</code> is the action. Empty: approval cards can't allow single actions for this agent.</p>
           </div>
 
           <label for="d-skills">External skills</label>
@@ -538,7 +548,7 @@
               <option value="index">Otherwise: list them with their SKILL.md paths</option>
               <option value="inline">Otherwise: include their instructions</option>
             </select>
-            <p class="hint">How this agent gets the skills from the External folders in the sidebar. With a flag, <code>{skills}</code> is a plugin folder Paw keeps up to date. Without one, Paw tells the agent about them in the conversation: a list it can read from, or — for agents that can't open files — the instructions themselves.</p>
+            <p class="hint" data-i18n>How this agent gets the skills from the External folders in the sidebar. With a flag, <code>{skills}</code> is a plugin folder Paw keeps up to date. Without one, Paw tells the agent about them in the conversation: a list it can read from, or — for agents that can't open files — the instructions themselves.</p>
           </div>
 
           <label for="d-continuity">Conversation</label>
@@ -554,7 +564,7 @@
           <label for="d-pattern" class="d-session-only">Session ID pattern</label>
           <div class="d-session-only">
             <input id="d-pattern" spellcheck="false" placeholder="regex with one ( ) group, e.g. session id:\s*(\S+)" />
-            <p class="hint">Found in the agent's output after each run; used as <code>{session}</code> for the next prompt and after a restart.</p>
+            <p class="hint" data-i18n>Found in the agent's output after each run; used as <code>{session}</code> for the next prompt and after a restart.</p>
           </div>
 
           <span>Preview</span>
@@ -612,6 +622,17 @@
     </div>
   </section>
 
+  <script src="i18n.js"></script>
+  <script src="i18n/de/app.js"></script>
+  <script src="i18n/de/tasks.js"></script>
+  <script src="i18n/de/factories.js"></script>
+  <script src="i18n/de/prefs.js"></script>
+  <script src="i18n/de/misc.js"></script>
+  <script src="i18n/tr/app.js"></script>
+  <script src="i18n/tr/tasks.js"></script>
+  <script src="i18n/tr/factories.js"></script>
+  <script src="i18n/tr/prefs.js"></script>
+  <script src="i18n/tr/misc.js"></script>
   <script src="themes.js"></script>
   <script src="prefs.js"></script>
 </body>

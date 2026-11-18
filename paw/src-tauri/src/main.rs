@@ -16,6 +16,7 @@ mod plugins;
 mod menubar;
 mod daemon;
 mod factories;
+mod i18n;
 
 use agents::AgentManager;
 use history::History;
@@ -137,7 +138,7 @@ pub(crate) fn show_preferences(app: &AppHandle, tab: Option<&str>) -> tauri::Res
     let mode = app.state::<Registry>().settings(app).appearance.mode;
     WebviewWindowBuilder::new(app, PREFS_LABEL, WebviewUrl::App(url.into()))
         .theme(registry::window_theme(&mode))
-        .title("Settings")
+        .title(i18n::t("Settings"))
         .inner_size(820.0, 580.0)
         .min_inner_size(680.0, 460.0)
         .transparent(true)
@@ -198,7 +199,7 @@ fn show_about(app: &AppHandle, view: Option<&str>) -> tauri::Result<()> {
     let mode = app.state::<Registry>().settings(app).appearance.mode;
     WebviewWindowBuilder::new(app, ABOUT_LABEL, WebviewUrl::App(url.into()))
         .theme(registry::window_theme(&mode))
-        .title("About Paw")
+        .title(i18n::t("About Paw"))
         .inner_size(440.0, 560.0)
         .resizable(false)
         .maximizable(false)
@@ -223,10 +224,10 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     // The first submenu on macOS is the application menu ("Paw").
     if let Some(app_menu) = menu.items()?.first().and_then(|i| i.as_submenu().cloned()) {
         // Paw's own About window instead of the standard panel.
-        let about = MenuItem::with_id(app, "about", "About Paw", true, None::<&str>)?;
+        let about = MenuItem::with_id(app, "about", i18n::t("About Paw"), true, None::<&str>)?;
         app_menu.remove_at(0)?;
         app_menu.insert(&about, 0)?;
-        let settings = MenuItem::with_id(app, "preferences", "Settings…", true, Some("CmdOrCtrl+,"))?;
+        let settings = MenuItem::with_id(app, "preferences", i18n::t("Settings…"), true, Some("CmdOrCtrl+,"))?;
         app_menu.insert(&PredefinedMenuItem::separator(app)?, 1)?;
         app_menu.insert(&settings, 2)?;
         // Quits the window only: the agents keep running in the daemon.
@@ -234,10 +235,10 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         if n > 0 {
             app_menu.remove_at(n - 1)?;
         }
-        app_menu.append(&MenuItem::with_id(app, "quit", "Quit Paw", true, Some("CmdOrCtrl+Q"))?)?;
+        app_menu.append(&MenuItem::with_id(app, "quit", i18n::t("Quit Paw"), true, Some("CmdOrCtrl+Q"))?)?;
     }
     // View › Show/Hide Sidebar (⌃⌘S, the macOS convention).
-    let toggle = MenuItem::with_id(app, "toggle-sidebar", "Toggle Sidebar", true, Some("Ctrl+Cmd+S"))?;
+    let toggle = MenuItem::with_id(app, "toggle-sidebar", i18n::t("Toggle Sidebar"), true, Some("Ctrl+Cmd+S"))?;
     let view = menu
         .items()?
         .into_iter()
@@ -343,6 +344,22 @@ fn main() {
             }
             // First start after the rename: bring Hive's settings along.
             paths::move_to_paw_home(app.handle());
+            // Another language in Settings: the app menu follows.
+            {
+                use tauri::Listener;
+                let handle = app.handle().clone();
+                let shown = std::sync::Mutex::new(i18n::lang());
+                app.listen_any("settings:changed", move |_| {
+                    let now = i18n::lang();
+                    let mut was = shown.lock().unwrap();
+                    if *was != now {
+                        *was = now;
+                        if let Ok(menu) = build_menu(&handle) {
+                            let _ = handle.set_menu(menu);
+                        }
+                    }
+                });
+            }
             // Detect Paw Agent's providers (and, with "cli-agents", agent CLIs) in the background right away.
             registry::start_scan(app.handle().clone());
             create_main_window(app.handle())?;

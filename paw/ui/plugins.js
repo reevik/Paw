@@ -33,14 +33,14 @@ const BUILTIN_COMMANDS = new Set(["help", "model", "agent", "approval", "restart
   "stats", "clear", "cd", "history", "plugins", "exit", "quit"]);
 
 const PERMISSION_TEXT = {
-  commands: "add slash commands and print in your tabs",
-  statusbar: "show text in the status bar",
-  events: "see your prompts, agent turns (time, tokens) and shell commands",
-  prompt: "put text in your prompt or send it to an agent",
-  shell: "run commands in your tab's shell",
-  network: "connect to the internet",
-  tasks: "read your plans and follow their progress",
-  views: "draw on a plan's board, next to its graph",
+  commands: tx("add slash commands and print in your tabs"),
+  statusbar: tx("show text in the status bar"),
+  events: tx("see your prompts, agent turns (time, tokens) and shell commands"),
+  prompt: tx("put text in your prompt or send it to an agent"),
+  shell: tx("run commands in your tab's shell"),
+  network: tx("connect to the internet"),
+  tasks: tx("read your plans and follow their progress"),
+  views: tx("draw on a plan's board, next to its graph"),
 };
 
 // Runs first in every plugin's worker. `cfg` is filled in per plugin.
@@ -149,7 +149,7 @@ function stopPlugins() {
   for (const v of [...pluginHost.open.values()]) closeBoardView(v.S);
   pluginHost.views.clear();
   for (const p of pluginHost.plugins.values()) p.worker?.terminate();
-  for (const c of pluginHost.calls.values()) { clearTimeout(c.timer); c.reject(new Error("The plugin was stopped")); }
+  for (const c of pluginHost.calls.values()) { clearTimeout(c.timer); c.reject(new Error(tx("The plugin was stopped"))); }
   pluginHost.plugins.clear();
   pluginHost.commands.clear();
   pluginHost.status.clear();
@@ -331,7 +331,7 @@ async function runPluginCommand(S, name, args, echo) {
   echo();
   const req = pluginHost.seq++;
   const out = new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { pluginHost.calls.delete(req); reject(new Error(`/${name} didn't answer within 60 s`)); }, 60_000);
+    const timer = setTimeout(() => { pluginHost.calls.delete(req); reject(new Error(tx("/{name} didn't answer within 60 s", { name }))); }, 60_000);
     pluginHost.calls.set(req, { resolve, reject, timer });
   });
   entry.worker.postMessage({ type: "command", req, name, args, tab: pluginTab(S) });
@@ -373,20 +373,20 @@ function renderPluginStatus() {
 async function pluginsListHtml() {
   let list = [];
   try { list = await invoke("plugins_installed", { withCode: false }); } catch {}
-  if (!list.length) return `<span class="dim">No plugins installed. Settings › Plugins lists the ones available.</span>`;
+  if (!list.length) return `<span class="dim">${tx("No plugins installed. Settings › Plugins lists the ones available.")}</span>`;
   const rows = list.map((p) => {
     const m = p.manifest;
     const run = pluginHost.plugins.get(m.id);
-    const state = !p.enabled ? `<span class="dim">off</span>` : run?.error ? `<span class="err">error: ${esc(run.error)}</span>` : `<span class="ok">on</span>`;
+    const state = !p.enabled ? `<span class="dim">${tx("off")}</span>` : run?.error ? `<span class="err">${tx("error: {error}", { error: esc(run.error) })}</span>` : `<span class="ok">${tx("on")}</span>`;
     const cmds = [...pluginHost.commands.entries()].filter(([, c]) => c.id === m.id).map(([n]) => `<span class="cmd">/${esc(n)}</span>`).join(" ");
-    return `${esc(m.name)} <span class="dim">${esc(m.version)} · ${esc(m.author || "unknown author")}</span>  ${state}${cmds ? "  " + cmds : ""}`;
+    return `${esc(m.name)} <span class="dim">${esc(m.version)} · ${esc(m.author || tx("unknown author"))}</span>  ${state}${cmds ? "  " + cmds : ""}`;
   });
-  return `<span class="help-h">Plugins</span>\n${rows.join("\n")}\n<span class="dim">Settings › Plugins installs, updates and turns them off.</span>`;
+  return `<span class="help-h">${tx("Plugins")}</span>\n${rows.join("\n")}\n<span class="dim">${tx("Settings › Plugins installs, updates and turns them off.")}</span>`;
 }
 
 /** Help rows for plugin commands. */
 function pluginHelpRows(row) {
-  return [...pluginHost.commands.entries()].map(([n, c]) => row(`/${n}${c.usage ? " " + c.usage : ""}`, c.description || `from ${pluginHost.plugins.get(c.id)?.manifest.name ?? c.id}`));
+  return [...pluginHost.commands.entries()].map(([n, c]) => row(`/${n}${c.usage ? " " + c.usage : ""}`, c.description || tx("from {plugin}", { plugin: pluginHost.plugins.get(c.id)?.manifest.name ?? c.id })));
 }
 
 // ---------- views on the task board ----------
@@ -433,7 +433,7 @@ function boardViewElement(S, key) {
   pluginHost.open.set(vid, { S, key, el });
   const send = (event, data) => entry.worker.postMessage({ type: "view-event", vid, event, data });
   let off;
-  try { off = canvas.transferControlToOffscreen(); } catch (e) { el.textContent = `This view can't draw here: ${e.message}`; return el; }
+  try { off = canvas.transferControlToOffscreen(); } catch (e) { el.textContent = tx("This view can't draw here: {error}", { error: e.message }); return el; }
   const size = () => {
     const r = el.getBoundingClientRect();
     return { width: Math.max(1, Math.round(r.width)), height: Math.max(1, Math.round(r.height)), dpr: devicePixelRatio || 1 };

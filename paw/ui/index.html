@@ -109,7 +109,7 @@
           <h1>Paw</h1>
           <p>Open a session and start typing — like a terminal tab, one agent per tab.</p>
           <div id="welcome-agents" class="welcome-agents"></div>
-          <p class="hint-keys"><kbd>⌘T</kbd> new session · <kbd>⌘,</kbd> settings</p>
+          <p class="hint-keys" data-i18n><kbd>⌘T</kbd> new session · <kbd>⌘,</kbd> settings</p>
         </div>
       </section>
 
@@ -195,7 +195,7 @@
           <div data-id="busy" class="busy hidden">
             <span data-id="busy-spin" class="spin-ch"></span>
             <span data-id="busy-text">Working…</span>
-            <span class="dim">(<span data-id="busy-time">0s</span> · ⌘. to stop)</span>
+            <span class="dim" data-i18n>(<span data-id="busy-time">0s</span> · ⌘. to stop)</span>
           </div>
 
           <footer class="composer">
@@ -231,6 +231,17 @@
   <!-- "New session with…" menu -->
   <div id="menu" class="menu hidden"></div>
 
+  <script src="i18n.js"></script>
+  <script src="i18n/de/app.js"></script>
+  <script src="i18n/de/tasks.js"></script>
+  <script src="i18n/de/factories.js"></script>
+  <script src="i18n/de/prefs.js"></script>
+  <script src="i18n/de/misc.js"></script>
+  <script src="i18n/tr/app.js"></script>
+  <script src="i18n/tr/tasks.js"></script>
+  <script src="i18n/tr/factories.js"></script>
+  <script src="i18n/tr/prefs.js"></script>
+  <script src="i18n/tr/misc.js"></script>
   <script src="vendor/xterm.js"></script>
   <script src="vendor/addon-fit.js"></script>
   <script src="vendor/marked.js"></script>

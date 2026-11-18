@@ -53,27 +53,28 @@ fn mark(state: &str) -> &'static str {
 
 fn build_menu<R: Runtime>(app: &AppHandle<R>, tabs: &[TrayTab]) -> tauri::Result<Menu<R>> {
     let menu = Menu::new(app)?;
-    menu.append(&MenuItem::with_id(app, "tray:open", "Open Paw", true, None::<&str>)?)?;
+    let t = crate::i18n::t;
+    menu.append(&MenuItem::with_id(app, "tray:open", t("Open Paw"), true, None::<&str>)?)?;
     menu.append(&PredefinedMenuItem::separator(app)?)?;
     if tabs.is_empty() {
-        menu.append(&MenuItem::with_id(app, "tray:none", "No tabs open", false, None::<&str>)?)?;
+        menu.append(&MenuItem::with_id(app, "tray:none", t("No tabs open"), false, None::<&str>)?)?;
     }
-    for t in tabs.iter().take(MAX_ITEMS) {
-        let what = match t.state.as_str() {
-            "working" => " — working",
-            "needs" => " — needs your approval",
-            "waiting" => " — waiting for a free agent",
-            _ => "",
+    for tab in tabs.iter().take(MAX_ITEMS) {
+        let what = match tab.state.as_str() {
+            "working" => t(" — working"),
+            "needs" => t(" — needs your approval"),
+            "waiting" => t(" — waiting for a free agent"),
+            _ => String::new(),
         };
-        let label: String = t.label.chars().take(60).collect();
-        menu.append(&MenuItem::with_id(app, format!("tray:tab:{}", t.id), format!("{} {label}{what}", mark(&t.state)), true, None::<&str>)?)?;
+        let label: String = tab.label.chars().take(60).collect();
+        menu.append(&MenuItem::with_id(app, format!("tray:tab:{}", tab.id), format!("{} {label}{what}", mark(&tab.state)), true, None::<&str>)?)?;
     }
     if tabs.len() > MAX_ITEMS {
-        menu.append(&MenuItem::with_id(app, "tray:more", format!("{} more…", tabs.len() - MAX_ITEMS), true, None::<&str>)?)?;
+        menu.append(&MenuItem::with_id(app, "tray:more", t("{n} more…").replace("{n}", &(tabs.len() - MAX_ITEMS).to_string()), true, None::<&str>)?)?;
     }
     menu.append(&PredefinedMenuItem::separator(app)?)?;
-    menu.append(&MenuItem::with_id(app, "tray:settings", "Settings…", true, None::<&str>)?)?;
-    menu.append(&MenuItem::with_id(app, "tray:quit", "Quit Paw", true, None::<&str>)?)?;
+    menu.append(&MenuItem::with_id(app, "tray:settings", t("Settings…"), true, None::<&str>)?)?;
+    menu.append(&MenuItem::with_id(app, "tray:quit", t("Quit Paw"), true, None::<&str>)?)?;
     Ok(menu)
 }
 

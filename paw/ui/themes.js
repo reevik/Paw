@@ -273,7 +273,7 @@
   function parseITerm(xml) {
     const doc = new DOMParser().parseFromString(xml, "application/xml");
     const root = doc.querySelector("plist > dict");
-    if (!root) throw new Error("not an iTerm color file");
+    if (!root) throw new Error(tx("not an iTerm color file"));
     const t = { palette: [] };
     const kids = [...root.children];
     for (let i = 0; i < kids.length - 1; i++) {
@@ -300,7 +300,7 @@
   /** Parse a Ghostty or iTerm theme file into a custom theme. */
   function importThemeFile(fileName, text) {
     const parsed = /<plist[\s>]/.test(text) ? parseITerm(text) : parseGhostty(text);
-    if (!parsed.background || !parsed.foreground) throw new Error("No background/foreground colors found in this file.");
+    if (!parsed.background || !parsed.foreground) throw new Error(tx("No background/foreground colors found in this file."));
     const name = fileName.replace(/\.(itermcolors|conf|txt|toml)$/i, "").replace(/[-_]+/g, " ").trim() || "Imported";
     return normalize({
       ...parsed,

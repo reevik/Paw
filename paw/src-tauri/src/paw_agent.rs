@@ -1383,10 +1383,37 @@ fn project_notes(cwd: &Path) -> String {
 
 /// `only`: the built-in tools the session has, when it doesn't have them all
 /// (a factory node); the model is told about those alone.
+/// The language the user picked (Settings › General › Language), as its
+/// English name; None for English.
+pub fn user_language() -> Option<&'static str> {
+    let v: Value = crate::paths::home()
+        .and_then(|h| std::fs::read_to_string(h.join("settings.json")).ok())
+        .and_then(|t| serde_json::from_str(&t).ok())?;
+    match v.pointer("/general/language")?.as_str()? {
+        "de" => Some("German"),
+        "tr" => Some("Turkish"),
+        _ => None,
+    }
+}
+
+/// What Paw Agent is told about the user's language.
+pub fn language_rule(lang: &str) -> String {
+    format!(
+        "The user's language is {lang}. Write everything meant for the user in {lang}: your answers, questions, summaries, plans, \
+         notes and commit messages you're asked to write for them. Keep code, commands, file names, identifiers and quoted output as \
+         they are. When your instructions ask for an exact line, keyword or format (like `VERDICT: approved` or a JSON shape), \
+         write it exactly as given, in English if that's how it's given."
+    )
+}
+
 pub fn build_preamble(cwd: &Path, level: &str, tools: bool, skills_index: &str, scripts: Option<&Path>, only: Option<&[String]>) -> String {
     let has = |t: &str| only.map_or(true, |o| o.iter().any(|x| x == t));
     let mut p = String::new();
     p.push_str("You are Paw Agent, a coding agent built into Paw, a macOS app where people work with coding agents in terminal-like tabs.\n\n");
+    if let Some(lang) = user_language() {
+        p.push_str(&language_rule(lang));
+        p.push_str("\n\n");
+    }
     p.push_str(&format!("Working folder: {}\nRelative paths are resolved there{}.\n", cwd.display(), if tools && has("shell") { "; the shell tool runs commands there" } else { "" }));
     if let (true, Some(dir)) = (tools, scripts) {
         p.push_str(&format!("{}\n", scripts_note(dir)));

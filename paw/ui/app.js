@@ -196,9 +196,9 @@ function modelsByProvider() {
 /** /model: the models by provider, `cur` marked. */
 function modelListHtml(cur) {
   const groups = modelsByProvider();
-  if (!groups.length) return `<span class="dim">No models yet: connect a provider in</span> ${connectLink()}<span class="dim">.</span>`;
+  if (!groups.length) return `<span class="dim">${tx("No models yet: connect a provider in {link}.", { link: `</span>${connectLink()}<span class="dim">` })}</span>`;
   const out = [];
-  if (cur && !visibleModels().includes(cur)) out.push(`<span class="ok">● ${esc(cur)}</span>  <span class="dim">this tab's (hidden, or its provider isn't connected)</span>`, "");
+  if (cur && !visibleModels().includes(cur)) out.push(`<span class="ok">● ${esc(cur)}</span>  <span class="dim">${tx("this tab's (hidden, or its provider isn't connected)")}</span>`, "");
   for (const [p, list] of groups) {
     if (out.length && out.at(-1) !== "") out.push("");
     out.push(`<span class="help-h">${esc(providerName(p))}</span>`);
@@ -209,10 +209,10 @@ function modelListHtml(cur) {
 /** Why `/model <arg>` found nothing. */
 function modelMiss(arg) {
   const hits = visibleModels().filter((m) => modelShort(m) === arg.trim());
-  return hits.length > 1 ? `✗ “${arg}” is offered by more than one provider: write ${hits.join(" or ")}` : `✗ no model “${arg}” here`;
+  return hits.length > 1 ? tx("✗ “{arg}” is offered by more than one provider: write {models}", { arg, models: hits.join(tx(" or ")) }) : tx("✗ no model “{arg}” here", { arg });
 }
 /** "Connect a provider" links open Settings › Agents. */
-const connectLink = (text = "Settings › Agents") => `<a href="#" class="task-link" data-open-prefs="agents">${esc(text)}</a>`;
+const connectLink = (text = tx("Settings › Agents")) => `<a href="#" class="task-link" data-open-prefs="agents">${esc(text)}</a>`;
 document.addEventListener("click", (e) => {
   const a = e.target.closest?.("[data-open-prefs]");
   if (!a) return;
@@ -356,13 +356,13 @@ function banner(S) {
   if (S.task) return taskBanner(S);
   if (S.factory) return factoryBanner(S);
   const d = detections[S.agent.id];
-  const ver = isPaw(S.agent) ? ` <span class="dim">built-in${providerOf(S.model) ? " · " + esc(providerName(providerOf(S.model))) : ""}</span>`
+  const ver = isPaw(S.agent) ? ` <span class="dim">${tx("built-in")}${providerOf(S.model) ? " · " + esc(providerName(providerOf(S.model))) : ""}</span>`
     : d?.version ? ` <span class="dim">${esc(d.version)}</span>` : "";
   info(S,
     `<b>${esc(S.agent.name)}</b>${ver}\n` +
-    `<span class="dim">model</span> ${esc(S.model || (isPaw(S.agent) ? "none" : "default"))}  <span class="dim">cwd</span> ${esc(tildify(S.cwd))}\n` +
-    `<span class="dim">${S.mode === "oneshot" ? "Each prompt runs the agent once in this folder." : "Type a prompt to start."} ` +
-    `Shell commands (<span class="sh">$</span> ls, git status…) run in your shell. /help for more.</span>`);
+    `<span class="dim">${tx("model")}</span> ${esc(S.model || (isPaw(S.agent) ? tx("none") : tx("default")))}  <span class="dim">cwd</span> ${esc(tildify(S.cwd))}\n` +
+    `<span class="dim">${S.mode === "oneshot" ? tx("Each prompt runs the agent once in this folder.") : tx("Type a prompt to start.")} ` +
+    `${tx("Shell commands (<span class=\"sh\">$</span> ls, git status…) run in your shell. /help for more.")}</span>`);
 }
 
 const shq = (s) => (/^[\w\-./:=@+,]+$/.test(s) ? s : "'" + s.replace(/'/g, `'\\''`) + "'");
@@ -371,7 +371,7 @@ async function startProc(S, prompt, { resume = false } = {}) {
   if (S.nodeOf) { refresh(S); return; } // a factory node's tab runs no agent of its own
   if (isPaw(S.agent)) return pawStart(S, { resume });
   // Deprecated: CLI agents (CLI_AGENTS). Tabs only run Paw Agent while they're off.
-  if (!CLI_AGENTS) { sys(S, "✗ CLI agents are turned off in this build."); refresh(S); return; }
+  if (!CLI_AGENTS) { sys(S, tx("✗ CLI agents are turned off in this build.")); refresh(S); return; }
   try {
     // Which session to continue: a long-lived agent only when asked to resume
     // (restart, /model…); a one-shot agent on every prompt after the first.
@@ -426,7 +426,7 @@ async function pawStart(S, { resume = false } = {}) {
   // A tab opened (or restored) before any provider was connected takes the default model now.
   if (!S.model) S.model = defaultPawModel();
   if (!S.model) {
-    info(S, `<span class="dim">No model to run: no provider is connected yet. Connect one in</span> ${connectLink()}<span class="dim">, then type a prompt or /restart.</span>`);
+    info(S, `<span class="dim">${tx("No model to run: no provider is connected yet. Connect one in {link}, then type a prompt or /restart.", { link: `</span>${connectLink()}<span class="dim">` })}</span>`);
     refresh(S);
     return;
   }
@@ -503,8 +503,8 @@ async function restart(S, reason, { resume = true, quiet = false } = {}) {
 async function closeSession(sid) {
   const S = sessions.get(sid);
   if (!S) return;
-  if (isBusy(S) && !confirm(`${S.agent.name} is still working. Close the tab and stop it?`)) return;
-  if (S.task?.state === "running" && !confirm("This plan is running. Close it and stop its steps? Their tabs stay open.")) return;
+  if (isBusy(S) && !confirm(tx("{name} is still working. Close the tab and stop it?", { name: S.agent.name }))) return;
+  if (S.task?.state === "running" && !confirm(tx("This plan is running. Close it and stop its steps? Their tabs stay open."))) return;
   taskTabClosing(S);
   closeBoardView(S);
   keepClosedSession(S);
@@ -621,7 +621,7 @@ async function sendToAgent(S, text, atts = [], opts = {}) {
   if (!opts.slot && !S.working && atCapacity()) {
     waitingPrompts.push({ S, text, atts, opts, since: Date.now() });
     const n = agentsWorking();
-    sys(S, `⏳ waiting: ${n} agent${n === 1 ? " is" : "s are"} working (Settings › General › Agents at once: ${maxAgents()}). This prompt starts when one finishes; ⌘. drops it.`);
+    sys(S, tx(n === 1 ? "⏳ waiting: {n} agent is working (Settings › General › Agents at once: {max}). This prompt starts when one finishes; ⌘. drops it." : "⏳ waiting: {n} agents are working (Settings › General › Agents at once: {max}). This prompt starts when one finishes; ⌘. drops it.", { n, max: maxAgents() }));
     inPane(S, renderBusy);
     return;
   }
@@ -644,14 +644,14 @@ async function sendToAgent(S, text, atts = [], opts = {}) {
   // Deprecated: CLI agents (CLI_AGENTS). One-shot CLIs run once per prompt.
   if (CLI_AGENTS && S.mode === "oneshot") {
     if (isRunning(S)) {
-      sys(S, "still running — wait for it to finish, or ⌘. to stop");
+      sys(S, tx("still running — wait for it to finish, or ⌘. to stop"));
       return;
     }
     // Changed folder: like Claude, every agent starts a new conversation there.
     if (S.agentCwd && S.agentCwd !== S.cwd && (S.session || S.turns?.length)) {
       S.session = null;
       S.turns = [];
-      sys(S, `folder changed to ${tildify(S.cwd)} · new conversation`);
+      sys(S, tx("folder changed to {folder} · new conversation", { folder: tildify(S.cwd) }));
     }
     pushLine(S, { stream: "stdin", text, attachments: echoed, shared: ctx.count, skills: skillNote.count, ts: Date.now(), turn: newTurn(S) });
     const prompt = S.agent.continuity === "replay" ? withReplay(S, full) : full;
@@ -666,10 +666,10 @@ async function sendToAgent(S, text, atts = [], opts = {}) {
   // The shell moved (cd) since the agent started: follow it. Claude keeps
   // conversations per folder, so this starts a fresh one.
   if (isRunning(S) && S.agentCwd && S.agentCwd !== S.cwd) {
-    await restart(S, `agent moved to ${tildify(S.cwd)} (new conversation)`, { resume: false });
+    await restart(S, tx("agent moved to {folder} (new conversation)", { folder: tildify(S.cwd) }), { resume: false });
   }
   if (!isRunning(S)) {
-    sys(S, "agent was not running — starting it");
+    sys(S, tx("agent was not running — starting it"));
     await startProc(S);
     if (!isRunning(S)) { turnFinished(S); return; }
   }
@@ -715,69 +715,70 @@ function helpHtml(S) {
   const turns = (S.turns ?? []).filter((t) => !t.open).length;
   const convo = {
     session: S.session
-      ? `continues in ${name} session ${String(S.session).slice(0, 8)}, also after a restart`
-      : `a ${name} session starts with your first prompt and continues after a restart`,
-    replay: `Paw keeps it${turns ? ` (${turns} turn${turns === 1 ? "" : "s"} so far)` : ""} and sends it with each prompt; it continues after a restart`,
-    none: "every prompt stands alone",
+      ? tx("continues in {name} session {id}, also after a restart", { name, id: String(S.session).slice(0, 8) })
+      : tx("a {name} session starts with your first prompt and continues after a restart", { name }),
+    replay: !turns ? tx("Paw keeps it and sends it with each prompt; it continues after a restart")
+      : tx(turns === 1 ? "Paw keeps it ({n} turn so far) and sends it with each prompt; it continues after a restart" : "Paw keeps it ({n} turns so far) and sends it with each prompt; it continues after a restart", { n: turns }),
+    none: tx("every prompt stands alone"),
   }[S.agent.continuity || "replay"];
-  const modeName = { auto: "Auto", shell: "Shell", agent: "Agent" }[S.inputMode] ?? "Auto";
+  const modeName = { auto: tx("Auto"), shell: tx("Shell"), agent: tx("Agent") }[S.inputMode] ?? tx("Auto");
   const out = [
-    head("This tab"),
-    `<span class="dim">${esc(name)} · ${esc(S.model || "default model")} · ${esc(tildify(S.cwd))} · input mode ${modeName}` +
-      (approvalValue(S) ? ` · approval ${esc(S.approval)}` : "") + "</span>",
-    `<span class="dim">Conversation: ${esc(convo)}. A new tab always starts a new one.</span>`,
+    head(tx("This tab")),
+    `<span class="dim">${esc(name)} · ${esc(S.model || tx("default model"))} · ${esc(tildify(S.cwd))} · ${tx("input mode {mode}", { mode: modeName })}` +
+      (approvalValue(S) ? ` · ${tx("approval {level}", { level: esc(S.approval) })}` : "") + "</span>",
+    `<span class="dim">${tx("Conversation: {convo}. A new tab always starts a new one.", { convo: esc(convo) })}</span>`,
     "",
-    head("Typing"),
-    row("<text>", S.inputMode === "shell" ? "runs in this tab's shell (Shell mode)" :
-      S.inputMode === "agent" ? `goes to ${name} (Agent mode)` : `goes to ${name}; lines that look like commands run in the shell`),
-    row("!<command>", "always run in the shell"),
-    row("/ask <text>", `always send to ${name}`),
-    row("⇧Tab", "switch input mode: Auto → Shell → Agent"),
-    row("⌃R", "search earlier prompts and commands"),
-    row("/", "the commands as you type, then their parameters (models, factories, folders…); Tab takes one"),
-    row("Tab · ↑↓", "complete commands and paths · previous prompts"),
-    row("+ · ⌘V", "attach files · paste an image · long pasted text becomes a badge (click it to edit)"),
+    head(tx("Typing")),
+    row("<text>", S.inputMode === "shell" ? tx("runs in this tab's shell (Shell mode)") :
+      S.inputMode === "agent" ? tx("goes to {name} (Agent mode)", { name }) : tx("goes to {name}; lines that look like commands run in the shell", { name })),
+    row("!<command>", tx("always run in the shell")),
+    row("/ask <text>", tx("always send to {name}", { name })),
+    row("⇧Tab", tx("switch input mode: Auto → Shell → Agent")),
+    row("⌃R", tx("search earlier prompts and commands")),
+    row("/", tx("the commands as you type, then their parameters (models, factories, folders…); Tab takes one")),
+    row("Tab · ↑↓", tx("complete commands and paths · previous prompts")),
+    row("+ · ⌘V", tx("attach files · paste an image · long pasted text becomes a badge (click it to edit)")),
   ];
   if (settings.general.share_shell !== false) {
-    out.push(row("shell output", isPaw(S.agent)
-      ? `short output goes to ${name} right away; long output only if you click “Follow up” under it`
-      : `short output goes to ${name} with your next message; long output only if you click “Follow up” under it`));
-    out.push(row("$ badge", "shared long output waiting for your next message (× leaves it out)"));
+    out.push(row(tx("shell output"), isPaw(S.agent)
+      ? tx("short output goes to {name} right away; long output only if you click “Follow up” under it", { name })
+      : tx("short output goes to {name} with your next message; long output only if you click “Follow up” under it", { name })));
+    out.push(row(tx("$ badge"), tx("shared long output waiting for your next message (× leaves it out)")));
   }
-  out.push("", head("Agent"),
-    row("/model [model]", CLI_AGENTS ? "show or switch the model (conversation continues)"
-      : "show the models, or switch to one: provider/model, or its name if only one provider has it (conversation continues)"),
+  out.push("", head(tx("Agent")),
+    row("/model [model]", CLI_AGENTS ? tx("show or switch the model (conversation continues)")
+      : tx("show the models, or switch to one: provider/model, or its name if only one provider has it (conversation continues)")),
     // Deprecated: CLI agents (CLI_AGENTS).
-    ...(CLI_AGENTS ? [row("/agent [id]", "switch the agent in this tab (new conversation)")] : []));
+    ...(CLI_AGENTS ? [row("/agent [id]", tx("switch the agent in this tab (new conversation)"))] : []));
   const levels = approvalLevels(S.agent);
   if (levels.length && hasLevels(S.agent)) {
-    out.push(row("/approval [level]", `how much ${name} may do on its own: ${levels.join(" · ")}`));
+    out.push(row("/approval [level]", tx("how much {name} may do on its own: {levels}", { name, levels: levels.join(" · ") })));
   }
   out.push(
-    row("/restart", "restart the agent (conversation continues)"),
-    row("/stop", "stop the agent or running command (⌘. · Ctrl-C)"),
-    row(CLI_AGENTS ? "/new [agent]" : "/new [model]", "open a new tab with a new conversation"),
-    row("/plan [what]", `make a plan with ${name} and run its steps on several ${CLI_AGENTS ? "agents" : "models"} (pasted text counts too)`),
-    row("/plans", "list the open plans and how far each one is (click one to open it)"),
-    row("/factories", "list your factories and their last runs (click one to open it)"),
-    row("/factory <name>", "open a factory; /factory new <name> makes one"),
-    row("/factory run <name> [task]", "start a run of a factory in this tab's folder, with the task"),
-    row("/sessions", "list stored sessions, open and closed; click one to reopen it in a new tab"),
-    row("/stats [day|week|month]", "tokens, queries, plans and time per model: today, this week, this month"),
-    row("/clear", "clear the screen (⌘K)"),
-    row("/session", "open this tab's folder: its conversation, files, scripts and command log"),
-    row("/plugins", "the plugins installed and their commands (Settings › Plugins adds more)"),
-    ...(pluginHost.commands.size ? ["", head("Plugins"), ...pluginHelpRows(row)] : []),
-    "", head("Shell"),
-    row("/cd <dir>", "change folder; the agent follows with a new conversation"),
-    row("history [n | -c]", "show the last n shell commands, or clear the history"),
-    row("vim, top, ssh…", "full-screen and interactive programs open in a terminal view"),
-    "", head("Window"),
-    row("⌘T · ⌘⇧T · ⌘W", `new tab · new tab with another ${CLI_AGENTS ? "agent" : "model"} · close tab`),
-    row("⌘1–9 · ⌘⇧[ ]", "go to tab · previous / next tab"),
-    row("⌘D · ⌘⇧D", "split side by side · split stacked"),
-    row("⌘⌥ arrows", "move between panes"),
-    row("⌃⌘S · ⌃⌘M · ⌘,", "show / hide the sidebar (specs, factories, sessions) · the right panel (MCPs, skills) · settings"),
+    row("/restart", tx("restart the agent (conversation continues)")),
+    row("/stop", tx("stop the agent or running command (⌘. · Ctrl-C)")),
+    row(CLI_AGENTS ? "/new [agent]" : "/new [model]", tx("open a new tab with a new conversation")),
+    row("/plan [what]", CLI_AGENTS ? tx("make a plan with {name} and run its steps on several agents (pasted text counts too)", { name }) : tx("make a plan with {name} and run its steps on several models (pasted text counts too)", { name })),
+    row("/plans", tx("list the open plans and how far each one is (click one to open it)")),
+    row("/factories", tx("list your factories and their last runs (click one to open it)")),
+    row("/factory <name>", tx("open a factory; /factory new <name> makes one")),
+    row("/factory run <name> [task]", tx("start a run of a factory in this tab's folder, with the task")),
+    row("/sessions", tx("list stored sessions, open and closed; click one to reopen it in a new tab")),
+    row("/stats [day|week|month]", tx("tokens, queries, plans and time per model: today, this week, this month")),
+    row("/clear", tx("clear the screen (⌘K)")),
+    row("/session", tx("open this tab's folder: its conversation, files, scripts and command log")),
+    row("/plugins", tx("the plugins installed and their commands (Settings › Plugins adds more)")),
+    ...(pluginHost.commands.size ? ["", head(tx("Plugins")), ...pluginHelpRows(row)] : []),
+    "", head(tx("Shell")),
+    row("/cd <dir>", tx("change folder; the agent follows with a new conversation")),
+    row("history [n | -c]", tx("show the last n shell commands, or clear the history")),
+    row("vim, top, ssh…", tx("full-screen and interactive programs open in a terminal view")),
+    "", head(tx("Window")),
+    row("⌘T · ⌘⇧T · ⌘W", CLI_AGENTS ? tx("new tab · new tab with another agent · close tab") : tx("new tab · new tab with another model · close tab")),
+    row("⌘1–9 · ⌘⇧[ ]", tx("go to tab · previous / next tab")),
+    row("⌘D · ⌘⇧D", tx("split side by side · split stacked")),
+    row("⌘⌥ arrows", tx("move between panes")),
+    row("⌃⌘S · ⌃⌘M · ⌘,", tx("show / hide the sidebar (specs, factories, sessions) · the right panel (MCPs, skills) · settings")),
   );
   return out.join("\n");
 }
@@ -809,7 +810,7 @@ async function slashCommand(S, line) {
         const m = findModel(arg);
         if (!m) { sys(S, modelMiss(arg)); info(S, modelListHtml(S.model)); return true; }
         S.model = m;
-        await restart(S, `model → ${m} (conversation kept)`);
+        await restart(S, tx("model → {model} (conversation kept)", { model: m }));
         refresh(S);
         return true;
       }
@@ -819,19 +820,19 @@ async function slashCommand(S, line) {
         const cur = S.model || "default";
         info(S, list.length
           ? list.map((m) => (m === cur ? `<span class="ok">● ${esc(m)}</span>` : `<span class="dim">○</span> ${esc(m)}`)).join("\n")
-          : `<span class="dim">No known models. Use /model &lt;name&gt; or add some in Settings.</span>`);
+          : `<span class="dim">${tx("No known models. Use /model &lt;name&gt; or add some in Settings.")}</span>`);
         return true;
       }
       S.model = arg === "default" ? "" : arg;
-      if (S.mode === "oneshot") sys(S, `model → ${S.model || "default"}`);
-      else await restart(S, `model → ${S.model || "default"} (conversation kept)`);
+      if (S.mode === "oneshot") sys(S, tx("model → {model}", { model: S.model || tx("default") }));
+      else await restart(S, tx("model → {model} (conversation kept)", { model: S.model || tx("default") }));
       refresh(S);
       return true;
     }
     case "/agent": {
       echo();
       if (!CLI_AGENTS) {
-        info(S, `<span class="dim">Tabs run Paw Agent. Pick its model with /model (/model alone lists them).</span>`);
+        info(S, `<span class="dim">${tx("Tabs run Paw Agent. Pick its model with /model (/model alone lists them).")}</span>`);
         return true;
       }
       // Deprecated: CLI agents (CLI_AGENTS).
@@ -841,7 +842,7 @@ async function slashCommand(S, line) {
         return true;
       }
       const a = list.find((x) => x.id === arg || x.name.toLowerCase() === arg.toLowerCase());
-      if (!a) { sys(S, `✗ unknown agent: ${arg}`); return true; }
+      if (!a) { sys(S, tx("✗ unknown agent: {arg}", { arg })); return true; }
       await stopProc(S);
       S.agent = structuredClone(a);
       S.mode = sessionMode(a);
@@ -860,24 +861,24 @@ async function slashCommand(S, line) {
       echo();
       const levels = approvalLevels(S.agent);
       if (!levels.length || !hasLevels(S.agent)) {
-        info(S, `<span class="dim">${esc(S.agent.name)} has no approval levels set up. Add them in Settings › Agents › ${esc(S.agent.name)} › Approval levels.</span>`);
+        info(S, `<span class="dim">${tx("{name} has no approval levels set up. Add them in Settings › Agents › {name} › Approval levels.", { name: esc(S.agent.name) })}</span>`);
         return true;
       }
       if (!arg || !levels.includes(arg)) {
-        if (arg) sys(S, `✗ ${S.agent.name} doesn't support "${arg}"`);
+        if (arg) sys(S, tx("✗ {name} doesn't support \"{arg}\"", { name: S.agent.name, arg }));
         info(S, levels.map((l) => (l === S.approval ? `<span class="ok">● ${l.padEnd(6)}</span>` : `<span class="dim">○</span> ${l.padEnd(6)}`) +
           ` <span class="dim">${esc(approvalText(S.agent, l))}</span>`).join("\n"));
         return true;
       }
       S.approval = arg;
-      if (S.mode === "oneshot") sys(S, `approval → ${arg}`);
-      else await restart(S, `approval → ${arg} (conversation continues)`);
+      if (S.mode === "oneshot") sys(S, tx("approval → {level}", { level: arg }));
+      else await restart(S, tx("approval → {level} (conversation continues)", { level: arg }));
       refresh(S);
       return true;
     }
     case "/restart":
       echo();
-      await restart(S, "restarting agent");
+      await restart(S, tx("restarting agent"));
       return true;
     case "/stop":
       echo();
@@ -893,9 +894,9 @@ async function slashCommand(S, line) {
     case "/session": {
       echo();
       const dir = await sessionDir(S);
-      if (!dir) { sys(S, "✗ couldn't make this tab's session folder"); return true; }
-      info(S, `<span class="dim">This tab's folder</span> ${esc(tildify(dir))}\n` +
-        `<span class="dim">session.json · conversations/ · files/ (attached and pasted) · scripts/ · commands.log · launch.sh</span>`);
+      if (!dir) { sys(S, tx("✗ couldn't make this tab's session folder")); return true; }
+      info(S, `<span class="dim">${tx("This tab's folder")}</span> ${esc(tildify(dir))}\n` +
+        `<span class="dim">${tx("session.json · conversations/ · files/ (attached and pasted) · scripts/ · commands.log · launch.sh")}</span>`);
       if (arg !== "path") invoke("session_dir", { id: S.pawId, reveal: true }).catch(() => {});
       return true;
     }
@@ -920,7 +921,7 @@ async function slashCommand(S, line) {
       const want = arg.toLowerCase();
       const f = factoryState.list.find((x) => x.id === want || x.factory?.name?.toLowerCase() === want);
       if (f) { await openFactory(f.id); return true; }
-      sys(S, `No factory “${arg}”. /factories lists them; /factory new ${arg} makes it.`);
+      sys(S, tx("No factory “{arg}”. /factories lists them; /factory new {arg} makes it.", { arg }));
       return true;
     }
     case "/stats":
@@ -970,7 +971,7 @@ async function openShell(S) {
     shellToSid.set(S.shell, S.sid);
   } catch (e) {
     S.shell = null;
-    sys(S, `✗ could not start a shell: ${e}`);
+    sys(S, tx("✗ could not start a shell: {error}", { error: e }));
   }
 }
 
@@ -999,7 +1000,7 @@ async function runShell(S, command) {
 /** Ctrl-C / ⌘. — interrupt the shell command if one runs, else stop the agent. */
 async function interrupt(S) {
   const dropped = dropWaiting(S);
-  if (dropped) { sys(S, `dropped ${dropped === 1 ? "the waiting prompt" : `${dropped} waiting prompts`}`); inPane(S, renderBusy); return; }
+  if (dropped) { sys(S, dropped === 1 ? tx("dropped the waiting prompt") : tx("dropped {n} waiting prompts", { n: dropped })); inPane(S, renderBusy); return; }
   if (S.raw && S.shell != null) return invoke("shell_write_raw", { id: S.shell, data: "\x03" });
   if (S.shellBusy && S.shell != null) return invoke("shell_interrupt", { id: S.shell });
   if (isPaw(S.agent)) return isRunning(S) && invoke("paw_agent_cancel", { id: S.proc }).catch(() => {});
@@ -1061,18 +1062,18 @@ const forgetLookups = () => { for (const [k, v] of lookupCache) if (!v) lookupCa
 // (Settings › Agents › Approval levels); `{permission}` gets the mapped value.
 const APPROVAL_LEVELS = ["ask", "edits", "auto", "plan", "full"];
 const APPROVAL_TEXT = {
-  ask: "ask before acting (actions that need approval are declined)",
-  edits: "may edit files without asking",
-  auto: "decides routine actions itself; asks before risky ones",
-  plan: "read-only: plan, don't change anything",
-  full: "no confirmations at all — use with care",
+  ask: tx("ask before acting (actions that need approval are declined)"),
+  edits: tx("may edit files without asking"),
+  auto: tx("decides routine actions itself; asks before risky ones"),
+  plan: tx("read-only: plan, don't change anything"),
+  full: tx("no confirmations at all — use with care"),
 };
 /** Paw Agent asks instead of declining. */
 const PAW_APPROVAL_TEXT = {
   ...APPROVAL_TEXT,
-  ask: "asks before every file change and command",
-  edits: "edits files on its own; asks before commands",
-  auto: "edits files in this folder and runs routine commands on its own; asks before risky ones",
+  ask: tx("asks before every file change and command"),
+  edits: tx("edits files on its own; asks before commands"),
+  auto: tx("edits files in this folder and runs routine commands on its own; asks before risky ones"),
 };
 const approvalText = (agent, l) => (isPaw(agent) ? PAW_APPROVAL_TEXT : APPROVAL_TEXT)[l];
 const approvalLevels = (agent) => APPROVAL_LEVELS.filter((l) => agent.approvals?.[l]);
@@ -1091,7 +1092,7 @@ const approvalFromLegacy = (perm) =>
 // Auto guesses per line (see classify); Shell and Agent send every line one
 // way. `!cmd` always means the shell, whatever the mode.
 const INPUT_MODES = ["auto", "shell", "agent"];
-const MODE_LABEL = { auto: "Auto", shell: "Shell", agent: "Agent" };
+const MODE_LABEL = { auto: tx("Auto"), shell: tx("Shell"), agent: tx("Agent") };
 
 function routeFor(S, text) {
   const t = text.trim();
@@ -1117,9 +1118,9 @@ function renderModePill() {
   pill.dataset.mode = S.inputMode;
   pill.textContent = MODE_LABEL[S.inputMode];
   pill.title = {
-    auto: "Auto: commands go to the shell, everything else to the agent. ⇧Tab to switch.",
-    shell: "Shell: every line runs in the shell. ⇧Tab to switch.",
-    agent: "Agent: every line goes to the agent (!cmd still runs in the shell). ⇧Tab to switch.",
+    auto: tx("Auto: commands go to the shell, everything else to the agent. ⇧Tab to switch."),
+    shell: tx("Shell: every line runs in the shell. ⇧Tab to switch."),
+    agent: tx("Agent: every line goes to the agent (!cmd still runs in the shell). ⇧Tab to switch."),
   }[S.inputMode];
 }
 
@@ -1220,7 +1221,7 @@ listen("shell:exit", ({ payload: id }) => {
   leaveTermView(S);
   S.shell = null;
   S.shellBusy = false;
-  sys(S, "shell exited — the next command starts a new one");
+  sys(S, tx("shell exited — the next command starts a new one"));
   refresh(S);
 });
 
@@ -1247,7 +1248,7 @@ async function historyBuiltin(S, command) {
   if (m[1] === "-c") {
     await invoke("history_clear");
     shellHistory = [];
-    sys(S, "history cleared");
+    sys(S, tx("history cleared"));
     return true;
   }
   const n = m[1] ? Number(m[1]) : 25;
@@ -1255,7 +1256,7 @@ async function historyBuiltin(S, command) {
   const width = String(shellHistory.length).length;
   shellHistory.slice(start).forEach((c, i) =>
     pushLine(S, { stream: "shell", text: `${String(start + i + 1).padStart(width)}  ${c}`, ts: Date.now() }));
-  if (!shellHistory.length) sys(S, "history is empty");
+  if (!shellHistory.length) sys(S, tx("history is empty"));
   return true;
 }
 
@@ -1356,34 +1357,34 @@ function slashSpecs(S) {
   const levels = approvalLevels(S.agent);
   const factories = () => {
     if (!factoryState.loaded && !factoryState.loading) loadFactories().then(() => ac.slash && scheduleAutocomplete());
-    return factoryState.list.map((f) => opt(f.id, f.factory?.name ?? "can't be read"));
+    return factoryState.list.map((f) => opt(f.id, f.factory?.name ?? tx("can't be read")));
   };
   const specs = [
-    { cmd: "/help", desc: "what you can type here" },
-    { cmd: "/ask", usage: "<text>", desc: `send to ${name}, even if it looks like a command`, args: () => ({ free: `your message to ${name}` }) },
-    { cmd: "/model", usage: "[model]", desc: "show the models, or switch to one (conversation continues)", args: (w) => (w.length ? {} : models()) },
-    ...(CLI_AGENTS ? [{ cmd: "/agent", usage: "[id]", desc: "switch the agent in this tab", args: (w) => (w.length ? {} : { options: settings.agents.map((a) => opt(a.id, a.name)) }) }] : []),
-    ...(levels.length && hasLevels(S.agent) ? [{ cmd: "/approval", usage: "[level]", desc: `how much ${name} may do on its own`, args: (w) => (w.length ? {} : { options: levels.map((l) => opt(l)) }) }] : []),
-    { cmd: "/restart", desc: "restart the agent (conversation continues)" },
-    { cmd: "/stop", desc: "stop the agent or running command" },
-    { cmd: "/new", usage: "[model]", desc: "open a new tab with a new conversation", args: (w) => (w.length ? {} : models()) },
-    { cmd: "/plan", usage: "[what]", desc: `make a plan with ${name} and run its steps`, args: () => ({ free: "what you want done (or leave it out, and describe it in the plan's tab)" }) },
-    { cmd: "/plans", desc: "the open plans and how far each one is" },
-    { cmd: "/factories", desc: "your factories and their last runs" },
-    { cmd: "/factory", usage: "<name> · new <name> · run <name> [task]", desc: "open, make or run a factory", args: (w) => {
-      if (!w.length) return { options: [opt("run", "start a run in this tab's folder", true), opt("new", "make a new factory", true), ...factories()] };
-      if (w[0] === "new") return { free: "the new factory's name" };
+    { cmd: "/help", desc: tx("what you can type here") },
+    { cmd: "/ask", usage: "<text>", desc: tx("send to {name}, even if it looks like a command", { name }), args: () => ({ free: tx("your message to {name}", { name }) }) },
+    { cmd: "/model", usage: "[model]", desc: tx("show the models, or switch to one (conversation continues)"), args: (w) => (w.length ? {} : models()) },
+    ...(CLI_AGENTS ? [{ cmd: "/agent", usage: "[id]", desc: tx("switch the agent in this tab"), args: (w) => (w.length ? {} : { options: settings.agents.map((a) => opt(a.id, a.name)) }) }] : []),
+    ...(levels.length && hasLevels(S.agent) ? [{ cmd: "/approval", usage: "[level]", desc: tx("how much {name} may do on its own", { name }), args: (w) => (w.length ? {} : { options: levels.map((l) => opt(l)) }) }] : []),
+    { cmd: "/restart", desc: tx("restart the agent (conversation continues)") },
+    { cmd: "/stop", desc: tx("stop the agent or running command") },
+    { cmd: "/new", usage: "[model]", desc: tx("open a new tab with a new conversation"), args: (w) => (w.length ? {} : models()) },
+    { cmd: "/plan", usage: "[what]", desc: tx("make a plan with {name} and run its steps", { name }), args: () => ({ free: tx("what you want done (or leave it out, and describe it in the plan's tab)") }) },
+    { cmd: "/plans", desc: tx("the open plans and how far each one is") },
+    { cmd: "/factories", desc: tx("your factories and their last runs") },
+    { cmd: "/factory", usage: "<name> · new <name> · run <name> [task]", desc: tx("open, make or run a factory"), args: (w) => {
+      if (!w.length) return { options: [opt("run", tx("start a run in this tab's folder"), true), opt("new", tx("make a new factory"), true), ...factories()] };
+      if (w[0] === "new") return { free: tx("the new factory's name") };
       if (w[0] === "run" && w.length === 1) return { options: factories().map((o) => ({ ...o, more: true })) };
-      if (w[0] === "run") return { free: "the task for this run (optional)" };
+      if (w[0] === "run") return { free: tx("the task for this run (optional)") };
       return {};
     } },
-    { cmd: "/sessions", desc: "stored sessions, open and closed" },
-    { cmd: "/stats", usage: "[day|week|month]", desc: "tokens, queries, plans and time per model", args: (w) => (w.length ? {} : { options: [opt("day", "today"), opt("week", "this week"), opt("month", "this month")] }) },
-    { cmd: "/clear", desc: "clear the screen" },
-    { cmd: "/session", desc: "open this tab's folder: conversation, files, scripts" },
-    { cmd: "/plugins", desc: "the plugins installed and their commands" },
-    { cmd: "/cd", usage: "<dir>", desc: "change folder (the agent follows)", dirs: true },
-    ...[...pluginHost.commands.entries()].map(([n, c]) => ({ cmd: `/${n}`, usage: c.usage, desc: c.description || `from ${pluginHost.plugins.get(c.id)?.manifest.name ?? c.id}`,
+    { cmd: "/sessions", desc: tx("stored sessions, open and closed") },
+    { cmd: "/stats", usage: "[day|week|month]", desc: tx("tokens, queries, plans and time per model"), args: (w) => (w.length ? {} : { options: [opt("day", tx("today")), opt("week", tx("this week")), opt("month", tx("this month"))] }) },
+    { cmd: "/clear", desc: tx("clear the screen") },
+    { cmd: "/session", desc: tx("open this tab's folder: conversation, files, scripts") },
+    { cmd: "/plugins", desc: tx("the plugins installed and their commands") },
+    { cmd: "/cd", usage: "<dir>", desc: tx("change folder (the agent follows)"), dirs: true },
+    ...[...pluginHost.commands.entries()].map(([n, c]) => ({ cmd: `/${n}`, usage: c.usage, desc: c.description || tx("from {name}", { name: pluginHost.plugins.get(c.id)?.manifest.name ?? c.id }),
       args: () => (c.usage ? { free: c.usage } : {}) })),
   ];
   return specs;
@@ -1417,7 +1418,7 @@ async function slashAutocomplete(S, value) {
       const paths = await invoke("complete_path", { cwd: S.cwd, word }).catch(() => []);
       if (seq !== ac.seq) return;
       for (const p of paths) if (p.is_dir) items.push({ kind: "dir", value: head + p.value, label: p.value, match: [0, word.length] });
-      if (!items.length) usage = `${spec.cmd} ${spec.usage}: a folder`;
+      if (!items.length) usage = `${spec.cmd} ${spec.usage}: ${tx("a folder")}`;
     } else {
       const a = spec.args?.(done, S) ?? {};
       const w = word.toLowerCase();
@@ -1477,11 +1478,13 @@ function historySearch(step = false) {
 }
 
 const AC_ICON = { history: "↺", command: "›_", dir: "▸", file: "·", prompt: "❯", slash: "/", arg: "›" };
+/** The kind shown at a suggestion's right. */
+const AC_KIND = { history: tx("history"), command: tx("command"), dir: tx("dir"), file: tx("file"), prompt: tx("prompt") };
 function renderAc() {
   const el = $("ac");
   el.innerHTML = "";
   if (ac.search && !ac.items.length) {
-    el.insertAdjacentHTML("beforeend", `<div class="ac-empty">No earlier line contains “${esc($("input").value.trim())}”</div>`);
+    el.insertAdjacentHTML("beforeend", `<div class="ac-empty">${tx("No earlier line contains “{text}”", { text: esc($("input").value.trim()) })}</div>`);
   }
   ac.items.forEach((it, i) => {
     const row = document.createElement("div");
@@ -1489,7 +1492,7 @@ function renderAc() {
     const [a, b] = it.match ?? [0, 0];
     const label = `${esc(it.label.slice(0, a))}<b>${esc(it.label.slice(a, b))}</b>${esc(it.label.slice(b))}`;
     row.innerHTML = `<span class="ac-icon ${it.kind}">${AC_ICON[it.kind]}</span><span class="ac-label">${label}</span>` +
-      (it.desc != null ? `<span class="ac-desc">${esc(it.desc)}</span>` : `<span class="ac-kind">${it.kind}</span>`);
+      (it.desc != null ? `<span class="ac-desc">${esc(it.desc)}</span>` : `<span class="ac-kind">${AC_KIND[it.kind] ?? it.kind}</span>`);
     row.onmousedown = (e) => { e.preventDefault(); acceptAc(i); };
     row.onmousemove = () => { if (ac.sel !== i) { ac.sel = i; renderAc(); } };
     el.appendChild(row);
@@ -1497,9 +1500,9 @@ function renderAc() {
   if (ac.slash && ac.usage) el.insertAdjacentHTML("beforeend", `<div class="ac-usage">${esc(ac.usage)}</div>`);
   const hint = document.createElement("div");
   hint.className = "ac-hint";
-  hint.textContent = ac.slash ? (ac.items.length ? "↑↓ select · Tab accept · ⏎ run · Esc close" : "⏎ run · Esc close") : ac.search ? "History search · type to filter · ⌃R / ↑↓ older · ⏎ / Tab use · Esc close"
-    : ac.full ? "↑↓ select · Tab / ⏎ accept · Esc close"
-    : "History · ↑↓ select · ⏎ accept · Tab for commands & files · Esc close";
+  hint.textContent = ac.slash ? (ac.items.length ? tx("↑↓ select · Tab accept · ⏎ run · Esc close") : tx("⏎ run · Esc close")) : ac.search ? tx("History search · type to filter · ⌃R / ↑↓ older · ⏎ / Tab use · Esc close")
+    : ac.full ? tx("↑↓ select · Tab / ⏎ accept · Esc close")
+    : tx("History · ↑↓ select · ⏎ accept · Tab for commands & files · Esc close");
   el.appendChild(hint);
   el.classList.remove("hidden");
   ac.open = true;
@@ -1678,7 +1681,7 @@ function showTermView() {
   if (on) {
     if (S.term.host.parentElement !== hosts) hosts.appendChild(S.term.host);
     S.term.host.classList.remove("hidden");
-    $("xterm-title").textContent = S.rawCmd ? `Terminal · ${S.rawCmd}` : "Terminal";
+    $("xterm-title").textContent = S.rawCmd ? `${tx("Terminal")} · ${S.rawCmd}` : tx("Terminal");
     requestAnimationFrame(() => { fitTerm(S); if (P === focusedPane) S.term.term.focus(); });
   }
 }
@@ -1783,12 +1786,12 @@ const isPasted = (a) => a?.kind === "text";
 let nextPaste = 1;
 function pastedAttachment(text) {
   const n = nextPaste++;
-  return { kind: "text", text, name: `Pasted text #${n}`, path: `pasted:${Date.now()}:${n}`, size: new Blob([text]).size, lines: text.split("\n").length };
+  return { kind: "text", text, name: tx("Pasted text #{n}", { n }), path: `pasted:${Date.now()}:${n}`, size: new Blob([text]).size, lines: text.split("\n").length };
 }
 const shouldBadge = (text) => text.split("\n").length >= PASTE_BADGE_LINES || text.length > PASTE_BADGE_CHARS;
 /** The message: what was typed, then each pasted text. */
 const withPasted = (text, atts = []) => [text, ...atts.filter(isPasted).map((a) => a.text)].filter((t) => t?.trim()).join("\n\n");
-const pastedLabel = (a) => `Pasted text · ${a.lines} line${a.lines === 1 ? "" : "s"}`;
+const pastedLabel = (a) => tx(a.lines === 1 ? "Pasted text · {n} line" : "Pasted text · {n} lines", { n: a.lines });
 
 /** The badge nearest the caret (the tray's last): an attachment, else the $ badge. */
 function removeLastBadge(S) {
@@ -1813,13 +1816,13 @@ function takeAttachments(S) {
 function chipHtml(a, removable) {
   if (isPasted(a)) {
     return `<span class="att-icon">TXT</span><span class="att-name" title="${esc(String(a.text ?? "").slice(0, 600))}">${esc(pastedLabel(a))}</span>` +
-      (removable ? `<button class="att-x" title="Remove">×</button>` : "");
+      (removable ? `<button class="att-x" title="${tx("Remove")}">×</button>` : "");
   }
   const ext = (a.name.split(".").pop() || "file").slice(0, 4).toUpperCase();
   const icon = a.thumb ? `<img class="att-thumb" src="${a.thumb}" alt="">`
     : `<span class="att-icon">${isInlineImage(a) ? "IMG" : esc(ext)}</span>`;
   return `${icon}<span class="att-name" title="${esc(a.path)}">${esc(a.name)}</span>` +
-    `<span class="att-size">${fmtSize(a.size)}</span>` + (removable ? `<button class="att-x" title="Remove">×</button>` : "");
+    `<span class="att-size">${fmtSize(a.size)}</span>` + (removable ? `<button class="att-x" title="${tx("Remove")}">×</button>` : "");
 }
 
 function renderAttachments() {
@@ -1831,16 +1834,16 @@ function renderAttachments() {
   tray.innerHTML = "";
   if (ctx.length) {
     const el = div("att-badge ctx-badge",
-      `<span class="att-badge-icon">$</span><span class="att-badge-name">${ctx.length} shell output${ctx.length > 1 ? "s" : ""}</span><button class="att-x" title="Don't share with the agent">×</button>`);
-    el.title = "Sent to the agent with your next message:\n" + ctx.map((e) => `$ ${e.cmd}${e.code ? `  (exit ${e.code})` : ""}`).join("\n");
+      `<span class="att-badge-icon">$</span><span class="att-badge-name">${tx(ctx.length > 1 ? "{n} shell outputs" : "{n} shell output", { n: ctx.length })}</span><button class="att-x" title="${tx("Don't share with the agent")}">×</button>`);
+    el.title = tx("Sent to the agent with your next message:") + "\n" + ctx.map((e) => `$ ${e.cmd}${e.code ? `  (exit ${e.code})` : ""}`).join("\n");
     el.querySelector(".att-x").onclick = (e) => { e.stopPropagation(); S.shellContext = []; renderAttachments(); $("input").focus(); };
     tray.appendChild(el);
   }
   list.forEach((a, i) => {
     if (isPasted(a)) {
-      const el = div("att-badge paste-badge", `<span class="att-badge-icon">TXT</span><span class="att-badge-name">${esc(pastedLabel(a))}</span><button class="att-x" title="Remove">×</button>`);
+      const el = div("att-badge paste-badge", `<span class="att-badge-icon">TXT</span><span class="att-badge-name">${esc(pastedLabel(a))}</span><button class="att-x" title="${tx("Remove")}">×</button>`);
       el.title = a.text.length > 600 ? a.text.slice(0, 600) + "…" : a.text;
-      el.title += "\n\nClick to edit it in the prompt.";
+      el.title += "\n\n" + tx("Click to edit it in the prompt.");
       el.querySelector(".att-x").onclick = (e) => { e.stopPropagation(); S.attachments.splice(i, 1); renderAttachments(); $("input").focus(); };
       // Back into the prompt, at the cursor.
       el.onclick = () => {
@@ -1859,7 +1862,7 @@ function renderAttachments() {
     const ext = (a.name.split(".").pop() || "file").slice(0, 4).toUpperCase();
     const icon = a.thumb ? `<img class="att-badge-img" src="${a.thumb}" alt="">`
       : `<span class="att-badge-icon">${isInlineImage(a) ? "IMG" : esc(ext)}</span>`;
-    const el = div("att-badge", `${icon}<span class="att-badge-name">${esc(a.name)}</span><button class="att-x" title="Remove">×</button>`);
+    const el = div("att-badge", `${icon}<span class="att-badge-name">${esc(a.name)}</span><button class="att-x" title="${tx("Remove")}">×</button>`);
     el.title = `${a.path} · ${fmtSize(a.size)}`;
     el.querySelector(".att-x").onclick = (e) => { e.stopPropagation(); S.attachments.splice(i, 1); renderAttachments(); $("input").focus(); };
     tray.appendChild(el);
@@ -1969,7 +1972,7 @@ async function shareShortOutput(S) {
     // Large: shared only if asked (the link under the output).
     const id = `${Date.now().toString(36)}-${nextOffer++}`;
     (S.shellOffers ??= new Map()).set(id, e);
-    pushLine(S, { stream: "shareoffer", offer: id, cwd: e.cwd, text: `${lines} lines`, ts: Date.now() });
+    pushLine(S, { stream: "shareoffer", offer: id, cwd: e.cwd, text: tx("{n} lines", { n: lines }), ts: Date.now() });
     return;
   }
   // A Paw Agent conversation in this folder takes it right away.
@@ -2062,6 +2065,7 @@ function persistableLine(l) {
   if (l.html != null) out.html = l.html;
   if (l.code != null) out.code = l.code;
   if (l.local) out.local = true;
+  if (l.restore) out.restore = true;
   if (l.turn != null) out.turn = l.turn;
   if (l.next) out.next = true;
   if (l.offer) { out.offer = l.offer; if (l.cwd) out.cwd = l.cwd; }
@@ -2085,7 +2089,7 @@ function workspaceSnapshot() {
 /** What the tab was about, for /sessions: the task, the name it was given, or the first prompt. */
 function sessionSummary(S) {
   if (S.task) return S.task.title || S.task.goal?.split("\n")[0] || "";
-  if (S.factory) return `Factory ${factoryTabLabel(S)}`;
+  if (S.factory) return tx("Factory {name}", { name: factoryTabLabel(S) });
   if (S.title) return S.title;
   const first = S.lines.find((l) => l.stream === "stdin" && !l.local && String(l.text ?? "").trim());
   return first ? String(first.text).trim().split("\n")[0].slice(0, 160) : "";
@@ -2202,43 +2206,46 @@ function renderArchive(root) {
   const el = root?.querySelector('[data-id="sl-sessions"]');
   if (!el) return;
   const max = maxSessions();
-  el.textContent = max ? `${archive.closed}/${max} sessions` : `${archive.closed} sessions`;
+  el.textContent = max ? tx("{n}/{max} sessions", { n: archive.closed, max }) : tx("{n} sessions", { n: archive.closed });
   el.classList.toggle("full", !!max && archive.closed >= max);
-  el.title = `${archive.closed} closed session${archive.closed === 1 ? "" : "s"} kept (${fmtSize(archive.size)})` +
-    (max ? `, up to ${max}; the oldest go first` : "") + ". Click for /sessions.";
+  const one = archive.closed === 1, vars = { n: archive.closed, size: fmtSize(archive.size), max };
+  el.title = max
+    ? tx(one ? "{n} closed session kept ({size}), up to {max}; the oldest go first. Click for /sessions." : "{n} closed sessions kept ({size}), up to {max}; the oldest go first. Click for /sessions.", vars)
+    : tx(one ? "{n} closed session kept ({size}). Click for /sessions." : "{n} closed sessions kept ({size}). Click for /sessions.", vars);
 }
 
 const ago = (ms) => {
   const s = Math.max(0, Math.floor((Date.now() - ms) / 1000));
-  if (s < 60) return "just now";
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  if (s < 60) return tx("just now");
+  if (s < 3600) return tx("{n}m ago", { n: Math.floor(s / 60) });
+  if (s < 86400) return tx("{n}h ago", { n: Math.floor(s / 3600) });
   const d = Math.floor(s / 86400);
-  return d === 1 ? "yesterday" : d < 30 ? `${d} days ago` : new Date(ms).toLocaleDateString();
+  return d === 1 ? tx("yesterday") : d < 30 ? tx("{n} days ago", { n: d }) : new Date(ms).toLocaleDateString(I18N.locale());
 };
 
 /** /sessions: every stored session, open ones first; click one to open it. */
 async function sessionsListHtml() {
   const list = await invoke("list_sessions");
-  if (!list.length) return `<span class="dim">No sessions stored yet.</span>`;
+  if (!list.length) return `<span class="dim">${tx("No sessions stored yet.")}</span>`;
   const open = new Map([...sessions.values()].map((S) => [S.pawId, S]));
   const rows = [...list].sort((a, b) => (open.has(b.id) - open.has(a.id)) || b.last_active - a.last_active);
   const closed = rows.filter((x) => !open.has(x.id));
   const max = maxSessions();
   const total = list.reduce((n, x) => n + x.size, 0);
-  const head = `<span class="help-h">Sessions</span> <span class="dim">· ${open.size} active · ${closed.length}${max ? ` of ${max}` : ""} completed kept · ${fmtSize(total)}</span>`;
+  const head = `<span class="help-h">${tx("Sessions")}</span> <span class="dim">${max ? tx("· {open} active · {closed} of {max} completed kept · {size}", { open: open.size, closed: closed.length, max, size: fmtSize(total) }) : tx("· {open} active · {closed} completed kept · {size}", { open: open.size, closed: closed.length, size: fmtSize(total) })}</span>`;
   const agentName = (id) => settings.agents.find((a) => a.id === id)?.name ?? id;
+  const stA = tx("active"), stC = tx("completed"), sw = Math.max(stA.length, stC.length);
   const lines = rows.map((x) => {
     const S = open.get(x.id);
-    const desc = (S ? sessionSummary(S) : x.description) || (S ? tabLabel(S) : "(no prompt)");
+    const desc = (S ? sessionSummary(S) : x.description) || (S ? tabLabel(S) : tx("(no prompt)"));
     const d = desc.length > 44 ? desc.slice(0, 43) + "…" : desc;
     const when = S ? lastActive(S) : x.last_active;
-    const status = S ? `<span class="ok">● active   </span>` : `<span class="dim">○ completed</span>`;
+    const status = S ? `<span class="ok">● ${esc(stA.padEnd(sw))}</span>` : `<span class="dim">○ ${esc(stC.padEnd(sw))}</span>`;
     return `${status} <span class="dim">${esc(x.id.length > 8 ? x.id.slice(0, 8) + "…" : x.id)}</span>  ` +
-      `<a href="#" class="task-link" data-open-session="${esc(x.id)}" title="${S ? "Go to its tab" : "Reopen it in a new tab"}">${esc(d)}</a>${" ".repeat(44 - d.length)}` +
-      `  ${esc(ago(when).padEnd(10))}  ${esc(fmtSize(x.size).padStart(7))}  <span class="dim">${esc(agentName(x.agent))}${x.cwd ? " · " + esc(tildify(x.cwd)) : ""}${x.task ? " · task" : ""}</span>`;
+      `<a href="#" class="task-link" data-open-session="${esc(x.id)}" title="${S ? tx("Go to its tab") : tx("Reopen it in a new tab")}">${esc(d)}</a>${" ".repeat(44 - d.length)}` +
+      `  ${esc(ago(when).padEnd(10))}  ${esc(fmtSize(x.size).padStart(7))}  <span class="dim">${esc(agentName(x.agent))}${x.cwd ? " · " + esc(tildify(x.cwd)) : ""}${x.task ? ` · ${tx("task")}` : ""}</span>`;
   });
-  return `${head}\n${lines.join("\n")}\n<span class="dim">Click a session to go to it; a completed one reopens in a new tab, its conversation continuing.</span>`;
+  return `${head}\n${lines.join("\n")}\n<span class="dim">${tx("Click a session to go to it; a completed one reopens in a new tab, its conversation continuing.")}</span>`;
 }
 
 /** Reopen a closed session in a new tab. */
@@ -2251,8 +2258,8 @@ async function reopenSession(id) {
   try { t = await invoke("load_session", { id }); } catch (e) { const S = curS(); if (S) sys(S, `✗ ${e}`); return; }
   // load_session gives the folder's current id.
   if (sessions.size && [...sessions.values()].some((S) => S.pawId === t.id)) return select([...sessions.values()].find((S) => S.pawId === t.id).sid);
-  const S = await restoreTab(t, "reopened");
-  if (!S) { const C = curS(); if (C) sys(C, `✗ the agent of that session (${t.agent}) isn't set up any more`); return; }
+  const S = await restoreTab(t, tx("reopened"));
+  if (!S) { const C = curS(); if (C) sys(C, tx("✗ the agent of that session ({agent}) isn't set up any more", { agent: t.agent })); return; }
   if (S.group && !groups.has(S.group)) delete S.group;
   select(S.sid);
   saveWorkspaceSoon();
@@ -2266,11 +2273,12 @@ document.addEventListener("click", (e) => {
   reopenSession(a.dataset.openSession);
 });
 
-/** Restarts add a note each; the last one is enough (it says the same). */
+/** Restarts add a note each (marked `restore`); the last one is enough (it says the same).
+ *  Notes saved before they were marked are recognized by their English text. */
 function dropRestoreNotes(S) {
   while (S.lines.length) {
     const l = S.lines[S.lines.length - 1];
-    if (l.stream === "system" && /^— (restored after restart|re-attached|reopened)/.test(String(l.text ?? ""))) S.lines.pop();
+    if (l.stream === "system" && (l.restore || /^— (restored after restart|re-attached|reopened)/.test(String(l.text ?? "")))) S.lines.pop();
     else break;
   }
 }
@@ -2309,7 +2317,7 @@ async function restoreTab(t, note = null) {
   };
   const oldName = settings.agents.find((a) => a.id === t.agent)?.name ?? t.agent;
   const convertedNote = () => fromCli && S.lines.push({ stream: "info", ts: Date.now(),
-    html: `<span class="dim">This tab used ${esc(oldName)}; it continues on ${esc(agent.name)} with ${esc(S.model || "the default model")}.</span>` });
+    html: `<span class="dim">${tx("This tab used {old}; it continues on {agent} with {model}.", { old: esc(oldName), agent: esc(agent.name), model: esc(S.model || tx("the default model")) })}</span>` });
   // The daemon that ran this tab still runs: re-attach to its agent and shell
   // (not to a CLI agent's process: the tab runs Paw Agent now).
   const live = t.live && daemon.instance && t.live.instance === daemon.instance ? t.live : null;
@@ -2356,8 +2364,8 @@ async function restoreTab(t, note = null) {
   }
   if (procAlive || S.shell != null) {
     dropRestoreNotes(S);
-    S.lines.push({ stream: "system", ts: Date.now(),
-      text: procAlive?.info.status === "running" ? `— re-attached · ${S.agent.name} kept running while Paw's window was closed —` : "— re-attached —" });
+    S.lines.push({ stream: "system", ts: Date.now(), restore: true,
+      text: procAlive?.info.status === "running" ? tx("— re-attached · {name} kept running while Paw's window was closed —", { name: S.agent.name }) : tx("— re-attached —") });
     convertedNote();
     // What happened meanwhile, once every tab is back (restoreWorkspace).
     S.replay = attach.events ?? [];
@@ -2368,12 +2376,12 @@ async function restoreTab(t, note = null) {
   }
   const resumable = S.agent.continuity === "session" && S.session;
   const replay = S.agent.continuity === "replay" && S.turns.length;
-  const how = note ?? "restored after restart";
+  const how = note ?? tx("restored after restart");
   dropRestoreNotes(S);
-  S.lines.push({ stream: "system", ts: Date.now(),
-    text: resumable ? `— ${how} · attached to ${S.agent.name} session ${String(S.session).slice(0, 8)} (conversation continues) —`
-      : replay ? `— ${how} · ${S.agent.name} gets the ${S.turns.length} earlier turn${S.turns.length > 1 ? "s" : ""} with your next prompt (conversation continues) —`
-      : `— ${how} · no earlier conversation to continue —` });
+  S.lines.push({ stream: "system", ts: Date.now(), restore: true,
+    text: resumable ? tx("— {how} · attached to {name} session {id} (conversation continues) —", { how, name: S.agent.name, id: String(S.session).slice(0, 8) })
+      : replay ? tx(S.turns.length > 1 ? "— {how} · {name} gets the {n} earlier turns with your next prompt (conversation continues) —" : "— {how} · {name} gets the {n} earlier turn with your next prompt (conversation continues) —", { how, name: S.agent.name, n: S.turns.length })
+      : tx("— {how} · no earlier conversation to continue —", { how }) });
   convertedNote();
   reloadThumbs(S);
   openShell(S);
@@ -2471,7 +2479,7 @@ function checkApprovalText(S) {
   const levels = approvalLevels(S.agent);
   const current = LEVEL_ORDER.indexOf(S.approval);
   const target = levels.includes("full") ? "full" : LEVEL_ORDER.slice(current + 1).find((l) => levels.includes(l));
-  addApprovalCard(S, { kind: "level", target: target ?? null, items: [{ label: `${S.agent.name} said an action needs approval` }] });
+  addApprovalCard(S, { kind: "level", target: target ?? null, items: [{ label: tx("{name} said an action needs approval", { name: S.agent.name }) }] });
 }
 
 async function decideApproval(S, card, choice) {
@@ -2545,20 +2553,20 @@ async function endOnceAllowance(S) {
 function renderApprovalCard(S, l) {
   const el = div("tl approval-card " + l.state);
   const title = l.state === "pending"
-    ? (l.kind === "rules" || l.kind === "paw" ? `${esc(l.agentName)} needs your approval for:` : `${esc(l.agentName)} couldn't do something that needs approval.`)
-    : { once: "✓ Allowed once", always: "✓ Always allowed in this folder", denied: "✗ Denied",
-        expired: "— No longer waiting (the turn ended)" }[l.state] ?? "";
+    ? (l.kind === "rules" || l.kind === "paw" ? tx("{name} needs your approval for:", { name: esc(l.agentName) }) : tx("{name} couldn't do something that needs approval.", { name: esc(l.agentName) }))
+    : { once: tx("✓ Allowed once"), always: tx("✓ Always allowed in this folder"), denied: tx("✗ Denied"),
+        expired: tx("— No longer waiting (the turn ended)") }[l.state] ?? "";
   const paw = l.kind === "paw";
-  const broadText = (i) => (paw ? "allows every file change in this folder" : `allows every ${esc(i.rule)} action`);
+  const broadText = (i) => (paw ? tx("allows every file change in this folder") : tx("allows every {rule} action", { rule: esc(i.rule) }));
   const list = (l.items ?? []).filter(() => l.kind === "rules" || paw)
-    .map((i) => `<div class="ap-item"><code>${esc(i.label)}</code>${i.broad && l.state === "pending" ? ` <span class="dim">(“Always” ${broadText(i)})</span>` : ""}</div>`).join("");
+    .map((i) => `<div class="ap-item"><code>${esc(i.label)}</code>${i.broad && l.state === "pending" ? ` <span class="dim">${tx("(“Always” {what})", { what: broadText(i) })}</span>` : ""}</div>`).join("");
   // Auto mode stopped to ask: say why.
-  const why = paw && l.items?.[0]?.why ? `<div class="ap-why">Auto mode asks because ${esc(l.items[0].why)}.</div>` : "";
+  const why = paw && l.items?.[0]?.why ? `<div class="ap-why">${tx("Auto mode asks because {why}.", { why: esc(l.items[0].why) })}</div>` : "";
   el.innerHTML = `<div class="ap-title"><span class="ap-icon">${l.state === "pending" ? "⚠" : ""}</span>${title}</div>${list}${why}`;
   // The change or command in full, folded.
   const detail = paw && l.items?.[0]?.detail;
   if (detail && detail !== l.items[0].label.replace(/^\$ /, "")) {
-    el.appendChild(fold("ap-detail", `<span class="dim">Show ${l.tool === "shell" ? "command" : "change"}</span>`, detail));
+    el.appendChild(fold("ap-detail", `<span class="dim">${l.tool === "shell" ? tx("Show command") : tx("Show change")}</span>`, detail));
   }
   if (l.state !== "pending") return el;
   const row = div("ap-actions");
@@ -2570,17 +2578,17 @@ function renderApprovalCard(S, l) {
     row.appendChild(b);
   };
   if ((l.kind === "rules" || paw) && l.canAllow) {
-    btn("Allow once", "once", "primary");
-    btn("Always in this folder", "always");
+    btn(tx("Allow once"), "once", "primary");
+    btn(tx("Always in this folder"), "always");
   } else if (l.kind === "level" && l.target) {
-    btn(`Run again with “${l.target}” once`, "once", "primary");
-    btn(`Use “${l.target}” for this tab`, "always");
+    btn(tx("Run again with “{level}” once", { level: l.target }), "once", "primary");
+    btn(tx("Use “{level}” for this tab", { level: l.target }), "always");
   } else {
     row.appendChild(div("dim", l.kind === "rules"
-      ? `${esc(l.agentName)} has no way to allow a single action yet — set its allow template in Settings › Agents.`
-      : `Set up approval levels for ${esc(l.agentName)} in Settings › Agents to allow more.`));
+      ? tx("{name} has no way to allow a single action yet — set its allow template in Settings › Agents.", { name: esc(l.agentName) })
+      : tx("Set up approval levels for {name} in Settings › Agents to allow more.", { name: esc(l.agentName) })));
   }
-  btn(l.kind === "level" ? "Dismiss" : "Deny", "denied", "ghost");
+  btn(l.kind === "level" ? tx("Dismiss") : tx("Deny"), "denied", "ghost");
   el.appendChild(row);
   return el;
 }
@@ -2641,7 +2649,7 @@ function stepFontSize(dir) {
   for (const P of panes.values()) { const out = P.root.querySelector('[data-id="output"]'); if (out) out.scrollTop = out.scrollHeight; }
   let toast = document.querySelector(".font-toast");
   if (!toast) { toast = div("font-toast"); document.body.appendChild(toast); }
-  toast.textContent = `${next} px${next === FONT_DEFAULT ? " · default" : ""}`;
+  toast.textContent = `${next} px${next === FONT_DEFAULT ? ` · ${tx("default")}` : ""}`;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => toast.remove(), 900);
   clearTimeout(fontSaveTimer);
@@ -2675,12 +2683,12 @@ function renderTabs() {
     t.className = "tab" + (sid === activeId ? " active" : paneOf(S) ? " visible" : "") + (S.task ? " task-tab" : step ? " step-tab" : "") + (g ? " in-group" : "");
     if (g) t.style.setProperty("--g", GROUP_COLORS[g.color] ?? GROUP_COLORS.grey);
     const runs = S.model ? `${S.agent.name} · ${S.model}` : S.agent.name;
-    t.title = S.task ? `Plan: ${S.task.goal || "new"} — by ${runs}` : step ? `Step of the plan ${step.T.task.title}: ${runs} — ${tildify(S.cwd)}` : `${runs} — ${tildify(S.cwd)}`;
+    t.title = S.task ? tx("Plan: {goal} — by {runs}", { goal: S.task.goal || tx("new"), runs }) : step ? tx("Step of the plan {plan}: {runs} — {folder}", { plan: step.T.task.title, runs, folder: tildify(S.cwd) }) : `${runs} — ${tildify(S.cwd)}`;
     const needs = S.task ? taskNeedsYou(S) : 0;
     t.innerHTML = (S.task ? `<span class="task-ico" aria-hidden="true"></span>` : "") +
       `<span class="dot ${S.task ? taskDotState(S) : S.factory ? factoryDotState(S) : sessionState(S)}"></span><span class="label">${esc(tabLabel(S))}</span>` +
-      (needs ? `<span class="tab-badge" title="${needs} step${needs > 1 ? "s" : ""} waiting for your approval">${needs}</span>` : "") +
-      `${S.unread ? `<span class="tab-unread"></span>` : ""}<button class="close" title="Close tab (⌘W)">×</button>`;
+      (needs ? `<span class="tab-badge" title="${tx(needs > 1 ? "{n} steps waiting for your approval" : "{n} step waiting for your approval", { n: needs })}">${needs}</span>` : "") +
+      `${S.unread ? `<span class="tab-unread"></span>` : ""}<button class="close" title="${tx("Close tab (⌘W)")}">×</button>`;
     t.onmousedown = (e) => { if (e.button === 1) { e.preventDefault(); closeSession(sid); } };
     t.dataset.sid = sid;
     t.addEventListener("pointerdown", (e) => startTabDrag(e, t));
@@ -2813,11 +2821,15 @@ const GROUP_COLORS = {
   blue: "#4a8cf7", purple: "#9a6bea", green: "#3fa55b", orange: "#e8823a", pink: "#e0609e",
   cyan: "#2fa8b8", red: "#e5534b", yellow: "#d4a72c", grey: "#8b8f98",
 };
+const GROUP_COLOR_NAMES = {
+  blue: tx("blue"), purple: tx("purple"), green: tx("green"), orange: tx("orange"), pink: tx("pink"),
+  cyan: tx("cyan"), red: tx("red"), yellow: tx("yellow"), grey: tx("grey"),
+};
 let groupSeq = 1;
 const groupMembers = (gid) => openTabs.map((sid) => sessions.get(sid)).filter((S) => S?.group === gid);
 function groupName(g) {
   if (g.name) return g.name;
-  if (g.task) return [...sessions.values()].find((S) => S.task?.id === g.task)?.task.title || "Task";
+  if (g.task) return [...sessions.values()].find((S) => S.task?.id === g.task)?.task.title || tx("Task");
   return "";
 }
 function freeColor() {
@@ -2880,12 +2892,14 @@ function groupChip(g) {
   const el = document.createElement("div");
   el.className = "tab-group" + (g.collapsed ? " collapsed" : "") + (name ? "" : " unnamed");
   el.style.setProperty("--g", color);
-  el.title = `${name || "Group"} · ${members.length} tab${members.length === 1 ? "" : "s"} — click to ${g.collapsed ? "show" : "fold"}, right-click for more`;
+  const one = members.length === 1;
+  el.title = tx(g.collapsed ? (one ? "{name} · {n} tab — click to show, right-click for more" : "{name} · {n} tabs — click to show, right-click for more")
+    : (one ? "{name} · {n} tab — click to fold, right-click for more" : "{name} · {n} tabs — click to fold, right-click for more"), { name: name || tx("Group"), n: members.length });
   el.innerHTML = (g.task ? `<span class="tg-ico" aria-hidden="true"></span>` : "") +
     `<span class="tg-name">${esc(name)}</span>` +
     (g.collapsed ? `<span class="tg-count">${members.length}</span>` : "") +
-    (busy ? `<span class="tg-busy" title="Working"></span>` : "") +
-    (needs ? `<span class="tab-badge" title="${needs} waiting for your approval">${needs}</span>` : "");
+    (busy ? `<span class="tg-busy" title="${tx("Working")}"></span>` : "") +
+    (needs ? `<span class="tab-badge" title="${tx("{n} waiting for your approval", { n: needs })}">${needs}</span>` : "");
   el.onclick = () => toggleGroup(g);
   el.ondblclick = (e) => { e.preventDefault(); renameGroup(g); };
   el.oncontextmenu = (e) => { e.preventDefault(); groupMenu(g, e.clientX, e.clientY); };
@@ -2903,7 +2917,7 @@ function renameGroup(g) {
   const input = document.createElement("input");
   input.className = "tg-input";
   input.value = groupName(g);
-  input.placeholder = "Name this group";
+  input.placeholder = tx("Name this group");
   input.size = Math.max(8, input.value.length + 1);
   chip.querySelector(".tg-name").replaceWith(input);
   input.focus();
@@ -2940,7 +2954,7 @@ function contextMenu(x, y, items) {
         const b = document.createElement("button");
         b.className = "swatch" + (c === it.current ? " on" : "");
         b.style.background = GROUP_COLORS[c];
-        b.title = c;
+        b.title = GROUP_COLOR_NAMES[c] ?? c;
         b.onclick = () => { closeMenu(); it.pick(c); };
         row.appendChild(b);
       }
@@ -3026,34 +3040,34 @@ document.addEventListener("contextmenu", (e) => {
   const { text, S } = hit;
   const lines = text.trim().split("\n").length;
   contextMenu(e.clientX, e.clientY, [
-    { label: "Copy", sub: "⌘C", run: () => copyText(text) },
-    { label: "Make a plan", sub: lines > 1 ? `${lines} lines` : "", run: () => taskFromText(S, text) },
+    { label: tx("Copy"), sub: "⌘C", run: () => copyText(text) },
+    { label: tx("Make a plan"), sub: lines > 1 ? tx("{n} lines", { n: lines }) : "", run: () => taskFromText(S, text) },
   ]);
 });
 
 function tabMenu(S, x, y) {
-  const items = [{ label: "Add to new group", run: () => { const g = createGroup([S]); renameGroup(g); } }];
+  const items = [{ label: tx("Add to new group"), run: () => { const g = createGroup([S]); renameGroup(g); } }];
   for (const g of groups.values()) {
     if (g.id === S.group) continue;
-    items.push({ label: `Add to “${groupName(g) || "unnamed group"}”`, dot: GROUP_COLORS[g.color], run: () => addToGroup(S, g.id) });
+    items.push({ label: tx("Add to “{group}”", { group: groupName(g) || tx("unnamed group") }), dot: GROUP_COLORS[g.color], run: () => addToGroup(S, g.id) });
   }
-  if (S.group) items.push({ label: "Remove from group", run: () => removeFromGroup(S) });
-  items.push({ label: isPinned("sessions", S.pawId) ? "Unpin in the sidebar" : "Pin in the sidebar", run: () => togglePin("sessions", S.pawId) });
+  if (S.group) items.push({ label: tx("Remove from group"), run: () => removeFromGroup(S) });
+  items.push({ label: isPinned("sessions", S.pawId) ? tx("Unpin in the sidebar") : tx("Pin in the sidebar"), run: () => togglePin("sessions", S.pawId) });
   // A task tab is named by its plan.
-  if (!S.task) items.unshift({ label: "Rename…", run: () => renameSession(S) }, "-");
-  items.push("-", { label: "Close tab", sub: "⌘W", run: () => closeSession(S.sid) });
+  if (!S.task) items.unshift({ label: tx("Rename…"), run: () => renameSession(S) }, "-");
+  items.push("-", { label: tx("Close tab"), sub: "⌘W", run: () => closeSession(S.sid) });
   contextMenu(x, y, items);
 }
 
 function groupMenu(g, x, y) {
   const members = groupMembers(g.id);
   contextMenu(x, y, [
-    { label: g.collapsed ? "Show tabs" : "Fold tabs", run: () => toggleGroup(g) },
-    { label: "Rename…", run: () => renameGroup(g) },
+    { label: g.collapsed ? tx("Show tabs") : tx("Fold tabs"), run: () => toggleGroup(g) },
+    { label: tx("Rename…"), run: () => renameGroup(g) },
     { swatches: true, current: g.color, pick: (c) => { g.color = c; renderTabs(); saveWorkspaceSoon(); } },
     "-",
-    { label: "Ungroup", run: () => { for (const S of members) delete S.group; groups.delete(g.id); renderTabs(); saveWorkspaceSoon(); } },
-    { label: `Close ${members.length} tab${members.length === 1 ? "" : "s"}`, run: async () => { for (const S of members) await closeSession(S.sid); } },
+    { label: tx("Ungroup"), run: () => { for (const S of members) delete S.group; groups.delete(g.id); renderTabs(); saveWorkspaceSoon(); } },
+    { label: tx(members.length === 1 ? "Close {n} tab" : "Close {n} tabs", { n: members.length }), run: async () => { for (const S of members) await closeSession(S.sid); } },
   ]);
 }
 
@@ -3091,8 +3105,8 @@ const navFilter = (kind) => ($(`${kind}-filter`)?.value ?? "").trim().toLowerCas
 const navMatches = (q, ...texts) => !q || texts.some((t) => String(t ?? "").toLowerCase().includes(q));
 const PIN_SVG = `<svg viewBox="0 0 12 12"><path d="M4.5 1.5h3l-.5 3 2 1.5v1h-6v-1l2-1.5z"/><path d="M6 7v3.5"/></svg>`;
 const pinButton = (kind, key) =>
-  `<button class="nav-pin${isPinned(kind, key) ? " on" : ""}" data-pin="${kind}" data-key="${esc(key)}" title="${isPinned(kind, key) ? "Unpin" : "Pin to the top"}">${PIN_SVG}</button>`;
-const pinnedHead = () => `<div class="nav-sub nav-pinned-head"><span class="sk-sec-title">Pinned</span></div>`;
+  `<button class="nav-pin${isPinned(kind, key) ? " on" : ""}" data-pin="${kind}" data-key="${esc(key)}" title="${isPinned(kind, key) ? tx("Unpin") : tx("Pin to the top")}">${PIN_SVG}</button>`;
+const pinnedHead = () => `<div class="nav-sub nav-pinned-head"><span class="sk-sec-title">${tx("Pinned")}</span></div>`;
 // Pin buttons: before the row's own click (capture), so pinning doesn't also open it.
 document.addEventListener("click", (e) => {
   const b = e.target.closest?.(".nav-pin");
@@ -3172,12 +3186,12 @@ function renameSession(S) {
 }
 
 // Sessions: the open tabs, in tab order, under their tab groups.
-const STATE_TEXT = { running: "Working", ready: "Ready", idle: "Idle", starting: "Starting", failed: "Failed", stopped: "Stopped", exited: "Exited" };
+const STATE_TEXT = { running: tx("Working"), ready: tx("Ready"), idle: tx("Idle"), starting: tx("Starting"), failed: tx("Failed"), stopped: tx("Stopped"), exited: tx("Exited") };
 function sessionStatus(S) {
   if (S.factory) return factoryStatus(S.factory.id);
   if (S.task) {
     const n = taskNeedsYou(S);
-    return n ? `${n} step${n > 1 ? "s" : ""} waiting for you` : `Plan · ${S.task.state}`;
+    return n ? tx(n > 1 ? "{n} steps waiting for you" : "{n} step waiting for you", { n }) : tx("Plan · {state}", { state: S.task.state });
   }
   const st = sessionState(S);
   return `${STATE_TEXT[st] ?? st} · ${tildify(S.cwd)}`;
@@ -3202,7 +3216,7 @@ function renderSessionList() {
   $("sessions-count").textContent = open.length || "";
   const q = navFilter("sessions");
   const shown = open.filter((S) => navMatches(q, tabLabel(S), sessionStatus(S), S.cwd));
-  body.innerHTML = shown.length ? "" : `<div class="sk-empty">${q ? "No sessions match." : "No open sessions."}</div>`;
+  body.innerHTML = shown.length ? "" : `<div class="sk-empty">${q ? tx("No sessions match.") : tx("No open sessions.")}</div>`;
   const pinned = shown.filter((S) => isPinned("sessions", S.pawId));
   if (pinned.length) {
     const wrap = document.createElement("div");
@@ -3262,13 +3276,13 @@ function renderSpecs() {
   $("specs-count").textContent = specs.groups.reduce((n, g) => n + g.specs.length, 0) || "";
   $("specs-groups").innerHTML = specs.groups.map((g) => `<option value="${esc(g.name)}">`).join("");
   const body = $("specs-body");
-  if (!specs.groups.length) { body.innerHTML = `<div class="sk-empty">Import Markdown specs with +.</div>`; return; }
+  if (!specs.groups.length) { body.innerHTML = `<div class="sk-empty">${tx("Import Markdown specs with +.")}</div>`; return; }
   const q = navFilter("specs");
-  const item = (s, si) => `<div class="nav-item${s.missing ? " missing" : ""}" data-spec="${si}" title="${esc(tildify(s.path))}${s.missing ? " — not there any more" : " — click to attach it to the session"}">
+  const item = (s, si) => `<div class="nav-item${s.missing ? " missing" : ""}" data-spec="${si}" title="${esc(tildify(s.path))}${s.missing ? ` — ${tx("not there any more")}` : ` — ${tx("click to attach it to the session")}`}">
       <svg class="nav-ico" viewBox="0 0 12 12"><path d="M3 1.5h4l2.5 2.5v6.5h-6.5z"/><path d="M7 1.5v2.5h2.5"/></svg>
       <span class="nav-text"><span class="nav-name">${esc(s.title)}</span></span>
       ${pinButton("specs", s.path)}
-      <button class="sk-x" data-spec-remove title="Remove from the group (the file stays)">×</button></div>`;
+      <button class="sk-x" data-spec-remove title="${tx("Remove from the group (the file stays)")}">×</button></div>`;
   const hit = (g, s) => navMatches(q, s.title, s.path, g.name);
   // Pinned specs: on top, each in a wrapper that still names its group (clicks and drags work as below).
   const pinned = specs.groups.flatMap((g, gi) => g.specs.map((s, si) => ({ g, s, gi, si }))).filter(({ g, s }) => isPinned("specs", s.path) && hit(g, s));
@@ -3277,19 +3291,19 @@ function renderSpecs() {
     const list = g.specs.map((s, si) => [s, si]).filter(([s]) => !isPinned("specs", s.path) && hit(g, s));
     if (q && !list.length) return "";
     return `<div class="nav-group" data-group="${gi}">
-      <div class="nav-sub" title="Double-click to rename"><span class="sk-sec-title">${esc(g.name)}</span>
-        <button class="sk-sec-add" data-spec-import title="Import specs into ${esc(g.name)}">+</button>
-        <button class="sk-x" data-group-remove title="Remove the group (the files stay)">×</button></div>
-      ${list.length ? list.map(([s, si]) => item(s, si)).join("") : g.specs.length ? "" : `<div class="sk-empty">Drag specs here, or import with +.</div>`}
+      <div class="nav-sub" title="${tx("Double-click to rename")}"><span class="sk-sec-title">${esc(g.name)}</span>
+        <button class="sk-sec-add" data-spec-import title="${tx("Import specs into {group}", { group: esc(g.name) })}">+</button>
+        <button class="sk-x" data-group-remove title="${tx("Remove the group (the files stay)")}">×</button></div>
+      ${list.length ? list.map(([s, si]) => item(s, si)).join("") : g.specs.length ? "" : `<div class="sk-empty">${tx("Drag specs here, or import with +.")}</div>`}
     </div>`;
   }).join("");
-  body.innerHTML = top + groups || `<div class="sk-empty">No specs match.</div>`;
+  body.innerHTML = top + groups || `<div class="sk-empty">${tx("No specs match.")}</div>`;
 }
 
 async function attachSpec(spec) {
   const S = focusedS();
-  if (!S) return specsMsg("Open a session to attach a spec to.", true);
-  if (spec.missing) return specsMsg(`${tildify(spec.path)} isn't there any more.`, true);
+  if (!S) return specsMsg(tx("Open a session to attach a spec to."), true);
+  if (spec.missing) return specsMsg(tx("{path} isn't there any more.", { path: tildify(spec.path) }), true);
   try {
     const a = await invoke("describe_attachment", { path: spec.path });
     inPane(S, () => { addAttachments(S, [a]); $("input").focus(); });
@@ -3369,7 +3383,7 @@ $("specs-body").addEventListener("click", (e) => {
   if (e.target.closest("[data-spec-import]")) return specsCall("specs_import", { group: specs.groups[gi].name });
   if (e.target.closest("[data-group-remove]")) {
     const g = specs.groups[gi];
-    if (g.specs.length && !confirm(`Remove the group “${g.name}”? Its ${g.specs.length} spec${g.specs.length > 1 ? "s stay" : " stays"} on disk.`)) return;
+    if (g.specs.length && !confirm(tx(g.specs.length > 1 ? "Remove the group “{group}”? Its {n} specs stay on disk." : "Remove the group “{group}”? Its {n} spec stays on disk.", { group: g.name, n: g.specs.length }))) return;
     return saveSpecs(specsData().filter((_, i) => i !== gi));
   }
   const item = e.target.closest(".nav-item[data-spec]");
@@ -3392,10 +3406,10 @@ $("specs-body").addEventListener("contextmenu", (e) => {
   e.preventDefault();
   const gi = +head.closest(".nav-group").dataset.group;
   contextMenu(e.clientX, e.clientY, [
-    { label: "Rename", run: () => renameSpecGroup(gi) },
-    { label: "Import Specs…", run: () => specsCall("specs_import", { group: specs.groups[gi].name }) },
+    { label: tx("Rename"), run: () => renameSpecGroup(gi) },
+    { label: tx("Import Specs…"), run: () => specsCall("specs_import", { group: specs.groups[gi].name }) },
     "-",
-    { label: "Remove Group", run: () => saveSpecs(specsData().filter((_, i) => i !== gi)) },
+    { label: tx("Remove Group"), run: () => saveSpecs(specsData().filter((_, i) => i !== gi)) },
   ]);
 });
 $("specs-add").onclick = () => {
@@ -3408,7 +3422,7 @@ $("specs-add-cancel").onclick = () => $("specs-add-row").classList.add("hidden")
 $("specs-add-row").addEventListener("submit", async (e) => {
   e.preventDefault();
   const group = $("specs-group").value.trim();
-  if (!group) { $("specs-group").focus(); return specsMsg("Name the group the specs go into.", true); }
+  if (!group) { $("specs-group").focus(); return specsMsg(tx("Name the group the specs go into."), true); }
   await specsCall("specs_import", { group });
   $("specs-group").value = "";
   $("specs-add-row").classList.add("hidden");
@@ -3427,15 +3441,15 @@ function renderHeader() {
   $("eof").disabled = !isRunning(S) || S.mode === "oneshot";
 
   const ph = {
-    claude: isRunning(S) ? (S.history.length ? "Ask a follow-up…" : `Ask ${S.agent.name} anything…`) : "Agent stopped — ⏎ restarts it and sends",
-    stdin: isRunning(S) ? "Write to stdin…" : "Process ended — ⏎ restarts it and sends",
-    oneshot: isRunning(S) ? "Running… (⌘. to stop)" : `Prompt for ${S.agent.name}…`,
+    claude: isRunning(S) ? (S.history.length ? tx("Ask a follow-up…") : tx("Ask {name} anything…", { name: S.agent.name })) : tx("Agent stopped — ⏎ restarts it and sends"),
+    stdin: isRunning(S) ? tx("Write to stdin…") : tx("Process ended — ⏎ restarts it and sends"),
+    oneshot: isRunning(S) ? tx("Running… (⌘. to stop)") : tx("Prompt for {name}…", { name: S.agent.name }),
   }[S.mode];
-  $("input").placeholder = S.shellBusy ? "Input for the running command…  (Ctrl-C interrupts)" : S.task ? taskPlaceholder(S) : S.nodeOf ? nodePlaceholder(S) : ph;
+  $("input").placeholder = S.shellBusy ? tx("Input for the running command…  (Ctrl-C interrupts)") : S.task ? taskPlaceholder(S) : S.nodeOf ? nodePlaceholder(S) : ph;
   updateGlyph();
-  $("sl-left").textContent = [S.agent.name, S.model || "default model"].join("  ·  ") + "  ·";
+  $("sl-left").textContent = [S.agent.name, S.model || tx("default model")].join("  ·  ") + "  ·";
   $("sl-path-text").textContent = shortPath(S.cwd);
-  $("sl-path").title = `${tildify(S.cwd)} — click to open in Finder`;
+  $("sl-path").title = tx("{folder} — click to open in Finder", { folder: tildify(S.cwd) });
   renderModePill();
   renderBusy();
 }
@@ -3542,7 +3556,7 @@ async function reloadNativeSkills(S) {
   const ext = await externalSetup();
   if ((S.skillsSig ?? "") === ext.signature) return false;
   await restart(S, null, { resume: true, quiet: true });
-  sys(S, ext.count ? `external skills reloaded (${ext.count}) · conversation continues` : "external skills removed · conversation continues");
+  sys(S, ext.count ? tx("external skills reloaded ({n}) · conversation continues", { n: ext.count }) : tx("external skills removed · conversation continues"));
   return true;
 }
 
@@ -3580,7 +3594,7 @@ async function scanSkills() {
     skills.report = report;
     renderSkills();
   } catch (e) {
-    skillsMsg(`Couldn't read skills: ${e}`, true);
+    skillsMsg(tx("Couldn't read skills: {error}", { error: e }), true);
   }
 }
 
@@ -3594,31 +3608,31 @@ function skillsMsg(text, error = false) {
   if (text && !error) skillsMsgTimer = setTimeout(() => m.classList.add("hidden"), 6000);
 }
 
-const AGENT_TAG = { "Claude Code": "Claude", Codex: "Codex", Shared: "Shared", opencode: "opencode" };
+const AGENT_TAG = { "Claude Code": "Claude", Codex: "Codex", Shared: tx("Shared"), opencode: "opencode" };
 
 function skillItem(s, scope) {
   const key = `${scope}:${s.name}:${s.paths[0]}`;
   const open = skills.expanded.has(key);
-  const tags = (s.agents ?? []).map((a) => `<span class="sk-tag" title="${esc(a === "Shared" ? "~/.agents/skills — read by several agents" : a)}">${esc(AGENT_TAG[a] ?? a)}</span>`).join("");
+  const tags = (s.agents ?? []).map((a) => `<span class="sk-tag" title="${esc(a === "Shared" ? tx("~/.agents/skills — read by several agents") : a)}">${esc(AGENT_TAG[a] ?? a)}</span>`).join("");
   let action = "";
   const busy = skills.busy.has(s.name);
   if (scope === "catalogue") {
     if (busy) action = `<button class="sk-btn" disabled>…</button>`;
-    else if (s.blocked) action = `<button class="sk-btn" disabled title="${esc(s.blocked)}">Plugin</button>`;
-    else if (s.installed) action = `<button class="sk-btn remove" data-act="remove" title="Remove it from your skills">Remove</button>`;
-    else if (s.conflict) action = `<button class="sk-btn" disabled title="You already have a skill called ${esc(s.name)}">In use</button>`;
-    else action = `<button class="sk-btn add" data-act="add" title="Add it to your skills (~/.claude/skills and ~/.agents/skills)">Add</button>`;
+    else if (s.blocked) action = `<button class="sk-btn" disabled title="${esc(s.blocked)}">${tx("Plugin")}</button>`;
+    else if (s.installed) action = `<button class="sk-btn remove" data-act="remove" title="${tx("Remove it from your skills")}">${tx("Remove")}</button>`;
+    else if (s.conflict) action = `<button class="sk-btn" disabled title="${tx("You already have a skill called {name}", { name: esc(s.name) })}">${tx("In use")}</button>`;
+    else action = `<button class="sk-btn add" data-act="add" title="${tx("Add it to your skills (~/.claude/skills and ~/.agents/skills)")}">${tx("Add")}</button>`;
   } else if (s.paw) {
     action = busy ? `<button class="sk-btn" disabled>…</button>`
-      : `<button class="sk-btn remove" data-act="remove" title="Added from the catalogue — remove it">Remove</button>`;
+      : `<button class="sk-btn remove" data-act="remove" title="${tx("Added from the catalogue — remove it")}">${tx("Remove")}</button>`;
   }
   const details = open ? `<div class="sk-meta">
-      ${s.source ? `<div class="sk-src">from ${esc(s.source)}</div>` : ""}
+      ${s.source ? `<div class="sk-src">${tx("from {name}", { name: esc(s.source) })}</div>` : ""}
       ${s.blocked ? `<div class="sk-note">${esc(s.blocked)}</div>` : ""}
-      ${s.paths.map((p) => `<a class="sk-path" data-reveal="${esc(p)}" title="Show in Finder">${esc(tildify(p))}</a>`).join("")}
+      ${s.paths.map((p) => `<a class="sk-path" data-reveal="${esc(p)}" title="${tx("Show in Finder")}">${esc(tildify(p))}</a>`).join("")}
     </div>` : "";
   return `<div class="sk-item${open ? " open" : ""}" data-key="${esc(key)}" data-scope="${scope}" data-name="${esc(s.name)}" data-path="${esc(s.paths[0] ?? "")}">
-      <div class="sk-row"><span class="sk-name">${esc(s.name)}</span>${s.paw && scope !== "catalogue" ? `<span class="sk-tag added">added</span>` : ""}${tags}<span class="sk-grow"></span>${action}</div>
+      <div class="sk-row"><span class="sk-name">${esc(s.name)}</span>${s.paw && scope !== "catalogue" ? `<span class="sk-tag added">${tx("added")}</span>` : ""}${tags}<span class="sk-grow"></span>${action}</div>
       ${s.description ? `<div class="sk-desc">${esc(s.description)}</div>` : ""}
       ${details}
     </div>`;
@@ -3639,9 +3653,9 @@ function skillSection(id, title, list, empty, extra = "", titleTip = "", tools =
 function externalFolders(r) {
   if (!r.external_folders.length) return "";
   return `<div class="sk-sources">${r.external_folders.map((f) => `<div class="sk-source${f.missing ? " missing" : ""}" title="${esc(f.path)}">
-      <span class="sk-src-kind">${f.missing ? "gone" : f.found}</span>
+      <span class="sk-src-kind">${f.missing ? tx("gone") : f.found}</span>
       <a class="sk-src-name sk-path" data-reveal="${esc(f.path)}">${esc(tildify(f.path))}</a>
-      <button class="sk-x" data-ext-remove="${esc(f.path)}" title="Stop using this folder's skills">×</button>
+      <button class="sk-x" data-ext-remove="${esc(f.path)}" title="${tx("Stop using this folder's skills")}">×</button>
     </div>`).join("")}</div>`;
 }
 
@@ -3649,7 +3663,7 @@ async function addExternalFolder(path) {
   try {
     const n = await invoke("skills_external_add", { path });
     skills.closed.delete("external");
-    skillsMsg(`Added ${n} skill${n > 1 ? "s" : ""} from ${tildify(path)} — every session uses ${n > 1 ? "them" : "it"} from the next prompt.`);
+    skillsMsg(tx(n > 1 ? "Added {n} skills from {folder} — every session uses them from the next prompt." : "Added {n} skill from {folder} — every session uses it from the next prompt.", { n, folder: tildify(path) }));
   } catch (e) { skillsMsg(String(e), true); return; }
   await scanSkills();
   await applyExternalSkills();
@@ -3658,27 +3672,27 @@ async function addExternalFolder(path) {
 function renderSkills() {
   const r = skills.report;
   const body = $("skills-body");
-  if (!r) { body.innerHTML = `<div class="sk-empty">Looking for skills…</div>`; return; }
+  if (!r) { body.innerHTML = `<div class="sk-empty">${tx("Looking for skills…")}</div>`; return; }
   const q = $("skills-filter").value.trim().toLowerCase();
   const match = (s) => !q || s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q) || (s.source ?? "").toLowerCase().includes(q);
   const items = (list, scope) => list.filter(match).map((s) => skillItem(s, scope));
   const root = r.project_root;
   const projName = root ? root.split("/").filter(Boolean).pop() : null;
   const sources = r.sources.map((src) => `<div class="sk-source" title="${esc(src.location)}">
-      <span class="sk-src-kind">${src.kind === "git" ? "git" : src.kind === "folder" ? "folder" : "found"}</span>
+      <span class="sk-src-kind">${src.kind === "git" ? "git" : src.kind === "folder" ? tx("folder") : tx("found")}</span>
       <span class="sk-src-name">${esc(src.label)}</span>
-      ${src.kind === "detected" ? "" : `<button class="sk-x" data-remove-source="${esc(src.id)}" title="Remove this catalogue">×</button>`}
+      ${src.kind === "detected" ? "" : `<button class="sk-x" data-remove-source="${esc(src.id)}" title="${tx("Remove this catalogue")}">×</button>`}
     </div>`).join("");
   body.innerHTML =
-    skillSection("project", projName ? `Project · ${projName}` : "Project", items(r.project, "project"),
-      focusedS() ? `No skills in ${tildify(root ?? focusedS().cwd)}` : "Open a session to see its project's skills", "", root ? tildify(root) : "") +
-    skillSection("user", "User", items(r.user, "user"), "No user skills") +
-    skillSection("system", "System", items(r.system, "system"), "No system skills found") +
-    skillSection("external", "External", items(r.external, "external"),
-      r.external_folders.length ? "No skills match" : "Add a folder with skills — every session uses them where they are",
-      externalFolders(r), "", `<button class="sk-sec-add" data-ext-add title="Add a folder with skills…">+</button>`) +
-    skillSection("catalogue", "Catalogue", items(r.catalogue, "catalogue"),
-      r.sources.length ? "No skills match" : "Add a folder or Git repository with +",
+    skillSection("project", projName ? tx("Project · {name}", { name: projName }) : tx("Project"), items(r.project, "project"),
+      focusedS() ? tx("No skills in {folder}", { folder: tildify(root ?? focusedS().cwd) }) : tx("Open a session to see its project's skills"), "", root ? tildify(root) : "") +
+    skillSection("user", tx("User"), items(r.user, "user"), tx("No user skills")) +
+    skillSection("system", tx("System"), items(r.system, "system"), tx("No system skills found")) +
+    skillSection("external", tx("External"), items(r.external, "external"),
+      r.external_folders.length ? tx("No skills match") : tx("Add a folder with skills — every session uses them where they are"),
+      externalFolders(r), "", `<button class="sk-sec-add" data-ext-add title="${tx("Add a folder with skills…")}">+</button>`) +
+    skillSection("catalogue", tx("Catalogue"), items(r.catalogue, "catalogue"),
+      r.sources.length ? tx("No skills match") : tx("Add a folder or Git repository with +"),
       sources ? `<div class="sk-sources">${sources}</div>` : "");
 }
 
@@ -3688,10 +3702,10 @@ async function skillAction(act, name, path) {
   try {
     if (act === "add") {
       const added = await invoke("skills_install", { path });
-      skillsMsg(`Added “${added}”. New sessions load it.`);
+      skillsMsg(tx("Added “{name}”. New sessions load it.", { name: added }));
     } else {
       await invoke("skills_uninstall", { name });
-      skillsMsg(`Removed “${name}”.`);
+      skillsMsg(tx("Removed “{name}”.", { name }));
     }
   } catch (e) {
     skillsMsg(String(e), true);
@@ -3705,13 +3719,13 @@ async function addSkillSource(location) {
   if (!location) return;
   const go = $("skills-add-go");
   go.disabled = true;
-  skillsMsg(/^(https?:|git@|ssh:)/.test(location) ? "Cloning…" : "Adding…");
+  skillsMsg(/^(https?:|git@|ssh:)/.test(location) ? tx("Cloning…") : tx("Adding…"));
   try {
     const src = await invoke("skills_add_source", { location });
     $("skills-add-input").value = "";
     $("skills-add-row").classList.add("hidden");
     skills.closed.delete("catalogue");
-    skillsMsg(`Added catalogue “${src.label}”.`);
+    skillsMsg(tx("Added catalogue “{name}”.", { name: src.label }));
     await scanSkills();
   } catch (e) {
     skillsMsg(String(e), true);
@@ -3731,7 +3745,7 @@ $("skills-body").addEventListener("click", async (e) => {
   if (extRm) {
     try {
       await invoke("skills_external_remove", { path: extRm.dataset.extRemove });
-      skillsMsg(`Stopped using ${tildify(extRm.dataset.extRemove)}.`);
+      skillsMsg(tx("Stopped using {folder}.", { folder: tildify(extRm.dataset.extRemove) }));
       await scanSkills();
       await applyExternalSkills();
     } catch (err) { skillsMsg(String(err), true); }
@@ -3750,7 +3764,7 @@ $("skills-body").addEventListener("click", async (e) => {
   const rmSrc = e.target.closest("[data-remove-source]");
   if (rmSrc) {
     invoke("skills_remove_source", { id: rmSrc.dataset.removeSource })
-      .then(() => { skillsMsg("Catalogue removed."); return scanSkills(); })
+      .then(() => { skillsMsg(tx("Catalogue removed.")); return scanSkills(); })
       .catch((err) => skillsMsg(String(err), true));
     return;
   }
@@ -3799,7 +3813,7 @@ window.addEventListener("focus", () => {
 // agent pick it up (an idle one restarts on the same conversation, a busy
 // one after its turn; one-shot agents read their config on every prompt).
 const mcp = { key: null, report: null, adding: null, busy: false, seq: 0 };
-const TRANSPORT_TAG = { stdio: "local", http: "HTTP", sse: "SSE" };
+const TRANSPORT_TAG = { stdio: tx("local"), http: "HTTP", sse: "SSE" };
 
 // ---------- right panel ----------
 // One panel, two tabs: the focused tab's MCP servers, and skills.
@@ -3851,7 +3865,7 @@ async function loadMcp() {
     mcp.report = r;
   } catch (e) {
     mcp.report = null;
-    mcpMsg(`Couldn't read the MCP config: ${e}`, true);
+    mcpMsg(tx("Couldn't read the MCP config: {error}", { error: e }), true);
   }
   renderMcp();
 }
@@ -3866,18 +3880,18 @@ function mcpMsg(text, error = false) {
   if (text) mcpMsgTimer = setTimeout(() => m.classList.add("hidden"), error ? 9000 : 4000);
 }
 
-const SCOPE_TAG = { user: "user", local: "this folder", project: "project" };
+const SCOPE_TAG = { user: tx("user"), local: tx("this folder"), project: tx("project") };
 
 function mcpServerHtml(sc, s, showScope) {
   const target = s.transport === "stdio" ? [s.command, ...s.args].map(shq).join(" ") : s.url;
-  const keys = [...s.env_keys.map((k) => `<span class="sk-tag" title="Environment variable (value not shown)">${esc(k)}</span>`),
-    ...s.header_keys.map((k) => `<span class="sk-tag" title="Header (value not shown)">${esc(k)}:</span>`)].join("");
+  const keys = [...s.env_keys.map((k) => `<span class="sk-tag" title="${tx("Environment variable (value not shown)")}">${esc(k)}</span>`),
+    ...s.header_keys.map((k) => `<span class="sk-tag" title="${tx("Header (value not shown)")}">${esc(k)}:</span>`)].join("");
   return `<div class="mcp-srv${s.enabled ? "" : " off"}" data-scope="${esc(sc.id)}" data-name="${esc(s.name)}" title="${esc(tildify(sc.file))}">
       <div class="mcp-row"><span class="mcp-name">${esc(s.name)}</span><span class="sk-tag">${TRANSPORT_TAG[s.transport] ?? esc(s.transport)}</span>
         ${showScope ? `<span class="mcp-scope">${esc(SCOPE_TAG[sc.id] ?? sc.label)}</span>` : ""}
-        ${s.pending ? `<span class="sk-tag pending" title="A project server nobody has approved yet: Claude Code doesn't start it. Switch it on to approve it for this folder.">needs approval</span>` : ""}<span class="mcp-grow"></span>
-        ${sc.can_toggle ? `<label class="mcp-toggle" title="${s.pending ? "Switch on to approve it for this folder" : s.enabled ? "On — click to switch off" : "Off — click to switch on"}"><input type="checkbox" data-mcp-toggle ${s.enabled ? "checked" : ""}><span></span></label>` : ""}
-        ${sc.writable ? `<button class="sk-x" data-mcp-remove title="Remove">×</button>` : ""}</div>
+        ${s.pending ? `<span class="sk-tag pending" title="${tx("A project server nobody has approved yet: Claude Code doesn't start it. Switch it on to approve it for this folder.")}">${tx("needs approval")}</span>` : ""}<span class="mcp-grow"></span>
+        ${sc.can_toggle ? `<label class="mcp-toggle" title="${s.pending ? tx("Switch on to approve it for this folder") : s.enabled ? tx("On — click to switch off") : tx("Off — click to switch on")}"><input type="checkbox" data-mcp-toggle ${s.enabled ? "checked" : ""}><span></span></label>` : ""}
+        ${sc.writable ? `<button class="sk-x" data-mcp-remove title="${tx("Remove")}">×</button>` : ""}</div>
       <div class="mcp-cmd" title="${esc(target)}">${esc(target)}</div>
       ${keys ? `<div class="mcp-keys">${keys}</div>` : ""}
     </div>`;
@@ -3887,18 +3901,18 @@ function mcpFormHtml(writable) {
   const where = writable.length > 1
     ? `<select name="scope">${writable.map((sc) => `<option value="${esc(sc.id)}">${esc(sc.label)}</option>`).join("")}</select>` : "";
   return `<form class="mcp-form" data-scope="${esc(writable[0].id)}" data-t="stdio" autocomplete="off">
-      <input name="name" placeholder="Name, e.g. filesystem" spellcheck="false" />
+      <input name="name" placeholder="${tx("Name, e.g. filesystem")}" spellcheck="false" />
       ${where}
       <select name="transport">
-        <option value="stdio">Local command (stdio)</option>
-        <option value="http">Remote — streamable HTTP</option>
-        <option value="sse">Remote — SSE</option>
+        <option value="stdio">${tx("Local command (stdio)")}</option>
+        <option value="http">${tx("Remote — streamable HTTP")}</option>
+        <option value="sse">${tx("Remote — SSE")}</option>
       </select>
       <input name="command_line" class="f-stdio" placeholder="npx -y @modelcontextprotocol/server-filesystem ~/code" spellcheck="false" />
       <input name="url" class="f-remote" placeholder="https://example.com/mcp" spellcheck="false" />
-      <textarea name="env" class="f-stdio" rows="2" placeholder="Environment, one per line: API_KEY=…" spellcheck="false"></textarea>
-      <textarea name="headers" class="f-remote" rows="2" placeholder="Headers, one per line: Authorization: Bearer …" spellcheck="false"></textarea>
-      <div class="skills-add-btns"><button type="button" data-mcp-cancel>Cancel</button><button type="submit" class="primary">Add</button></div>
+      <textarea name="env" class="f-stdio" rows="2" placeholder="${tx("Environment, one per line: API_KEY=…")}" spellcheck="false"></textarea>
+      <textarea name="headers" class="f-remote" rows="2" placeholder="${tx("Headers, one per line: Authorization: Bearer …")}" spellcheck="false"></textarea>
+      <div class="skills-add-btns"><button type="button" data-mcp-cancel>${tx("Cancel")}</button><button type="submit" class="primary">${tx("Add")}</button></div>
     </form>`;
 }
 
@@ -3908,18 +3922,18 @@ function renderMcp() {
   const S = focusedS();
   $("mcp-sub").textContent = S ? `${S.agent.name} · ${tildify(S.cwd)}` : "";
   $("mcp-sub").title = S && isPaw(S.agent)
-    ? "Paw Agent connects to these when a session starts. Tools a server marks read-only run without asking; the others follow the tab's approval level." : "";
+    ? tx("Paw Agent connects to these when a session starts. Tools a server marks read-only run without asking; the others follow the tab's approval level.") : "";
   const r = S ? mcp.report : null;
   const writable = r?.supported ? r.scopes.filter((sc) => sc.writable) : [];
   $("mcp-add").classList.toggle("hidden", !writable.length);
-  if (!S) { body.innerHTML = `<div class="mcp-note">Open a session to see its agent's MCP servers.</div>`; return; }
-  if (!r) { body.innerHTML = `<div class="mcp-note">Reading…</div>`; return; }
+  if (!S) { body.innerHTML = `<div class="mcp-note">${tx("Open a session to see its agent's MCP servers.")}</div>`; return; }
+  if (!r) { body.innerHTML = `<div class="mcp-note">${tx("Reading…")}</div>`; return; }
   if (!r.supported) { body.innerHTML = `<div class="mcp-note">${esc(r.note)}</div>`; return; }
   const several = r.scopes.length > 1;
   const rows = r.scopes.flatMap((sc) => sc.servers.map((s) => mcpServerHtml(sc, s, several))).join("");
   const form = mcp.adding && writable.length ? mcpFormHtml(writable) : "";
   const notes = [...new Set(r.scopes.filter((sc) => sc.note).map((sc) => sc.note))];
-  body.innerHTML = (form || rows ? `<div class="mcp-list">${form}${rows}</div>` : `<div class="mcp-note">No MCP servers yet.${writable.length ? " + adds one." : ""}</div>`) +
+  body.innerHTML = (form || rows ? `<div class="mcp-list">${form}${rows}</div>` : `<div class="mcp-note">${writable.length ? tx("No MCP servers yet. + adds one.") : tx("No MCP servers yet.")}</div>`) +
     notes.map((n) => `<div class="mcp-note">${esc(n)}</div>`).join("");
   body.querySelector(".mcp-form [name=name]")?.focus();
 }
@@ -3937,7 +3951,7 @@ async function reloadForMcp(S) {
   if (!S.mcpStale || !isRunning(S) || isBusy(S)) return;
   S.mcpStale = false;
   await restart(S, null, { resume: true, quiet: true });
-  sys(S, "MCP servers changed · conversation continues");
+  sys(S, tx("MCP servers changed · conversation continues"));
 }
 
 async function mcpChange(fn, done) {
@@ -3963,9 +3977,9 @@ $("mcp-body").addEventListener("click", (e) => {
   if (rm) {
     const row = rm.closest(".mcp-srv");
     const sc = mcp.report?.scopes.find((x) => x.id === row.dataset.scope);
-    if (!confirm(`Remove the MCP server “${row.dataset.name}” from ${sc?.label ?? row.dataset.scope}?\n${tildify(sc?.file ?? "")}`)) return;
+    if (!confirm(tx("Remove the MCP server “{name}” from {scope}?", { name: row.dataset.name, scope: sc?.label ?? row.dataset.scope }) + `\n${tildify(sc?.file ?? "")}`)) return;
     mcpChange(async (c) => { await invoke("mcp_remove", { ...c, scope: row.dataset.scope, name: row.dataset.name }); return row.dataset.scope; },
-      `Removed ${row.dataset.name}`);
+      tx("Removed {name}", { name: row.dataset.name }));
     return;
   }
   const reveal = e.target.closest("[data-reveal]");
@@ -3981,7 +3995,7 @@ $("mcp-body").addEventListener("change", (e) => {
     mcpChange(async (c) => {
       await invoke("mcp_set_enabled", { ...c, scope: row.dataset.scope, name: row.dataset.name, enabled: t.checked });
       return c.agent === "claude" ? "folder" : row.dataset.scope;
-    }, `${row.dataset.name} ${t.checked ? "on" : "off"}`);
+    }, t.checked ? tx("{name} on", { name: row.dataset.name }) : tx("{name} off", { name: row.dataset.name }));
   }
 });
 $("mcp-body").addEventListener("submit", (e) => {
@@ -3992,7 +4006,7 @@ $("mcp-body").addEventListener("submit", (e) => {
   if (server.transport !== "stdio") server.env = "";
   else server.headers = "";
   mcpChange(async (c) => { await invoke("mcp_add", { ...c, scope: f.dataset.scope, server }); mcp.adding = null; return f.dataset.scope; },
-    `Added ${server.name.trim()}`);
+    tx("Added {name}", { name: server.name.trim() }));
 });
 $("panel-toggle").onclick = () => setPanel(!panel.open);
 $("panel-close").onclick = () => setPanel(false);
@@ -4053,9 +4067,9 @@ function summarizeGroup(g) {
   const last = steps.at(-1)?.dataset.arg ?? "";
   const sum = g.querySelector(":scope > summary");
   const set = (sel, text) => { const el = sum.querySelector(sel); if (el.textContent !== text) el.textContent = text; };
-  set(".tg-count", n ? `${n} action${n === 1 ? "" : "s"}` : "Thinking");
+  set(".tg-count", n ? tx(n === 1 ? "{n} action" : "{n} actions", { n }) : tx("Thinking"));
   set(".tg-kinds", kinds ? ` · ${kinds}` : "");
-  set(".tg-failed", failed ? ` · ${failed} failed` : "");
+  set(".tg-failed", failed ? ` · ${tx("{n} failed", { n: failed })}` : "");
   set(".tg-last", last && !g.classList.contains("closed") ? ` — ${last.slice(0, 80)}` : "");
 }
 
@@ -4251,19 +4265,19 @@ function renderLine(S, l) {
   if (l.stream === "cmd") return div("tl input shcmd", `<span class="sh">$</span> ${esc(l.text)}`);
   if (l.stream === "shell") return div("tl out", ansi(l.text) || "&nbsp;");
   if (l.stream === "shellexit") return div("tl shexit", l.code === 130 ? "^C" : `exit ${l.code}`);
-  if (l.stream === "shared") return div("tl sys shared-note", l.next ? `↳ output goes to ${esc(S.agent.name)} with your next message` : `↳ output shared with ${esc(S.agent.name)}`);
+  if (l.stream === "shared") return div("tl sys shared-note", l.next ? tx("↳ output goes to {name} with your next message", { name: esc(S.agent.name) }) : tx("↳ output shared with {name}", { name: esc(S.agent.name) }));
   if (l.stream === "shareoffer") {
     const el = div("tl sys shared-note share-offer");
-    el.innerHTML = `↳ large output (${esc(l.text)}) <button class="follow-up" title="Send this output to ${esc(S.agent.name)} with your next message">↪ Follow up</button>`;
+    el.innerHTML = `${tx("↳ large output ({size})", { size: esc(l.text) })} <button class="follow-up" title="${tx("Send this output to {name} with your next message", { name: esc(S.agent.name) })}">${tx("↪ Follow up")}</button>`;
     const b = el.querySelector(".follow-up");
     b.onclick = (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
-      if (!shareOffer(S, l)) { b.textContent = "Output no longer available"; b.disabled = true; return; }
-      b.textContent = "✓ Added to your next message";
+      if (!shareOffer(S, l)) { b.textContent = tx("Output no longer available"); b.disabled = true; return; }
+      b.textContent = tx("✓ Added to your next message");
       b.classList.add("done");
       clearTimeout(b.resetTimer);
-      b.resetTimer = setTimeout(() => { b.textContent = "↪ Follow up"; b.classList.remove("done"); }, 1800);
+      b.resetTimer = setTimeout(() => { b.textContent = tx("↪ Follow up"); b.classList.remove("done"); }, 1800);
       $("input").focus();
     };
     return el;
@@ -4275,14 +4289,14 @@ function renderLine(S, l) {
         const content = JSON.parse(text).message.content;
         text = content.filter((c) => c.type === "text").map((c) => c.text).join("\n");
         const n = content.filter((c) => c.type === "image").length;
-        if (n) text += `  [${n} image${n > 1 ? "s" : ""}]`;
+        if (n) text += `  [${tx(n > 1 ? "{n} images" : "{n} image", { n })}]`;
       } catch {}
     }
     const el = div("tl input", `<span class="g">❯</span> ${esc(text)}`);
     if (l.attachments?.length || l.shared || l.skills) {
       const row = div("att-row");
-      if (l.skills) row.appendChild(div("att-chip echo ctx-chip", `<span class="att-icon">✦</span><span class="att-name">shared ${l.skills} external skill${l.skills > 1 ? "s" : ""}</span>`));
-      if (l.shared) row.appendChild(div("att-chip echo ctx-chip", `<span class="att-icon">$</span><span class="att-name">shared ${l.shared} shell output${l.shared > 1 ? "s" : ""}</span>`));
+      if (l.skills) row.appendChild(div("att-chip echo ctx-chip", `<span class="att-icon">✦</span><span class="att-name">${tx(l.skills > 1 ? "shared {n} external skills" : "shared {n} external skill", { n: l.skills })}</span>`));
+      if (l.shared) row.appendChild(div("att-chip echo ctx-chip", `<span class="att-icon">$</span><span class="att-name">${tx(l.shared > 1 ? "shared {n} shell outputs" : "shared {n} shell output", { n: l.shared })}</span>`));
       for (const a of l.attachments ?? []) {
         const chip = div("att-chip echo", chipHtml(a, false));
         const img = chip.querySelector(".att-thumb");
@@ -4307,7 +4321,7 @@ function renderLine(S, l) {
     }
     // An event cut short by an older save: a collapsed step, not a wall of JSON.
     if (!ev && /^\{"type":"(user|assistant)"/.test(l.text)) {
-      return fold("t-result", `<span class="elbow">⎿</span> <span class="dim">(long output — trimmed when it was saved)</span>`, l.text);
+      return fold("t-result", `<span class="elbow">⎿</span> <span class="dim">${tx("(long output — trimmed when it was saved)")}</span>`, l.text);
     }
   }
   return div("tl " + (l.stream === "stderr" ? "err" : "out"), ansi(l.text) || "&nbsp;");
@@ -4316,7 +4330,7 @@ function renderLine(S, l) {
 /** Render Claude Code `stream-json` events. Return undefined to fall back to raw. */
 function renderClaudeEvent(ev) {
   if (ev.type === "system") {
-    if (ev.subtype === "init") return div("tl sys", esc(`session ${ev.session_id?.slice(0, 8) ?? ""} · ${ev.model ?? ""}`));
+    if (ev.subtype === "init") return div("tl sys", esc(tx("session {id} · {model}", { id: ev.session_id?.slice(0, 8) ?? "", model: ev.model ?? "" })));
     return null;
   }
   if (ev.type === "assistant" && ev.message?.content) {
@@ -4325,7 +4339,7 @@ function renderClaudeEvent(ev) {
       if (c.type === "text" && c.text?.trim()) {
         frag.appendChild(div("tl say md-msg", `<span class="b">⏺</span><div class="md">${renderMarkdown(c.text.trim())}</div>`));
       } else if (c.type === "thinking" && c.thinking?.trim()) {
-        frag.appendChild(fold("t-think", `<span class="b">✻</span> Thinking…`, c.thinking));
+        frag.appendChild(fold("t-think", `<span class="b">✻</span> ${tx("Thinking…")}`, c.thinking));
       } else if (c.type === "tool_use") {
         const step = fold("t-tool",
           `<span class="b ok">⏺</span> <b>${esc(c.name)}</b>(<span class="arg">${esc(summarizeToolInput(c.input))}</span>)`,
@@ -4344,21 +4358,21 @@ function renderClaudeEvent(ev) {
       const body = typeof c.content === "string" ? c.content
         : Array.isArray(c.content) ? c.content.map((x) => x.text ?? "").join("\n") : JSON.stringify(c.content);
       const lines = body.split("\n").filter((s) => s.trim());
-      const more = lines.length > 1 ? ` <span class="dim">(+${lines.length - 1} lines)</span>` : "";
+      const more = lines.length > 1 ? ` <span class="dim">${tx("(+{n} lines)", { n: lines.length - 1 })}</span>` : "";
       frag.appendChild(fold("t-result" + (c.is_error ? " bad" : ""),
-        `<span class="elbow">⎿</span> ${esc(redactSecrets((lines[0] ?? "(no output)").slice(0, 160)))}${more}`, body));
+        `<span class="elbow">⎿</span> ${esc(redactSecrets((lines[0] ?? tx("(no output)")).slice(0, 160)))}${more}`, body));
     }
     return frag.childNodes.length ? frag : null;
   }
   if (ev.type === "result") {
     const u = usageOf(ev.usage);
     const bits = [
-      ev.num_turns != null ? `${ev.num_turns} turn${ev.num_turns === 1 ? "" : "s"}` : "",
+      ev.num_turns != null ? tx(ev.num_turns === 1 ? "{n} turn" : "{n} turns", { n: ev.num_turns }) : "",
       ev.duration_ms != null ? `${(ev.duration_ms / 1000).toFixed(1)}s` : "",
       u && (u.input || u.output) ? `↑ ${fmtTokens(u.input)} ↓ ${fmtTokens(u.output)}` : "",
       ev.total_cost_usd != null ? `$${ev.total_cost_usd.toFixed(4)}` : "",
     ].filter(Boolean).join(" · ");
-    const head = ev.stopped ? "■ Stopped" : ev.is_error ? "✗ Failed" : "✓ Done";
+    const head = ev.stopped ? tx("■ Stopped") : ev.is_error ? tx("✗ Failed") : tx("✓ Done");
     return div("tl done" + (ev.is_error ? " bad" : ""), `${head}${bits ? " · " + bits : ""}`);
   }
   if (ev.type === "stream_event" || ev.type === "rate_limit_event") return null;
@@ -4437,32 +4451,32 @@ async function statsHtml(arg) {
   const s = await invoke("stats_summary", { day, week, month, modelsSince: since });
   const cols = [s.day, s.week, s.month];
   if (!s.month.queries && !s.month.tasks && !s.week.queries) {
-    return `<span class="dim">No usage recorded yet. Every prompt and plan that finishes from now on is counted.</span>`;
+    return `<span class="dim">${tx("No usage recorded yet. Every prompt and plan that finishes from now on is counted.")}</span>`;
   }
   const row = (label, f, cls = "") => `${esc(label.padEnd(18))}${cols.map((c) => `<span class="${cls}">${esc(String(f(c)).padStart(11))}</span>`).join("")}`;
   const anyCost = cols.some((c) => c.cost > 0);
   const lines = [
-    `<span class="help-h">Usage</span>${" ".repeat(13)}${["Today", "This week", "This month"].map((h) => `<span class="dim">${h.padStart(11)}</span>`).join("")}`,
-    row("Queries", (c) => c.queries),
-    row("  failed", (c) => c.failed || "–", "dim"),
-    row("Plans completed", (c) => c.tasks),
-    row("Tokens ↑ in", (c) => (c.input ? fmtTokens(c.input) : "–")),
-    row("Tokens ↓ out", (c) => (c.output ? fmtTokens(c.output) : "–")),
-    row("Avg. query time", (c) => (c.queries ? fmtElapsed(c.ms / c.queries) : "–")),
+    `<span class="help-h">${tx("Usage")}</span>${" ".repeat(Math.max(1, 18 - tx("Usage").length))}${[tx("Today"), tx("This week"), tx("This month")].map((h) => `<span class="dim">${esc(h.padStart(11))}</span>`).join("")}`,
+    row(tx("Queries"), (c) => c.queries),
+    row("  " + tx("failed"), (c) => c.failed || "–", "dim"),
+    row(tx("Plans completed"), (c) => c.tasks),
+    row(tx("Tokens ↑ in"), (c) => (c.input ? fmtTokens(c.input) : "–")),
+    row(tx("Tokens ↓ out"), (c) => (c.output ? fmtTokens(c.output) : "–")),
+    row(tx("Avg. query time"), (c) => (c.queries ? fmtElapsed(c.ms / c.queries) : "–")),
   ];
-  if (anyCost) lines.push(row("Cost", (c) => (c.cost ? `$${c.cost.toFixed(2)}` : "–")));
-  const name = { day: "today", week: "this week", month: "this month" }[period];
-  lines.push("", `<span class="help-h">By model</span> <span class="dim">· ${name} (/stats day · week · month)</span>`);
-  if (!s.models.length) lines.push(`<span class="dim">No queries ${name}.</span>`);
+  if (anyCost) lines.push(row(tx("Cost"), (c) => (c.cost ? `$${c.cost.toFixed(2)}` : "–")));
+  const name = { day: tx("today"), week: tx("this week"), month: tx("this month") }[period];
+  lines.push("", `<span class="help-h">${tx("By model")}</span> <span class="dim">· ${tx("{period} (/stats day · week · month)", { period: name })}</span>`);
+  if (!s.models.length) lines.push(`<span class="dim">${period === "day" ? tx("No queries today.") : period === "week" ? tx("No queries this week.") : tx("No queries this month.")}</span>`);
   else {
-    lines.push(`<span class="dim">${"Model".padEnd(36)}${"Queries".padStart(8)}${"Avg. time".padStart(11)}${"↑ in".padStart(9)}${"↓ out".padStart(9)}${anyCost ? "Cost".padStart(9) : ""}</span>`);
+    lines.push(`<span class="dim">${esc(tx("Model").padEnd(36))}${esc(tx("Queries").padStart(8))}${esc(tx("Avg. time").padStart(11))}${esc(tx("↑ in").padStart(9))}${esc(tx("↓ out").padStart(9))}${anyCost ? esc(tx("Cost").padStart(9)) : ""}</span>`);
     for (const m of s.models) {
       const label = `${m.model} · ${m.agent}`;
       lines.push(`${esc((label.length > 35 ? label.slice(0, 34) + "…" : label).padEnd(36))}${String(m.queries).padStart(8)}${fmtElapsed(m.avg_ms).padStart(11)}` +
         `${(m.input ? fmtTokens(m.input) : "–").padStart(9)}${(m.output ? fmtTokens(m.output) : "–").padStart(9)}${anyCost ? (m.cost ? `$${m.cost.toFixed(2)}` : "–").padStart(9) : ""}`);
     }
   }
-  lines.push(`<span class="dim">Tokens are counted for Claude Code and Paw Agent; other agents report time only.</span>`);
+  lines.push(`<span class="dim">${tx("Tokens are counted for Claude Code and Paw Agent; other agents report time only.")}</span>`);
   return lines.join("\n");
 }
 
@@ -4474,13 +4488,13 @@ function renderBusy() {
   if (!busy) return;
   if (waiting) {
     $("busy-spin").textContent = "⏳";
-    $("busy-text").textContent = `Waiting for a free agent (${agentsWorking()} of ${maxAgents()} working)…`;
+    $("busy-text").textContent = tx("Waiting for a free agent ({n} of {max} working)…", { n: agentsWorking(), max: maxAgents() });
     $("busy-time").textContent = fmtElapsed(Date.now() - waiting.since);
     return;
   }
   $("busy-spin").textContent = SPIN[spinFrame % SPIN.length];
-  $("busy-text").textContent = S.shellBusy ? `Running ${S.shellCmd}…` : S.waitingApproval ? "Waiting for your approval…"
-    : S.mode === "claude" ? "Working…" : "Running…";
+  $("busy-text").textContent = S.shellBusy ? tx("Running {command}…", { command: S.shellCmd }) : S.waitingApproval ? tx("Waiting for your approval…")
+    : S.mode === "claude" ? tx("Working…") : tx("Running…");
   const u = !S.shellBusy && S.turnUsage;
   $("busy-time").textContent = fmtElapsed(Date.now() - ((S.shellBusy ? S.shellSince : S.busySince) ?? Date.now())) +
     (u && (u.input || u.output) ? ` · ↑ ${fmtTokens(u.input)} ↓ ${fmtTokens(u.output)}` : "");
@@ -4533,9 +4547,9 @@ function foldCopilotStats(S, l) {
   const tokens = st.Tokens?.match(/↑\s*(\S+).*↓\s*(\S+)/);
   const bits = [
     credits?.[2],
-    credits && `${credits[1]} AI credits`,
+    credits && tx("{n} AI credits", { n: credits[1] }),
     st.Changes && !/^\+0 -0$/.test(st.Changes) ? st.Changes : "",
-    tokens && `↑${tokens[1]} ↓${tokens[2]} tokens`,
+    tokens && tx("↑{in} ↓{out} tokens", { in: tokens[1], out: tokens[2] }),
   ].filter(Boolean);
   if (bits.length) sys(S, bits.join(" · "));
   return true;
@@ -4607,7 +4621,7 @@ function onAgentOutput(l) {
       if (ev.type === "result") {
         const text = typeof ev.result === "string" && ev.result ? ev.result : S.lastAnswer ?? "";
         ended = { ok: !ev.is_error, stopped: !!ev.stopped, text,
-          error: ev.is_error ? text || `${S.agent.name} reported an error (${ev.subtype ?? "unknown"}). Its tab has the details.` : null };
+          error: ev.is_error ? text || tx("{name} reported an error ({kind}). Its tab has the details.", { name: S.agent.name, kind: ev.subtype ?? "unknown" }) : null };
         recordQuery(S, ended, ev);
         turnFinished(S);
         S.busy = false;
@@ -4637,7 +4651,7 @@ listen("agent:status", ({ payload: pinfo }) => {
   const S = sessions.get(procToSid.get(pinfo.id));
   if (!S || S.proc !== pinfo.id) return; // ignore processes this tab has moved on from
   S.info = pinfo;
-  if (S.nodeOf && pinfo.status !== "running") sys(S, "— the node's session ended; this tab is read only now —");
+  if (S.nodeOf && pinfo.status !== "running") sys(S, tx("— the node's session ended; this tab is read only now —"));
   let ended = null; // a turn that ended with the process, for tasks
   if (pinfo.status !== "running") {
     const wasBusy = S.busy;
@@ -4651,16 +4665,16 @@ listen("agent:status", ({ payload: pinfo }) => {
     const ok = pinfo.status !== "failed" && pinfo.status !== "stopped" && (pinfo.exit_code ?? 0) === 0;
     if (S.mode === "oneshot") {
       ended = { ok, stopped: pinfo.status === "stopped", text: (S.runOut ?? []).join("\n"),
-        error: ok ? null : PawThemes.stripAnsi((S.runLines ?? []).slice(-20).join("\n")) || `exited with code ${pinfo.exit_code}` };
+        error: ok ? null : PawThemes.stripAnsi((S.runLines ?? []).slice(-20).join("\n")) || tx("exited with code {code}", { code: pinfo.exit_code }) };
     } else if (wasBusy) {
-      ended = { ok: false, stopped: pinfo.status === "stopped", text: S.lastAnswer ?? "", error: `${S.agent.name} stopped before it finished.` };
+      ended = { ok: false, stopped: pinfo.status === "stopped", text: S.lastAnswer ?? "", error: tx("{name} stopped before it finished.", { name: S.agent.name }) };
     }
   }
   if (pinfo.status !== "running" && resumeRejected(S, pinfo)) {
     S.resuming = false;
     S.session = null;
     S.runWithSession = false;
-    sys(S, `couldn't continue the previous ${S.agent.name} session — starting a new one`);
+    sys(S, tx("couldn't continue the previous {name} session — starting a new one", { name: S.agent.name }));
     if (S.mode === "oneshot") startProc(S, S.lastPrompt);
     else startProc(S);
     return;
@@ -4674,6 +4688,14 @@ listen("agent:status", ({ payload: pinfo }) => {
 listen("settings:changed", ({ payload }) => {
   const limit = settings?.general?.max_sessions;
   settings = payload;
+  // Another language: the window loads again in it (tabs come back as after a restart).
+  if (I18N.pick(payload.general?.language) !== I18N.lang) {
+    I18N.remember(payload.general?.language);
+    const reload = () => location.reload();
+    if (wsReady) invoke("save_workspace", { workspace: workspaceSnapshot() }).finally(reload);
+    else reload();
+    return;
+  }
   applyCurrentTheme();
   applyFonts();
   if (payload.general?.max_sessions !== limit) refreshArchive();
@@ -4701,7 +4723,7 @@ function updateGlyph() {
   const shell = S?.shellBusy || routeFor(S, $("input").value).shell;
   g.textContent = S?.shellBusy ? "›" : shell ? "$" : "❯";
   g.classList.toggle("sh", !!shell);
-  g.title = S?.shellBusy ? "Input goes to the running command" : shell ? "Runs in the shell" : "Goes to the agent";
+  g.title = S?.shellBusy ? tx("Input goes to the running command") : shell ? tx("Runs in the shell") : tx("Goes to the agent");
 }
 
 // ---------- panes & splits ----------
@@ -4724,6 +4746,7 @@ const inPane = (S, fn) => { const P = paneOf(S); if (P) withPane(P, fn); };
 
 function createPane() {
   const root = $("pane-template").content.firstElementChild.cloneNode(true);
+  I18N.translateDom(root); // a template's content isn't in the page when it loads
   const P = { id: nextPaneId++, root, sid: null };
   panes.set(P.id, P);
   root.dataset.pane = P.id;
@@ -4970,7 +4993,7 @@ function bindPane(P) {
           try {
             addAttachments(S, [await invoke("save_pasted_image", { data, mime: file.type === "image/jpg" ? "image/jpeg" : file.type, session: S.pawId })]);
           } catch (err) {
-            sys(S, `✗ couldn't attach the pasted image: ${err}`);
+            sys(S, tx("✗ couldn't attach the pasted image: {error}", { error: err }));
           }
         };
         reader.readAsDataURL(file);
@@ -5037,10 +5060,10 @@ function agentAvatar(a) {
 function modelMenuItems(menu) {
   const groups = modelsByProvider();
   if (!groups.length) {
-    if (!detectionsReady) { menu.appendChild(div("menu-empty", "Looking for models…")); return; }
+    if (!detectionsReady) { menu.appendChild(div("menu-empty", tx("Looking for models…"))); return; }
     const b = document.createElement("button");
     b.className = "menu-item";
-    b.innerHTML = `<span class="mini-avatar ghost">⚙</span><span class="mi-name">Connect a provider in Settings…</span>`;
+    b.innerHTML = `<span class="mini-avatar ghost">⚙</span><span class="mi-name">${tx("Connect a provider in Settings…")}</span>`;
     b.onclick = () => { closeMenu(); invoke("open_preferences", { tab: "agents" }); };
     menu.appendChild(b);
     return;
@@ -5069,7 +5092,7 @@ function openMenu() {
   menu.innerHTML = "";
   if (!CLI_AGENTS) modelMenuItems(menu);
   // Deprecated: CLI agents (CLI_AGENTS).
-  else if (!list.length) menu.appendChild(div("menu-empty", detectionsReady ? "No agents available" : "Detecting agents…"));
+  else if (!list.length) menu.appendChild(div("menu-empty", detectionsReady ? tx("No agents available") : tx("Detecting agents…")));
   for (const [i, a] of (CLI_AGENTS ? list : []).entries()) {
     if (i > 0 && isPaw(list[i - 1]) && !isPaw(a)) menu.appendChild(div("menu-sep")); // Paw Agent, then the CLI agents
     const b = document.createElement("button");
@@ -5084,13 +5107,13 @@ function openMenu() {
   if (CLI_AGENTS ? list.some((a) => sessionMode(a) !== "stdin") : visibleModels().length) {
     const tk = document.createElement("button");
     tk.className = "menu-item";
-    tk.innerHTML = `<span class="mini-avatar ghost">◇</span><span class="mi-name">New plan…</span><span class="mi-sub">plan, then run</span>`;
+    tk.innerHTML = `<span class="mini-avatar ghost">◇</span><span class="mi-name">${tx("New plan…")}</span><span class="mi-sub">${tx("plan, then run")}</span>`;
     tk.onclick = () => { closeMenu(); const S = focusedS(); newTask({ cwd: S?.cwd }); };
     menu.appendChild(tk);
   }
   const s = document.createElement("button");
   s.className = "menu-item";
-  s.innerHTML = `<span class="mini-avatar ghost">⚙</span><span class="mi-name">Manage Agents…</span>`;
+  s.innerHTML = `<span class="mini-avatar ghost">⚙</span><span class="mi-name">${tx("Manage Agents…")}</span>`;
   s.onclick = () => { closeMenu(); invoke("open_preferences", { tab: "agents" }); };
   menu.appendChild(s);
 
@@ -5113,8 +5136,8 @@ function renderWelcome() {
     const groups = modelsByProvider();
     if (!groups.length) {
       box.appendChild(div("welcome-empty", detectionsReady
-        ? `No models yet. <a id="w-settings">Connect a provider in Settings…</a>`
-        : "Looking for models…"));
+        ? `${tx("No models yet.")} <a id="w-settings">${tx("Connect a provider in Settings…")}</a>`
+        : tx("Looking for models…")));
       const l = document.getElementById("w-settings");
       if (l) l.onclick = () => invoke("open_preferences", { tab: "agents" });
       return;
@@ -5136,8 +5159,8 @@ function renderWelcome() {
   const list = availableAgents();
   if (!list.length) {
     box.appendChild(div("welcome-empty", detectionsReady
-      ? `No agents found. <a id="w-settings">Open Settings</a> to add one.`
-      : "Detecting installed agents…"));
+      ? tx("No agents found. {link} to add one.", { link: `<a id="w-settings">${tx("Open Settings")}</a>` })
+      : tx("Detecting installed agents…")));
     const l = document.getElementById("w-settings");
     if (l) l.onclick = () => invoke("open_preferences", { tab: "agents" });
     return;
@@ -5156,7 +5179,7 @@ function setSidebar(visible, animate = true) {
   const app = document.querySelector(".app");
   app.classList.toggle("no-anim", !animate);
   app.classList.toggle("sidebar-hidden", !visible);
-  $("sidebar-toggle").title = visible ? "Hide sidebar (⌃⌘S)" : "Show sidebar (⌃⌘S)";
+  $("sidebar-toggle").title = visible ? tx("Hide sidebar (⌃⌘S)") : tx("Show sidebar (⌃⌘S)");
   $("sidebar-toggle").classList.toggle("on", visible);
   try { localStorage.setItem("paw.sidebar", visible ? "1" : "0"); } catch {}
 }
@@ -5293,6 +5316,9 @@ function waitForDetections(timeoutMs) {
 (async () => {
   homeDir = await invoke("home_dir");
   settings = await invoke("get_settings");
+  // The language Settings has (the page loaded with the one remembered): if
+  // they differ, load again in the right one before anything is shown.
+  if (I18N.pick(settings.general?.language) !== I18N.lang) { I18N.remember(settings.general?.language); location.reload(); return; }
   const first = createPane();
   layout = { type: "pane", pane: first };
   focusedPane = activePane = first;
@@ -5334,10 +5360,10 @@ function waitForDetections(timeoutMs) {
       if (isPaw(S.agent)) expirePawCards(S);
       if (S.working || S.busy) {
         S.busy = false;
-        taskTurnEnded(S, { ok: false, stopped: true, text: "", error: "Paw's background process stopped." });
+        taskTurnEnded(S, { ok: false, stopped: true, text: "", error: tx("Paw's background process stopped.") });
         turnFinished(S);
       }
-      sys(S, "Paw's background process stopped, and its agents with it. It's starting again; your next prompt continues the conversation.");
+      sys(S, tx("Paw's background process stopped, and its agents with it. It's starting again; your next prompt continues the conversation."));
       refresh(S);
     }
   });

@@ -14,9 +14,14 @@ const TASK_INPUT_BUDGET = 8000; // characters of earlier results one step gets
 const TASK_MAX_STEPS = 12;
 
 const STEP_STATE_TEXT = {
-  waiting: "waiting", running: "running", needs: "needs you", done: "done",
-  failed: "failed", stopped: "stopped", skipped: "skipped",
-  checking: "checking", // a factory's wait node, checking its command
+  waiting: tx("waiting"), running: tx("running"), needs: tx("needs you"), done: tx("done"),
+  failed: tx("failed"), stopped: tx("stopped"), skipped: tx("skipped"),
+  checking: tx("checking"), // a factory's wait node, checking its command
+};
+/** A plan's state as /plans shows it. */
+const TASK_STATE_TEXT = {
+  new: tx("new"), planning: tx("planning"), draft: tx("draft"), running: tx("running"),
+  done: tx("done"), failed: tx("failed"), stopped: tx("stopped"),
 };
 
 // ---------- lookups ----------
@@ -36,7 +41,7 @@ const taskModels = () => visibleModels();
 /** Deprecated: CLI agents (CLI_AGENTS). Steps used to name an agent. */
 const agentName = (id) => settings.agents.find((a) => a.id === id)?.name ?? id;
 /** What a step runs on, short: claude-sonnet-5-5. */
-const stepModelName = (st) => (st.model ? modelShort(st.model) : CLI_AGENTS && st.agent ? agentName(st.agent) : "default model");
+const stepModelName = (st) => (st.model ? modelShort(st.model) : CLI_AGENTS && st.agent ? agentName(st.agent) : tx("default model"));
 
 function hasPendingApproval(C) {
   if (!C) return false;
@@ -91,8 +96,8 @@ function checkPlan(raw, plannerModel) {
   const models = taskModels();
   const fallback = plannerModel || defaultPawModel();
   const list = (Array.isArray(raw?.steps) ? raw.steps : []).slice(0, TASK_MAX_STEPS);
-  if (!list.length) return { error: "The plan has no steps." };
-  if (raw.steps.length > TASK_MAX_STEPS) warnings.push(`Only the first ${TASK_MAX_STEPS} steps are kept.`);
+  if (!list.length) return { error: tx("The plan has no steps.") };
+  if (raw.steps.length > TASK_MAX_STEPS) warnings.push(tx("Only the first {n} steps are kept.", { n: TASK_MAX_STEPS }));
   const ids = new Map(); // the planner's id → ours
   const used = new Set();
   const steps = list.map((p, i) => {
@@ -107,8 +112,8 @@ function checkPlan(raw, plannerModel) {
     if (hits.length === 1) model = hits[0];
     if (!model) {
       model = fallback;
-      const why = hits.length ? `“${want}” could be ${hits.join(" or ")}` : `“${want}” isn't available here`;
-      if (want) warnings.push(`${why}, so ${model ? modelShort(model) : "the planner's model"} does “${p?.title ?? id}”.`);
+      const vars = { want, models: hits.join(` ${tx("or")} `), model: model ? modelShort(model) : tx("the planner's model"), step: p?.title ?? id };
+      if (want) warnings.push(hits.length ? tx("“{want}” could be {models}, so {model} does “{step}”.", vars) : tx("“{want}” isn't available here, so {model} does “{step}”.", vars));
     }
     return {
       id,
@@ -124,7 +129,7 @@ function checkPlan(raw, plannerModel) {
     s.needs = [...new Set(s.needs.map((n) => ids.get(n) ?? (used.has(slug(n)) ? slug(n) : null)).filter((n) => n && n !== s.id))];
   }
   const order = topoOrder(steps);
-  if (!order) return { error: "The plan's steps wait on each other in a circle." };
+  if (!order) return { error: tx("The plan's steps wait on each other in a circle.") };
   return { title: String(raw.title ?? "").trim().slice(0, 80), steps: order, warnings };
 }
 
@@ -156,7 +161,7 @@ function parsePlan(text, plannerModel) {
     if (!plan.error) return plan;
     lastError = plan.error;
   }
-  return { error: lastError ?? "The answer has no plan in it." };
+  return { error: lastError ?? tx("The answer has no plan in it.") };
 }
 
 /** The planner's message with its JSON plan replaced by a pointer to the board. */
@@ -169,7 +174,7 @@ function foldPlanJson(line) {
       c.text = c.text.replace(/```(?:json)?[ \t]*\n([\s\S]*?)```/g, (whole, body) => {
         if (!Array.isArray(looseJson(body)?.steps)) return whole;
         changed = true;
-        return "_(The plan is on the board above.)_";
+        return tx("_(The plan is on the board above.)_");
       });
     }
     return changed ? JSON.stringify(ev) : line;
@@ -237,8 +242,8 @@ async function newTask({ model, cwd, goal, atts = [] } = {}) {
 }
 
 function taskBanner(S) {
-  info(S, `<b>New plan</b> <span class="dim">by</span> ${esc(S.agent.name)} <span class="dim">on</span> ${esc(modelShort(S.model) || "no model")}  <span class="dim">in</span> ${esc(tildify(S.cwd))}\n` +
-    `<span class="dim">Describe what you want done below. ${esc(S.agent.name)} splits it into steps, each on one of your models; you review the plan before anything runs.</span>`);
+  info(S, tx('<b>New plan</b> <span class="dim">by</span> {agent} <span class="dim">on</span> {model}  <span class="dim">in</span> {cwd}', { agent: esc(S.agent.name), model: esc(modelShort(S.model) || tx("no model")), cwd: esc(tildify(S.cwd)) }) + "\n" +
+    `<span class="dim">${tx("Describe what you want done below. {agent} splits it into steps, each on one of your models; you review the plan before anything runs.", { agent: esc(S.agent.name) })}</span>`);
 }
 
 /** The task tab's prompt box: the first message is the task, later ones change the plan. */
@@ -280,7 +285,7 @@ function taskTurnEnded(S, r) {
     return taskChanged(T);
   }
   if (r.stopped) st.state = "stopped";
-  else if (!r.ok) { st.state = "failed"; st.error = String(r.error || r.text || "The agent reported an error.").slice(0, 2000); }
+  else if (!r.ok) { st.state = "failed"; st.error = String(r.error || r.text || tx("The agent reported an error.")).slice(0, 2000); }
   else { st.state = "done"; st.result = String(r.text ?? "").trim(); st.error = null; }
   closeRun(st);
   taskPump(T);
@@ -291,11 +296,11 @@ function plannerTurnEnded(S, r) {
   if (t.state !== "planning") return;
   t.state = "draft";
   closeSpan(t.plans, r.stopped ? "stopped" : r.ok ? "done" : "failed");
-  if (r.stopped) t.note = "Planning stopped. Describe what you want below to plan again.";
-  else if (!r.ok) t.note = "Planning failed; the planner's output is below. Ask again below.";
+  if (r.stopped) t.note = tx("Planning stopped. Describe what you want below to plan again.");
+  else if (!r.ok) t.note = tx("Planning failed; the planner's output is below. Ask again below.");
   else {
     const plan = parsePlan(r.text, S.model);
-    if (plan.error) t.note = `${plan.error} Ask the planner again below, for example “give me the plan as JSON”.`;
+    if (plan.error) t.note = tx("{error} Ask the planner again below, for example “give me the plan as JSON”.", { error: plan.error });
     else {
       t.title = plan.title || t.title;
       t.steps = plan.steps;
@@ -387,7 +392,7 @@ function taskPump(T) {
       recordTask(T);
     } else if (!t.steps.some(activeStep) && !t.steps.some((s) => s.state === "waiting" && ready(s))) {
       t.state = t.steps.some((s) => s.state === "failed") ? "failed" : "stopped";
-      t.note = t.state === "failed" ? "A step failed. Retry it, skip it, or change it and run again." : "";
+      t.note = t.state === "failed" ? tx("A step failed. Retry it, skip it, or change it and run again.") : "";
     }
   }
   taskChanged(T);
@@ -405,19 +410,19 @@ async function startStep(T, st) {
     if (CLI_AGENTS && st.agent && !st.model) {
       // Deprecated: CLI agents (CLI_AGENTS). Steps from before models named an agent.
       const agent = settings.agents.find((a) => a.id === st.agent);
-      if (!agent) return stepFailed(T, st, `${agentName(st.agent)} isn't set up in Paw any more.`);
+      if (!agent) return stepFailed(T, st, tx("{agent} isn't set up in Paw any more.", { agent: agentName(st.agent) }));
       // Read-only steps: Paw Agent's read-only level; other agents ask first.
       const approval = st.edits ? undefined : isPaw(agent) ? "plan" : approvalLevels(agent).includes("ask") ? "ask" : undefined;
       C = await newSession(agent.id, { cwd: T.cwd, background: true, after: T, approval, stepOf: { task: T.task.id, step: st.id } });
-      if (!C) return stepFailed(T, st, `Couldn't open a tab for ${agentName(st.agent)}.`);
+      if (!C) return stepFailed(T, st, tx("Couldn't open a tab for {name}.", { name: agentName(st.agent) }));
     } else {
       // A step without a model (or from before models) runs on the default one.
       st.model = savedModel(st.model);
       delete st.agent;
-      if (!st.model) return stepFailed(T, st, "No model to run this step on: connect a provider in Settings › Agents.");
+      if (!st.model) return stepFailed(T, st, tx("No model to run this step on: connect a provider in Settings › Agents."));
       // Read-only steps run at Paw Agent's read-only level.
       C = await newSession("paw", { model: st.model, cwd: T.cwd, background: true, after: T, approval: st.edits ? undefined : "plan", stepOf: { task: T.task.id, step: st.id } });
-      if (!C) return stepFailed(T, st, `Couldn't open a tab for ${modelShort(st.model)}.`);
+      if (!C) return stepFailed(T, st, tx("Couldn't open a tab for {name}.", { name: modelShort(st.model) }));
     }
     st.sid = C.sid;
   }
@@ -495,8 +500,8 @@ function restoreTask(saved, { live = false } = {}) {
     if (activeStep(s) && !live) { s.state = "stopped"; closeRun(s); }
   }
   if (live) return t;
-  if (t.state === "planning") { closeSpan(t.plans, "stopped"); t.state = t.goal ? "draft" : "new"; t.note = t.goal ? "Paw restarted while planning. Ask the planner again below." : ""; }
-  if (t.state === "running") { t.state = "stopped"; t.note = "Paw restarted while this plan ran. Press Run to carry on where it stopped."; }
+  if (t.state === "planning") { closeSpan(t.plans, "stopped"); t.state = t.goal ? "draft" : "new"; t.note = t.goal ? tx("Paw restarted while planning. Ask the planner again below.") : ""; }
+  if (t.state === "running") { t.state = "stopped"; t.note = tx("Paw restarted while this plan ran. Press Run to carry on where it stopped."); }
   return t;
 }
 
@@ -514,10 +519,10 @@ function relinkTasks() {
 // ---------- tabs ----------
 function taskTabLabel(S) {
   const t = S.task;
-  const name = t.title || "New plan";
+  const name = t.title || tx("New plan");
   if (t.state === "running") {
     const n = t.steps.filter(activeStep).length;
-    return `${name} · ${n} running`;
+    return tx("{name} · {n} running", { name, n });
   }
   return name;
 }
@@ -534,11 +539,11 @@ const taskNeedsYou = (S) => S.task.steps.filter((s) => stepView(s) === "needs").
 
 function taskPlaceholder(S) {
   return {
-    new: "Describe what you want done, and the planner splits it into steps…",
-    planning: "Planning… (⌘. to stop)",
-    draft: "Change the plan: add a step, use Copilot for the UI step, re-plan…",
-    running: "Ask the planner something…",
-  }[S.task.state] ?? "Ask the planner something…";
+    new: tx("Describe what you want done, and the planner splits it into steps…"),
+    planning: tx("Planning… (⌘. to stop)"),
+    draft: tx("Change the plan: add a step, use Copilot for the UI step, re-plan…"),
+    running: tx("Ask the planner something…"),
+  }[S.task.state] ?? tx("Ask the planner something…");
 }
 
 function taskChanged(T) {
@@ -553,13 +558,13 @@ function taskStatusText(t) {
   const n = t.steps.length;
   const done = t.steps.filter((s) => s.state === "done" || s.state === "skipped").length;
   switch (t.state) {
-    case "new": return "Waiting for your goal";
-    case "planning": return "Planning…";
-    case "draft": return n ? `Draft · ${n} step${n > 1 ? "s" : ""}` : "No steps yet";
-    case "running": return `Running · ${done} of ${n} done`;
-    case "done": return `Done · ${n} step${n > 1 ? "s" : ""}`;
-    case "failed": return `Stopped on a failed step · ${done} of ${n} done`;
-    case "stopped": return `Stopped · ${done} of ${n} done`;
+    case "new": return tx("Waiting for your goal");
+    case "planning": return tx("Planning…");
+    case "draft": return n ? (n > 1 ? tx("Draft · {n} steps", { n }) : tx("Draft · {n} step", { n })) : tx("No steps yet");
+    case "running": return tx("Running · {done} of {n} done", { done, n });
+    case "done": return n > 1 ? tx("Done · {n} steps", { n }) : tx("Done · {n} step", { n });
+    case "failed": return tx("Stopped on a failed step · {done} of {n} done", { done, n });
+    case "stopped": return tx("Stopped · {done} of {n} done", { done, n });
     default: return t.state;
   }
 }
@@ -591,31 +596,31 @@ function renderTaskView() {
   const scroll = host.querySelector(".tk-graph")?.scrollLeft ?? 0;
   const canRun = t.steps.length && ["draft", "stopped", "failed"].includes(t.state);
   const buttons = [
-    canRun && `<button class="tk-btn primary" data-act="run">${t.state === "draft" ? "Run" : "Run again"}</button>`,
-    t.state === "running" && `<button class="tk-btn" data-act="stop">Stop</button>`,
-    t.state === "planning" && `<button class="tk-btn" data-act="stop-plan">Stop planning</button>`,
-    t.state === "draft" && t.steps.length > 0 && `<button class="tk-btn" data-act="add">Add step</button>`,
+    canRun && `<button class="tk-btn primary" data-act="run">${t.state === "draft" ? tx("Run") : tx("Run again")}</button>`,
+    t.state === "running" && `<button class="tk-btn" data-act="stop">${tx("Stop")}</button>`,
+    t.state === "planning" && `<button class="tk-btn" data-act="stop-plan">${tx("Stop planning")}</button>`,
+    t.state === "draft" && t.steps.length > 0 && `<button class="tk-btn" data-act="add">${tx("Add step")}</button>`,
   ].filter(Boolean).join("");
   // Views plugins add (Settings › Plugins), next to the graph.
   const views = t.steps.length ? boardViews() : [];
   let viewKey = S.boardView && views.some(([k]) => k === S.boardView) ? S.boardView : "graph";
   if (viewKey === "graph" && S.view) closeBoardView(S);
-  const switcher = views.length ? `<div class="tk-views" role="tablist">${[["graph", { label: "Graph" }], ...views].map(([k, v]) =>
+  const switcher = views.length ? `<div class="tk-views" role="tablist">${[["graph", { label: tx("Graph") }], ...views].map(([k, v]) =>
     `<button class="tk-viewbtn${k === viewKey ? " on" : ""}" data-view="${esc(k)}">${esc(v.label)}</button>`).join("")}</div>` : "";
   const head = `<div class="tk-head">
-      <span class="tk-title" title="${esc(t.goal)}">${esc(t.title || "New plan")}</span>
+      <span class="tk-title" title="${esc(t.goal)}">${esc(t.title || tx("New plan"))}</span>
       <span class="tk-state st-${esc(t.state)}">${esc(taskStatusText(t))}</span>
       ${switcher}<span class="grow"></span>${buttons}
     </div>${t.note ? `<div class="tk-note">${esc(t.note)}</div>` : ""}`;
   let body;
   if (t.state === "new" || (!t.steps.length && t.state !== "planning")) {
     body = `<div class="tk-empty">${t.state === "new"
-      ? `Describe what you want done in the prompt box below. ${esc(S.agent.name)} splits it into steps for your agents, and you check the plan before anything runs.`
-      : "No steps yet."}</div>`;
+      ? tx("Describe what you want done in the prompt box below. {agent} splits it into steps for your agents, and you check the plan before anything runs.", { agent: esc(S.agent.name) })
+      : tx("No steps yet.")}</div>`;
   } else if (!t.steps.length) {
-    body = `<div class="tk-empty"><span class="spin-ch">${SPIN[spinFrame % SPIN.length]}</span> ${esc(S.agent.name)} is planning…</div>`;
+    body = `<div class="tk-empty"><span class="spin-ch">${SPIN[spinFrame % SPIN.length]}</span> ${tx("{agent} is planning…", { agent: esc(S.agent.name) })}</div>`;
   } else {
-    const vsplit = `<div class="tk-vsplit" title="Drag to resize · double-click to reset"></div>`;
+    const vsplit = `<div class="tk-vsplit" title="${esc(tx("Drag to resize · double-click to reset"))}"></div>`;
     body = viewKey === "graph"
       ? `<div class="tk-body"><div class="tk-graph">${graphHtml(t)}</div>${vsplit}<aside class="tk-side">${sideHtml(S)}</aside></div>`
       : `<div class="tk-body"><div class="tk-viewslot"></div>${vsplit}<aside class="tk-side">${sideHtml(S)}</aside></div>`;
@@ -680,7 +685,7 @@ function timelineRows(T) {
   if (t.plans?.length) {
     const last = t.plans.at(-1);
     rows.push({
-      id: null, name: "Planning", agent: modelShort(T.model) || T.agent.name, level: 0, view: last.end == null ? "running" : last.state ?? "done",
+      id: null, name: tx("Planning"), agent: modelShort(T.model) || T.agent.name, level: 0, view: last.end == null ? "running" : last.state ?? "done",
       spans: t.plans.map((p) => ({ at: p.at, end: p.end, view: p.end == null ? "running" : p.state ?? "done" })),
       tokens: planTokens(T),
     });
@@ -701,13 +706,13 @@ function timelineRows(T) {
 function timelineHtml(T) {
   return timelineCore({
     rows: timelineRows(T), selected: T.task.selected, side: budgetHtml(T),
-    empty: "Nothing has run yet. Planning and the steps show here as they run, on one time line.",
+    empty: tx("Nothing has run yet. Planning and the steps show here as they run, on one time line."),
     foot: (total) => timelineSummary(T, total),
   });
 }
 
 /** Rows on one time axis, with a side panel: tasks' and factories' timelines. */
-function timelineCore({ rows, selected, side, empty, foot, label = "step", legend = [], again = "runs" }) {
+function timelineCore({ rows, selected, side, empty, foot, label = tx("step"), legend = [], again = tx("runs") }) {
   const now = Date.now();
   const spans = rows.flatMap((r) => r.spans);
   if (!spans.length) {
@@ -732,14 +737,14 @@ function timelineCore({ rows, selected, side, empty, foot, label = "step", legen
         <span class="tl-name" title="${esc(r.name)} · ${esc(r.agent)}">${esc(r.name)}</span>
         <span class="tl-tag v-${esc(r.view)}">${esc(STEP_STATE_TEXT[r.view] ?? r.view)}</span>${runs}
         <span class="tl-grow"></span>
-        <span class="tl-tok" title="${r.tokens.known ? `${fmtCount(r.tokens.input)} in · ${fmtCount(r.tokens.output)} out` : `${esc(r.agent)} reports no tokens`}">${r.tokens.known ? fmtTokens(r.tokens.input + r.tokens.output) : "–"}</span>
+        <span class="tl-tok" title="${r.tokens.known ? esc(tx("{in} in · {out} out", { in: fmtCount(r.tokens.input), out: fmtCount(r.tokens.output) })) : esc(tx("{agent} reports no tokens", { agent: r.agent }))}">${r.tokens.known ? fmtTokens(r.tokens.input + r.tokens.output) : "–"}</span>
         <span class="tl-dur">${r.spans.length ? esc(fmtElapsed(dur)) : ""}</span>
       </div>
       <div class="tl-track">${bars}</div>
     </div>`;
   };
   return `<div class="tl-wrap"><div class="tl-main">
-      <div class="tl-head"><div class="tl-lbl"><span class="tl-name">${esc(label)}</span><span class="tl-grow"></span><span class="tl-tok">tokens</span><span class="tl-dur">time</span></div><div class="tl-axis">${ticks.join("")}</div></div>
+      <div class="tl-head"><div class="tl-lbl"><span class="tl-name">${esc(label)}</span><span class="tl-grow"></span><span class="tl-tok">${esc(tx("tokens"))}</span><span class="tl-dur">${esc(tx("time"))}</span></div><div class="tl-axis">${ticks.join("")}</div></div>
       <div class="tl-rows">${rows.map(rowHtml).join("")}</div>
       <div class="tl-foot">${esc(foot(total))}</div>
     </div>${side}</div>${legendHtml(legend)}`;
@@ -749,13 +754,14 @@ function timelineSummary(T, total) {
   const s = T.task.steps;
   const count = (st) => s.filter((x) => x.state === st).length;
   const retried = s.filter((x) => (x.runs?.length ?? 0) > 1).length;
-  const parts = [`${s.length} step${s.length === 1 ? "" : "s"}`];
-  for (const [st, word] of [["done", "done"], ["running", "running"], ["failed", "failed"], ["stopped", "stopped"], ["skipped", "skipped"]]) {
+  const parts = [s.length === 1 ? tx("{n} step", { n: 1 }) : tx("{n} steps", { n: s.length })];
+  const words = { done: (n) => tx("{n} done", { n }), running: (n) => tx("{n} running", { n }), failed: (n) => tx("{n} failed", { n }), stopped: (n) => tx("{n} stopped", { n }), skipped: (n) => tx("{n} skipped", { n }) };
+  for (const st of ["done", "running", "failed", "stopped", "skipped"]) {
     const n = st === "running" ? s.filter(activeStep).length : count(st);
-    if (n && !(st === "done" && n === s.length)) parts.push(`${n} ${word}`);
+    if (n && !(st === "done" && n === s.length)) parts.push(words[st](n));
   }
-  if (retried) parts.push(`${retried} retried`);
-  const head = T.task.state === "done" ? `Done in ${fmtElapsed(total)}` : `${taskStatusText(T.task)} · ${fmtElapsed(total)}`;
+  if (retried) parts.push(tx("{n} retried", { n: retried }));
+  const head = T.task.state === "done" ? tx("Done in {time}", { time: fmtElapsed(total) }) : `${taskStatusText(T.task)} · ${fmtElapsed(total)}`;
   return `${head}: ${parts.join(", ")}.`;
 }
 
@@ -778,23 +784,23 @@ function budgetHtml(T) {
   const done = t.steps.filter((s) => s.state === "done" || s.state === "skipped").length;
   const running = t.steps.filter(activeStep).length;
   return `<aside class="tl-side">
-      <div class="tl-k">Budget <button class="tl-link" data-act="budget">${budget ? "Change" : "Set"}</button></div>
+      <div class="tl-k">${tx("Budget")} <button class="tl-link" data-act="budget">${budget ? tx("Change") : tx("Set")}</button></div>
       ${budget ? `<div class="tl-meter${over ? " over" : ""}"><span style="width:${(share * 100).toFixed(1)}%"></span></div>` : ""}
-      <div class="tl-big"><span data-budget-used>${fmtCount(sum)}</span>${budget ? ` <span class="tl-of">/ <span data-budget>${fmtCount(budget)}</span> tokens</span>` : ` <span class="tl-of">tokens</span>`}</div>
-      <div class="tl-sub">${used.known ? `${fmtCount(used.input)} in · ${fmtCount(used.output)} out` : "No agent here reports its tokens yet."}${over ? ` · <span class="tl-over">${fmtCount(sum - budget)} over</span>` : ""}</div>
+      <div class="tl-big"><span data-budget-used>${fmtCount(sum)}</span>${budget ? ` <span class="tl-of">/ <span data-budget>${fmtCount(budget)}</span> ${tx("tokens")}</span>` : ` <span class="tl-of">${tx("tokens")}</span>`}</div>
+      <div class="tl-sub">${used.known ? tx("{in} in · {out} out", { in: fmtCount(used.input), out: fmtCount(used.output) }) : tx("No agent here reports its tokens yet.")}${over ? ` · <span class="tl-over">${tx("{n} over", { n: fmtCount(sum - budget) })}</span>` : ""}</div>
       <div class="tl-grid2">
-        <div><div class="tl-k">Elapsed</div><div class="tl-v">${elapsed ? esc(fmtElapsed(elapsed)) : "–"}</div></div>
-        <div><div class="tl-k">Steps</div><div class="tl-v">${done} of ${t.steps.length}</div></div>
-        <div><div class="tl-k">Running</div><div class="tl-v">${running}</div></div>
-        <div><div class="tl-k">Planning</div><div class="tl-v">${planTokens(T).known ? fmtTokens(planTokens(T).input + planTokens(T).output) : "–"}</div></div>
+        <div><div class="tl-k">${tx("Elapsed")}</div><div class="tl-v">${elapsed ? esc(fmtElapsed(elapsed)) : "–"}</div></div>
+        <div><div class="tl-k">${tx("Steps")}</div><div class="tl-v">${tx("{done} of {n}", { done, n: t.steps.length })}</div></div>
+        <div><div class="tl-k">${tx("Running")}</div><div class="tl-v">${running}</div></div>
+        <div><div class="tl-k">${tx("Planning")}</div><div class="tl-v">${planTokens(T).known ? fmtTokens(planTokens(T).input + planTokens(T).output) : "–"}</div></div>
       </div>
-      <div class="tl-k">Outcome</div>
+      <div class="tl-k">${tx("Outcome")}</div>
       <div class="tk-state st-${esc(t.state)}">${esc(taskStatusText(t))}</div>
     </aside>`;
 }
 
 function legendHtml(extra = []) {
-  const items = [["running", "running"], ["done", "done"], ["needs", "needs you"], ...extra, ["failed", "failed"], ["stopped", "stopped"], ["skipped", "skipped"]];
+  const items = [["running", tx("running")], ["done", tx("done")], ["needs", tx("needs you")], ...extra, ["failed", tx("failed")], ["stopped", tx("stopped")], ["skipped", tx("skipped")]];
   return `<div class="tl-legend">${items.map(([v, label]) => `<span><i class="tl-swatch v-${v}"></i>${label}</span>`).join("")}</div>`;
 }
 
@@ -849,7 +855,7 @@ function graphHtml(t) {
     const time = stepTime(s);
     return `<button class="tk-node v-${v}${t.selected === s.id ? " sel" : ""}" data-step="${esc(s.id)}" title="${esc(s.title)}">
       <span class="tk-node-title">${esc(s.title)}</span>
-      <span class="tk-node-sub"><span class="tk-dot v-${v}"></span>${esc(stepModelName(s))} · ${esc(STEP_STATE_TEXT[v] ?? v)}${time && v !== "waiting" ? ` · <span data-time="${esc(s.id)}">${esc(time)}</span>` : ""}${s.edits ? "" : ` · <span class="tk-ro">reads</span>`}${s.badge ? ` · <span class="tk-round">${esc(s.badge)}</span>` : ""}</span>
+      <span class="tk-node-sub"><span class="tk-dot v-${v}"></span>${esc(stepModelName(s))} · ${esc(STEP_STATE_TEXT[v] ?? v)}${time && v !== "waiting" ? ` · <span data-time="${esc(s.id)}">${esc(time)}</span>` : ""}${s.edits ? "" : ` · <span class="tk-ro">${tx("reads")}</span>`}${s.badge ? ` · <span class="tk-round">${esc(s.badge)}</span>` : ""}</span>
     </button>`;
   }).join("")}</div>`).join("");
 }
@@ -902,28 +908,28 @@ function sideHtml(S) {
   const others = t.steps.filter((o) => o.id !== st.id && !dependsOn(t, o, st.id));
   const parts = [];
   if (draft) {
-    parts.push(`<label class="tk-lbl">Step</label><input class="tk-in" data-field="title" value="${esc(st.title)}" spellcheck="false">`);
-    parts.push(`<label class="tk-lbl">Model</label><select class="tk-in" data-field="model">${modelOptions(st.model)}</select>`);
-    parts.push(`<label class="tk-check"><input type="checkbox" data-field="edits"${st.edits ? " checked" : ""}> Changes files</label>`);
-    parts.push(`<label class="tk-lbl">Gets the results of</label>${others.length ? others.map((o) =>
+    parts.push(`<label class="tk-lbl">${tx("Step")}</label><input class="tk-in" data-field="title" value="${esc(st.title)}" spellcheck="false">`);
+    parts.push(`<label class="tk-lbl">${tx("Model")}</label><select class="tk-in" data-field="model">${modelOptions(st.model)}</select>`);
+    parts.push(`<label class="tk-check"><input type="checkbox" data-field="edits"${st.edits ? " checked" : ""}> ${tx("Changes files")}</label>`);
+    parts.push(`<label class="tk-lbl">${tx("Gets the results of")}</label>${others.length ? others.map((o) =>
       `<label class="tk-check"><input type="checkbox" data-need="${esc(o.id)}"${st.needs.includes(o.id) ? " checked" : ""}> ${esc(o.title)}</label>`).join("")
-      : `<span class="tk-dim">No other steps</span>`}`);
-    parts.push(`<label class="tk-lbl">Prompt</label><textarea class="tk-in tk-prompt" data-field="prompt" spellcheck="false">${esc(st.prompt)}</textarea>`);
-    parts.push(`<div class="tk-row"><button class="tk-btn danger" data-act="delete" data-id="${esc(st.id)}">Delete step</button></div>`);
+      : `<span class="tk-dim">${tx("No other steps")}</span>`}`);
+    parts.push(`<label class="tk-lbl">${tx("Prompt")}</label><textarea class="tk-in tk-prompt" data-field="prompt" spellcheck="false">${esc(st.prompt)}</textarea>`);
+    parts.push(`<div class="tk-row"><button class="tk-btn danger" data-act="delete" data-id="${esc(st.id)}">${tx("Delete step")}</button></div>`);
   } else {
     parts.push(`<div class="tk-side-title">${esc(st.title)}</div>`);
-    parts.push(`<div class="tk-dim"><span class="tk-dot v-${v}"></span>${esc(stepModelName(st))} · ${esc(STEP_STATE_TEXT[v] ?? v)}${stepTime(st) ? ` · ${esc(stepTime(st))}` : ""}${st.edits ? "" : " · reads only"}</div>`);
-    if (st.needs.length) parts.push(`<label class="tk-lbl">Gets the results of</label><div>${st.needs.map((n) => esc(t.steps.find((x) => x.id === n)?.title ?? n)).join(", ")}</div>`);
+    parts.push(`<div class="tk-dim"><span class="tk-dot v-${v}"></span>${esc(stepModelName(st))} · ${esc(STEP_STATE_TEXT[v] ?? v)}${stepTime(st) ? ` · ${esc(stepTime(st))}` : ""}${st.edits ? "" : ` · ${tx("reads only")}`}</div>`);
+    if (st.needs.length) parts.push(`<label class="tk-lbl">${tx("Gets the results of")}</label><div>${st.needs.map((n) => esc(t.steps.find((x) => x.id === n)?.title ?? n)).join(", ")}</div>`);
     const btns = [
-      C && `<button class="tk-btn" data-act="open" data-id="${esc(st.id)}">Open its tab</button>`,
-      ["failed", "stopped"].includes(st.state) && `<button class="tk-btn primary" data-act="retry" data-id="${esc(st.id)}">Retry</button>`,
-      ["failed", "stopped", "waiting"].includes(st.state) && t.state !== "done" && `<button class="tk-btn" data-act="skip" data-id="${esc(st.id)}">Skip</button>`,
+      C && `<button class="tk-btn" data-act="open" data-id="${esc(st.id)}">${tx("Open its tab")}</button>`,
+      ["failed", "stopped"].includes(st.state) && `<button class="tk-btn primary" data-act="retry" data-id="${esc(st.id)}">${tx("Retry")}</button>`,
+      ["failed", "stopped", "waiting"].includes(st.state) && t.state !== "done" && `<button class="tk-btn" data-act="skip" data-id="${esc(st.id)}">${tx("Skip")}</button>`,
     ].filter(Boolean);
     if (btns.length) parts.push(`<div class="tk-row">${btns.join("")}</div>`);
-    if (v === "needs") parts.push(`<div class="tk-warn">Waiting for your approval in its tab.</div>`);
-    if (st.error) parts.push(`<label class="tk-lbl">What went wrong</label><div class="tk-err">${esc(st.error)}</div>`);
-    if (st.result && st.state === "done") parts.push(`<label class="tk-lbl">Result</label><div class="tk-md">${renderMarkdown(clipEnd(st.result, 6000))}</div>`);
-    parts.push(`<details class="tk-fold"><summary>Prompt</summary><div class="tk-pre">${esc(st.prompt)}</div></details>`);
+    if (v === "needs") parts.push(`<div class="tk-warn">${tx("Waiting for your approval in its tab.")}</div>`);
+    if (st.error) parts.push(`<label class="tk-lbl">${tx("What went wrong")}</label><div class="tk-err">${esc(st.error)}</div>`);
+    if (st.result && st.state === "done") parts.push(`<label class="tk-lbl">${tx("Result")}</label><div class="tk-md">${renderMarkdown(clipEnd(st.result, 6000))}</div>`);
+    parts.push(`<details class="tk-fold"><summary>${tx("Prompt")}</summary><div class="tk-pre">${esc(st.prompt)}</div></details>`);
   }
   return parts.join("");
 }
@@ -931,22 +937,22 @@ function sideHtml(S) {
 /** The Model select's options, by provider; a step's model that isn't listed (hidden, or its provider left) stays. */
 function modelOptions(cur) {
   const opt = (m) => `<option value="${esc(m)}"${m === cur ? " selected" : ""}>${esc(modelShort(m))}</option>`;
-  const head = !cur ? `<option value="" selected>default model</option>` : visibleModels().includes(cur) ? "" : opt(cur);
+  const head = !cur ? `<option value="" selected>${esc(tx("default model"))}</option>` : visibleModels().includes(cur) ? "" : opt(cur);
   return head + modelsByProvider().map(([p, list]) => `<optgroup label="${esc(providerName(p))}">${list.map(opt).join("")}</optgroup>`).join("");
 }
 
 function taskSummaryHtml(S) {
   const t = S.task;
-  const parts = [`<div class="tk-side-title">The goal</div><div class="tk-goal">${esc(t.goal)}</div>`,
-    `<div class="tk-dim">Planned by ${esc(S.agent.name)}${S.model ? ` on ${esc(modelShort(S.model))}` : ""} · ${esc(tildify(S.cwd))}</div>`];
-  if (t.state === "draft") parts.push(`<div class="tk-hint">Click a step to change it, or ask the planner below to change the plan. Steps that change files run one at a time; others run side by side, as many as Settings › General › Agents at once allows (${maxAgents() === Infinity ? "no limit" : maxAgents()}).</div>`);
+  const parts = [`<div class="tk-side-title">${tx("The goal")}</div><div class="tk-goal">${esc(t.goal)}</div>`,
+    `<div class="tk-dim">${S.model ? tx("Planned by {agent} on {model}", { agent: esc(S.agent.name), model: esc(modelShort(S.model)) }) : tx("Planned by {agent}", { agent: esc(S.agent.name) })} · ${esc(tildify(S.cwd))}</div>`];
+  if (t.state === "draft") parts.push(`<div class="tk-hint">${tx("Click a step to change it, or ask the planner below to change the plan. Steps that change files run one at a time; others run side by side, as many as Settings › General › Agents at once allows ({max}).", { max: maxAgents() === Infinity ? tx("no limit") : maxAgents() })}</div>`);
   if (t.state === "done") {
     // The steps nobody else needed: their answers are the task's outcome.
     const needed = new Set(t.steps.flatMap((s) => s.needs));
     const ends = t.steps.filter((s) => !needed.has(s.id) && s.state === "done");
-    parts.push(`<label class="tk-lbl">Outcome</label>${ends.map((s) =>
+    parts.push(`<label class="tk-lbl">${tx("Outcome")}</label>${ends.map((s) =>
       `<div class="tk-out"><div class="tk-dim">${esc(s.title)}</div><div class="tk-md">${renderMarkdown(clipEnd(String(s.result ?? ""), 4000))}</div></div>`).join("")}`);
-    if (t.startedAt && t.endedAt) parts.push(`<div class="tk-dim">Took ${esc(fmtElapsed(t.endedAt - t.startedAt))}</div>`);
+    if (t.startedAt && t.endedAt) parts.push(`<div class="tk-dim">${tx("Took {time}", { time: esc(fmtElapsed(t.endedAt - t.startedAt)) })}</div>`);
   }
   return parts.join("");
 }
@@ -1046,7 +1052,7 @@ function bindTaskView(P) {
       case "add": {
         let id = "new-step";
         for (let n = 2; t.steps.some((s) => s.id === id); n++) id = `new-step-${n}`;
-        t.steps.push({ id, title: "New step", model: T.model || defaultPawModel(), needs: [], edits: true, prompt: "", state: "waiting" });
+        t.steps.push({ id, title: tx("New step"), model: T.model || defaultPawModel(), needs: [], edits: true, prompt: "", state: "waiting" });
         t.selected = id;
         taskChanged(T);
         break;
@@ -1112,7 +1118,7 @@ function bindTaskView(P) {
         withPane(P, renderTaskView);
       });
       const input = tl.querySelector(".inplace-input");
-      if (input) input.placeholder = "Tokens, e.g. 40k or 1.5M (empty: no budget)";
+      if (input) input.placeholder = tx("Tokens, e.g. 40k or 1.5M (empty: no budget)");
       return;
     }
     const row = e.target.closest(".tl-row[data-step]");
@@ -1154,7 +1160,7 @@ setInterval(() => {
 /** Every open task, one line each: state, steps, time, planner; the title opens its tab. */
 function tasksListHtml() {
   const tasks = openTabs.map((sid) => sessions.get(sid)).filter((S) => S?.task);
-  if (!tasks.length) return `<span class="dim">No plans yet. Make one with</span> <span class="cmd">/plan &lt;what&gt;</span> <span class="dim">or select text, right-click, Make a plan.</span>`;
+  if (!tasks.length) return tx('<span class="dim">No plans yet. Make one with</span> <span class="cmd">/plan &lt;what&gt;</span> <span class="dim">or select text, right-click, Make a plan.</span>');
   const glyph = { running: "●", planning: "●", done: "✓", failed: "✗", stopped: "■", draft: "◇", new: "◇" };
   const cls = { running: "ok", planning: "ok", done: "ok", failed: "err", stopped: "warn", draft: "dim", new: "dim" };
   const rows = tasks.map((T) => {
@@ -1163,24 +1169,24 @@ function tasksListHtml() {
     const count = (v) => steps.filter((st) => stepView(st) === v).length;
     const done = steps.filter((st) => st.state === "done" || st.state === "skipped").length;
     const bits = [];
-    if (t.state === "planning") bits.push("planning…");
-    else if (!steps.length) bits.push("no steps yet");
-    else if (t.state === "draft") bits.push(`${steps.length} step${steps.length === 1 ? "" : "s"} planned`);
-    else bits.push(`${done}/${steps.length} steps`);
+    if (t.state === "planning") bits.push(tx("planning…"));
+    else if (!steps.length) bits.push(tx("no steps yet"));
+    else if (t.state === "draft") bits.push(steps.length === 1 ? tx("{n} step planned", { n: 1 }) : tx("{n} steps planned", { n: steps.length }));
+    else bits.push(tx("{done}/{n} steps", { done, n: steps.length }));
     if (t.state !== "draft") {
-      if (count("running")) bits.push(`${count("running")} running`);
-      if (count("needs")) bits.push(`<span class="warn">${count("needs")} waiting for you</span>`);
-      if (count("failed")) bits.push(`<span class="err">${count("failed")} failed</span>`);
+      if (count("running")) bits.push(tx("{n} running", { n: count("running") }));
+      if (count("needs")) bits.push(`<span class="warn">${tx("{n} waiting for you", { n: count("needs") })}</span>`);
+      if (count("failed")) bits.push(`<span class="err">${tx("{n} failed", { n: count("failed") })}</span>`);
     }
     const time = t.startedAt ? fmtElapsed((t.endedAt ?? Date.now()) - t.startedAt) : "";
-    const title = t.title || t.goal?.split("\n")[0] || "New task";
+    const title = t.title || t.goal?.split("\n")[0] || tx("New task");
     return `<span class="${cls[t.state] ?? "dim"}">${glyph[t.state] ?? "·"}</span> ` +
-      `<a href="#" class="task-link" data-open-task="${esc(t.id)}" title="Open this plan">${esc(title.length > 48 ? title.slice(0, 47) + "…" : title)}</a>` +
-      `  <span class="${cls[t.state] ?? "dim"}">${esc(t.state)}</span>  ${bits.join(" · ")}` +
+      `<a href="#" class="task-link" data-open-task="${esc(t.id)}" title="${esc(tx("Open this plan"))}">${esc(title.length > 48 ? title.slice(0, 47) + "…" : title)}</a>` +
+      `  <span class="${cls[t.state] ?? "dim"}">${esc(TASK_STATE_TEXT[t.state] ?? t.state)}</span>  ${bits.join(" · ")}` +
       (time ? `  <span class="dim">${esc(time)}</span>` : "") +
       `  <span class="dim">${esc(modelShort(T.model) || T.agent.name)} · ${esc(tildify(T.cwd))}</span>`;
   });
-  return `<span class="help-h">Plans (${tasks.length})</span>\n${rows.join("\n")}`;
+  return `<span class="help-h">${tx("Plans ({n})", { n: tasks.length })}</span>\n${rows.join("\n")}`;
 }
 
 // A task's title in /tasks opens its tab (its group unfolds if it's folded).
@@ -1189,7 +1195,7 @@ document.addEventListener("click", (e) => {
   if (!a) return;
   e.preventDefault();
   const T = [...sessions.values()].find((S) => S.task?.id === a.dataset.openTask);
-  if (!T) { const S = curS(); if (S) sys(S, "That plan's tab is closed."); return; }
+  if (!T) { const S = curS(); if (S) sys(S, tx("That plan's tab is closed.")); return; }
   const g = T.group ? groups.get(T.group) : null;
   if (g?.collapsed) g.collapsed = false;
   select(T.sid);

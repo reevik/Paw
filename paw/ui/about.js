@@ -44,7 +44,7 @@ async function loadLicense() {
     $("license-text").textContent = text.trim().replace(/([^\n])\n(?!\n)/g, "$1 ");
     licenseLoaded = true;
   } catch {
-    $("license-text").textContent = "The license text couldn't be loaded.";
+    $("license-text").textContent = tx("The license text couldn't be loaded.");
   }
 }
 
@@ -75,7 +75,7 @@ function licenseHtml(expr) {
     .map((t) => {
       if (/^(OR|AND|WITH)$/.test(t)) return `<span class="chip op">${t.toLowerCase()}</span>`;
       if (t === "(" || t === ")") return "";
-      return `<a class="chip" href="#" data-url="https://spdx.org/licenses/${esc(t)}.html" title="Read the ${esc(t)} license">${esc(t)}</a>`;
+      return `<a class="chip" href="#" data-url="https://spdx.org/licenses/${esc(t)}.html" title="${tx("Read the {name} license", { name: esc(t) })}">${esc(t)}</a>`;
     })
     .join("");
 }
@@ -102,11 +102,11 @@ function renderProjects() {
   const q = $("q").value.trim().toLowerCase();
   const hit = (p) => !q || `${p.name} ${p.license} ${p.about ?? ""}`.toLowerCase().includes(q);
   const total = projects.js.length + projects.rust.length;
-  let html = q ? "" : `<p class="thanks">Paw is built on ${total} open source projects. Thank you to everyone who makes them.</p>`;
-  if (!q) html += group("Highlights", projects.highlights, { about: true });
-  html += group("In the window", projects.js.filter(hit), { about: true });
-  html += group("Rust crates", projects.rust.filter(hit), { compact: true });
-  $("oss-list").innerHTML = html || `<p class="empty">No project matches “${esc(q)}”.</p>`;
+  let html = q ? "" : `<p class="thanks">${tx("Paw is built on {n} open source projects. Thank you to everyone who makes them.", { n: total })}</p>`;
+  if (!q) html += group(tx("Highlights"), projects.highlights, { about: true });
+  html += group(tx("In the window"), projects.js.filter(hit), { about: true });
+  html += group(tx("Rust crates"), projects.rust.filter(hit), { compact: true });
+  $("oss-list").innerHTML = html || `<p class="empty">${tx("No project matches “{q}”.", { q: esc(q) })}</p>`;
 }
 $("q").addEventListener("input", renderProjects);
 document.addEventListener("keydown", (e) => {
@@ -116,12 +116,12 @@ document.addEventListener("keydown", (e) => {
 // ---------- Start ----------
 invoke("about_info")
   .then((i) => {
-    $("version").textContent = `Version ${i.version}`;
-    $("built-with").textContent = `Built with Tauri ${i.tauri} and Rig`;
+    $("version").textContent = tx("Version {version}", { version: i.version });
+    $("built-with").textContent = tx("Built with Tauri {version} and Rig", { version: i.tauri });
   })
   .catch(() => {});
 fetch("licenses.json")
   .then((r) => r.json())
-  .then((d) => { $("oss-count").textContent = `${d.javascript.length + d.rust.length} projects and their licenses`; })
+  .then((d) => { $("oss-count").textContent = tx("{n} projects and their licenses", { n: d.javascript.length + d.rust.length }); })
   .catch(() => {});
 showView(location.hash.slice(1));

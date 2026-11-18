@@ -8,6 +8,10 @@
 </p>
 
 <h1 align="center">Agentic Terminal Multiplexer</h1>
+<p align="center">
+     One terminal, to rule them all... 
+</p>
+
 
 <p align="center">
   <img src="docs/screenshot.webp" alt="Paw: a plan made by Claude Code, its steps as a 3D graph, and the plan in the transcript">

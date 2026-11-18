@@ -1107,7 +1107,9 @@ fn pump_in(r: &mut Run, limit: usize, busy: &mut usize, editing: &mut HashSet<Pa
                 base_url: String::new(),
                 cwd: folder.to_string_lossy().into_owned(),
                 approval,
-                allow_rules: vec![],
+                // What you allowed "always" for this factory in this folder, and
+                // for Paw Agent in this folder (from a tab): asked once, not per node or run.
+                allow_rules: saved_rules(&r.factory, &folder),
                 session: None,
                 key_source: String::new(),
                 paw_session: Some(session),
@@ -1406,6 +1408,35 @@ fn who(r: &Run, node: &str) -> String {
     format!("{} · {}", r.def.name, r.def_node(node).map(|d| d.label().to_string()).unwrap_or_else(|| node.to_string()))
 }
 
+/// The rules (`shell(git push*)`, `edit`) the user allowed for good: for this
+/// factory in this folder (Always allow on one of its nodes), and for Paw
+/// Agent in this folder (Always in this folder, in a tab). From settings.json.
+fn saved_rules(factory: &str, folder: &Path) -> Vec<String> {
+    let v: Value = crate::paths::home()
+        .and_then(|h| std::fs::read_to_string(h.join("settings.json")).ok())
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or(Value::Null);
+    rules_for(&v, factory, folder)
+}
+
+fn rules_for(settings: &Value, factory: &str, folder: &Path) -> Vec<String> {
+    let norm = |p: &str| crate::agents::expand_home(p.trim()).to_string_lossy().trim_end_matches('/').to_string();
+    let here = folder.to_string_lossy().trim_end_matches('/').to_string();
+    let mine = format!("factory:{factory}");
+    let mut out: Vec<String> = settings["allow_rules"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|r| {
+            let agent = r["agent"].as_str().unwrap_or("");
+            (agent == mine || agent == "paw") && norm(r["folder"].as_str().unwrap_or("")) == here
+        })
+        .filter_map(|r| r["rule"].as_str().map(str::to_string))
+        .collect();
+    out.dedup();
+    out
+}
+
 /// A path with the home folder as `~`.
 fn tildify(p: &Path) -> String {
     let s = p.to_string_lossy().into_owned();
@@ -1545,6 +1576,19 @@ nodes:
   - { id: join, needs: [a, b], prompt: sum up, edits: false }
   - { id: first, needs: [a, b], join: any, prompt: quick note, edits: false }
 "#;
+
+    #[test]
+    fn a_factorys_saved_rules_apply_in_its_folder() {
+        let s = json!({ "allow_rules": [
+            { "agent": "factory:ship", "folder": "/work/app", "rule": "shell(git push*)", "label": "$ git push" },
+            { "agent": "factory:ship", "folder": "/work/other", "rule": "shell(rm -rf build)", "label": "" },
+            { "agent": "factory:other", "folder": "/work/app", "rule": "edit", "label": "" },
+            { "agent": "paw", "folder": "/work/app/", "rule": "shell(npm test)", "label": "$ npm test" },
+            { "agent": "claude", "folder": "/work/app", "rule": "Bash(ls)", "label": "" },
+        ] });
+        assert_eq!(rules_for(&s, "ship", Path::new("/work/app")), ["shell(git push*)", "shell(npm test)"], "this factory's and Paw Agent's, in this folder only");
+        assert!(rules_for(&s, "ship", Path::new("/work/elsewhere")).is_empty());
+    }
 
     #[test]
     fn execution_ids_are_uuids() {

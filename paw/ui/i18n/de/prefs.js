@@ -277,4 +277,5 @@ I18N.add("de", {
   "{name} {version} is installed and on. Its commands are in /help and /plugins.": "{name} {version} ist installiert und aktiv. Seine Befehle stehen in /help und /plugins.",
   "Couldn't install {name}: {error}": "{name} konnte nicht installiert werden: {error}",
   "Remove “{name}”? What it stored is removed too.": "„{name}“ entfernen? Was es gespeichert hat, wird auch entfernt.",
+  "{folder} · factory {id}": "{folder} · Fabrik {id}",
 });

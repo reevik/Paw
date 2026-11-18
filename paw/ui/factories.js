@@ -211,6 +211,20 @@ const runsOf = (id) => [...factoryState.runs.values()].filter((r) => r.factory =
 const shortRunId = (id) => String(id ?? "").split("-")[0];
 /** The project folder a run works in. */
 const runFolder = (r) => r?.folder || r?.def?.folder?.trim() || "~";
+/** The folder a run works in, as a full path (like a tab's folder). */
+const runFolderAbs = (r) => {
+  const f = runFolder(r).replace(/\/+$/, "");
+  return f === "~" ? homeDir : f.startsWith("~/") ? homeDir + f.slice(1) : f;
+};
+
+/** Keep an "always" decision for a factory in a folder (Settings lists it with Paw Agent's). */
+async function saveFactoryRule(factory, folder, rule, label) {
+  const agent = `factory:${factory}`;
+  settings.allow_rules ??= [];
+  if (settings.allow_rules.some((x) => x.agent === agent && x.folder === folder && x.rule === rule)) return;
+  settings.allow_rules.push({ agent, folder, rule, label: label || rule });
+  await invoke("save_settings", { settings }).catch(() => {});
+}
 const lastPart = (p) => String(p).replace(/\/+$/, "").split("/").pop() || p;
 /** A run's own folder: ~/.paw/factories/<factory-id>/<execution-id>. */
 const runDir = (r) => `${factoryState.dir}/${r.factory}/${r.id}`;
@@ -847,6 +861,8 @@ async function factoryClick(S, e, P) {
         const r = run?.nodes.find((n) => n.id === S.factory.selected);
         if (!r?.approval || r.agent == null) break;
         await invoke("paw_agent_approve", { id: r.agent, request: r.approval.request, decision: b.dataset.decision, rule: r.approval.rule ?? null });
+        // Always: for this factory in this folder, for its other nodes and its next runs too.
+        if (b.dataset.decision === "always" && r.approval.rule) await saveFactoryRule(run.factory, runFolderAbs(run), r.approval.rule, r.approval.label);
         break;
       }
     }

@@ -944,14 +944,16 @@ refreshKeyStatus();
 
 /** Actions the user chose "Always in this folder" for, on approval cards. Paw Agent's are keyed "paw". */
 function renderAllowed(agentId) {
-  const rules = (settings.allow_rules ?? []).filter((r) => r.agent === agentId);
+  // Paw Agent's list also has the factories' (their nodes are Paw Agent sessions).
+  const rules = (settings.allow_rules ?? []).filter((r) => r.agent === agentId || (agentId === "paw" && r.agent.startsWith("factory:")));
   document.querySelectorAll(".d-allowed-only").forEach((el) => el.classList.toggle("hidden", !rules.length));
   const ul = $("d-allowed");
   ul.innerHTML = "";
   for (const r of rules) {
     const li = document.createElement("li");
     const folder = r.folder.replace(/^\/Users\/[^/]+/, "~");
-    li.innerHTML = `<code title="${esc(r.label)}">${esc(r.label)}</code><span class="dim" title="${esc(folder)}">${esc(folder)}</span><button class="icon-btn" title="${esc(tx("Remove"))}">×</button>`;
+    const where = r.agent.startsWith("factory:") ? tx("{folder} · factory {id}", { folder, id: r.agent.slice(8) }) : folder;
+    li.innerHTML = `<code title="${esc(r.label)}">${esc(r.label)}</code><span class="dim" title="${esc(where)}">${esc(where)}</span><button class="icon-btn" title="${esc(tx("Remove"))}">×</button>`;
     li.querySelector("button").onclick = () => {
       settings.allow_rules = settings.allow_rules.filter((x) => x !== r);
       save();

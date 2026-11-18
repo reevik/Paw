@@ -277,4 +277,5 @@ I18N.add("tr", {
   "{name} {version} is installed and on. Its commands are in /help and /plugins.": "{name} {version} yüklendi ve açık. Komutları /help ve /plugins içinde.",
   "Couldn't install {name}: {error}": "{name} yüklenemedi: {error}",
   "Remove “{name}”? What it stored is removed too.": "“{name}” kaldırılsın mı? Sakladığı veriler de silinir.",
+  "{folder} · factory {id}": "{folder} · {id} fabrikası",
 });

@@ -2530,9 +2530,11 @@ async function decidePaw(S, card, choice) {
   }
   S.waitingApproval = Math.max(0, (S.waitingApproval ?? 1) - 1);
   if (choice === "always" && card.state === "always") {
+    // A factory node's tab: the rule is the factory's (its next nodes and runs have it).
+    const agent = S.nodeOf ? `factory:${S.nodeOf.factory}` : S.agent.id;
     settings.allow_rules ??= [];
-    if (!settings.allow_rules.some((r) => r.agent === S.agent.id && r.folder === S.cwd && r.rule === it.rule)) {
-      settings.allow_rules.push({ agent: S.agent.id, folder: S.cwd, rule: it.rule, label: it.broad ? "every file change" : it.label });
+    if (!settings.allow_rules.some((r) => r.agent === agent && r.folder === S.cwd && r.rule === it.rule)) {
+      settings.allow_rules.push({ agent, folder: S.cwd, rule: it.rule, label: it.broad ? "every file change" : it.label });
       await invoke("save_settings", { settings }).catch(() => {});
     }
   }

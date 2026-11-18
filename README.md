@@ -14,7 +14,7 @@
 
 
 <p align="center">
-  <img src="docs/screenshot.webp" alt="Paw: a plan made by Claude Code, its steps as a 3D graph, and the plan in the transcript">
+  <img src="docs/multiplexer.webp" alt="Paw: Paw Agent's answer and your shell in one tab, nvim in a split pane beside it, and several agents' tabs along the top">
 </p>
 
 ## Main features

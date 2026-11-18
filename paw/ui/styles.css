@@ -980,6 +980,7 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
 .tk-btn.primary { background: var(--accent); color: white; box-shadow: none; }
 .tk-btn.primary:hover { filter: brightness(1.08); }
 .tk-btn.danger { color: var(--t-red); }
+.fa-paused-note { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .tk-note { margin-top: 8px; padding: 6px 10px; border-radius: 7px; font-size: 12px; color: var(--t-yellow); background: color-mix(in srgb, var(--t-yellow) 10%, transparent); flex-shrink: 0; }
 .tk-empty { margin-top: 10px; color: var(--t-dim); }
 .tk-empty .spin-ch { color: var(--t-accent); font-family: var(--mono); }
@@ -1005,25 +1006,32 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
 .tk-node:hover { --ring: inset 0 0 0 1px color-mix(in srgb, var(--t-fg) 30%, transparent); }
 .tk-node.sel, .tk-node.sel:hover { --ring: inset 0 0 0 1.5px var(--accent); }
 .tk-node.v-done .tk-node-title, .tk-node.v-skipped .tk-node-title { color: color-mix(in srgb, var(--t-fg) 75%, transparent); }
-.tk-node.v-skipped { opacity: .6; }
+/* Dimmed text, but a solid box: the lines behind it must not show through. */
+.tk-node.v-skipped > * { opacity: .55; }
 .tk-node-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 /* Agent · state · time · reads: wraps inside the card rather than spilling out. */
 .tk-node-sub { font-size: 11px; line-height: 1.4; color: var(--t-dim); display: block; min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
 .tk-ro { color: color-mix(in srgb, var(--t-accent) 80%, var(--t-dim)); }
 .tk-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; vertical-align: 0; background: var(--t-dim); opacity: .7; }
-.tk-dot.v-running { background: var(--t-accent); opacity: 1; animation: pulse 1.6s ease-in-out infinite; }
+.tk-dot.v-running { background: var(--t-green); opacity: 1; animation: pulse 1.6s ease-in-out infinite; }
 .tk-dot.v-needs { background: var(--orange); opacity: 1; }
 .tk-dot.v-done { background: var(--t-green); opacity: 1; }
 .tk-dot.v-failed { background: var(--t-red); opacity: 1; }
 .tk-dot.v-stopped { background: var(--t-yellow); opacity: 1; }
 /* Failed glows red; waiting on something (approval, a wait node's check) glows amber. */
 .tk-node.v-failed:not(.sel) { --ring: inset 0 0 0 1px color-mix(in srgb, var(--t-red) 75%, transparent); }
-.tk-node.v-failed { filter: drop-shadow(0 0 7px color-mix(in srgb, var(--t-red) 55%, transparent)); }
-.tk-node.v-needs:not(.sel), .tk-node.v-checking:not(.sel) { --ring: inset 0 0 0 1px color-mix(in srgb, var(--wait-glow) 80%, transparent); }
-.tk-node.v-needs, .tk-node.v-checking { animation: tk-wait-glow 2.4s ease-in-out infinite; }
-@keyframes tk-wait-glow {
-  0%, 100% { filter: drop-shadow(0 0 8px color-mix(in srgb, var(--wait-glow) 60%, transparent)); }
-  50% { filter: drop-shadow(0 0 3px color-mix(in srgb, var(--wait-glow) 35%, transparent)); }
+/* A pulsing glow in the state's color: running green, failed red, waiting (on you, or on a check) orange. */
+.tk-node.v-running { --glow: var(--t-green); }
+.tk-node.v-failed { --glow: var(--t-red); }
+.tk-node.v-needs, .tk-node.v-checking { --glow: var(--wait-glow); }
+.tk-node.v-running:not(.sel), .tk-node.v-needs:not(.sel), .tk-node.v-checking:not(.sel) { --ring: inset 0 0 0 1px color-mix(in srgb, var(--glow) 80%, transparent); }
+.tk-node.v-running, .tk-node.v-failed, .tk-node.v-needs, .tk-node.v-checking { animation: tk-glow 2.4s ease-in-out infinite; }
+@keyframes tk-glow {
+  0%, 100% { filter: drop-shadow(0 0 8px color-mix(in srgb, var(--glow) 60%, transparent)); }
+  50% { filter: drop-shadow(0 0 3px color-mix(in srgb, var(--glow) 30%, transparent)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tk-node.v-running, .tk-node.v-failed, .tk-node.v-needs, .tk-node.v-checking { animation: none; filter: drop-shadow(0 0 6px color-mix(in srgb, var(--glow) 50%, transparent)); }
 }
 :root { --wait-glow: #f2a33a; }
 .tk-dot.v-checking { background: var(--wait-glow); opacity: 1; animation: pulse 1.6s ease-in-out infinite; }

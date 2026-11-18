@@ -1036,7 +1036,8 @@ fn pump_in(r: &mut Run, limit: usize, busy: &mut usize, editing: &mut HashSet<Pa
         editing.insert(folder.clone());
     }
     let dir = run_dir(&r.factory, &r.id);
-    if let Some(d) = &dir {
+    // The run's shared files folder (not from tests: they'd write into the real ~/.paw).
+    if let Some(d) = dir.as_ref().filter(|_| !cfg!(test)) {
         let _ = std::fs::create_dir_all(d.join("files"));
     }
     for &i in &order {

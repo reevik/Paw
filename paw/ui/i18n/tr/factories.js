@@ -236,4 +236,5 @@ I18N.add("tr", {
   "last run {when}": "son çalıştırma {when}",
   "Open this factory": "Bu fabrikayı aç",
   "Factories ({n})": "Fabrikalar ({n})",
+  "The trigger is paused, so it isn't listening: only Run now starts runs.": "Tetikleyici duraklatıldı, dinlemiyor: Çalıştırmaları yalnızca Şimdi çalıştır başlatır.",
 });

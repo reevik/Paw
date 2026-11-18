@@ -388,8 +388,9 @@ function renderFactoryView(S, host) {
   const buttons = [
     f?.factory && `<button class="tk-btn primary" data-fact="run" title="${esc(going ? tx("Start a run in {folder} (alongside the runs going)", { folder: runFolderNow }) : tx("Start a run in {folder}", { folder: runFolderNow }))}">${tx("Run now")}</button>`,
     run?.state === "running" && `<button class="tk-btn" data-fact="stop" title="${esc(tx("Stop this run ({run})", { run: shortRunId(run.id) }))}">${tx("Stop")}</button>`,
-    triggerOf(S.factory.id) && `<button class="tk-btn" data-fact="pause" title="${esc(triggerOf(S.factory.id).paused ? tx("Let the trigger start runs again") : tx("Stop the trigger from starting runs (Run now still works)"))}">${triggerOf(S.factory.id).paused ? tx("Resume trigger") : tx("Pause trigger")}</button>`,
     f && `<button class="tk-btn" data-fact="edit" title="${esc(tildify(f.path))}">${tx("Edit file")}</button>`,
+    // Last, away from Run now: pausing stops the trigger from listening.
+    triggerOf(S.factory.id) && `<button class="tk-btn" data-fact="pause" title="${esc(triggerOf(S.factory.id).paused ? tx("Let the trigger start runs again") : tx("Stop the trigger from starting runs (Run now still works)"))}">${triggerOf(S.factory.id).paused ? tx("Resume trigger") : tx("Pause trigger")}</button>`,
   ].filter(Boolean).join("");
   const picker = runs.length ? `<select class="tk-in fa-runs" data-fact="pick" title="${esc(tx("Show a run"))}">${
     `<option value=""${S.factory.run ? "" : " selected"}>${tx("Latest run")}</option>` +
@@ -398,7 +399,7 @@ function renderFactoryView(S, host) {
       <span class="tk-title fa-title" title="${esc([`id: ${S.factory.id}`, f?.factory?.description].filter(Boolean).join("\n"))}"><span class="fa-ico" aria-hidden="true"></span>${esc(f?.factory?.name || S.factory.id)}</span>
       <span class="tk-state st-${esc(state)}">${esc(stateText)}</span>
       ${picker}<span class="grow"></span>${buttons}
-    </div>${run?.note ? `<div class="tk-note">${esc(run.note)}</div>` : ""}`;
+    </div>${triggerOf(S.factory.id)?.paused ? `<div class="tk-note fa-paused-note"><span>${tx("The trigger is paused, so it isn't listening: only Run now starts runs.")}</span><button class="tk-btn primary" data-fact="pause">${tx("Resume trigger")}</button></div>` : ""}${run?.note ? `<div class="tk-note">${esc(run.note)}</div>` : ""}`;
   let body;
   if (!f && !run) {
     body = `<div class="tk-empty">${tx("There's no factory “{id}” in {dir} any more.", { id: esc(S.factory.id), dir: esc(tildify(factoryState.dir)) })}</div>`;

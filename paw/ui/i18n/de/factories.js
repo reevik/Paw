@@ -236,4 +236,5 @@ I18N.add("de", {
   "last run {when}": "letzter Lauf {when}",
   "Open this factory": "Diese Fabrik öffnen",
   "Factories ({n})": "Fabriken ({n})",
+  "The trigger is paused, so it isn't listening: only Run now starts runs.": "Der Auslöser ist pausiert und hört nicht zu: Nur „Jetzt starten“ startet Läufe.",
 });

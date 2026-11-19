@@ -2028,6 +2028,28 @@ function tokenAt(S, text, i, strict = true) {
   return null;
 }
 
+// The last arrow key in a prompt: a held key moves the cursor between its
+// keydowns, so each cursor move soon after one is checked too.
+let arrowMove = null;
+document.addEventListener("selectionchange", () => {
+  const m = arrowMove;
+  if (m && Date.now() - m.at < 400 && document.activeElement === m.ta) snapCaret(m.S, m.ta, m.dir);
+});
+
+/** The cursor (the moving end of a selection) inside a badge: to its edge,
+ *  the way it was going (dir -1 / 1), or the nearer one (0). */
+function snapCaret(S, ta, dir) {
+  const back = ta.selectionDirection === "backward";
+  const focus = back ? ta.selectionStart : ta.selectionEnd;
+  const anchor = back ? ta.selectionEnd : ta.selectionStart;
+  const t = tokenAt(S, ta.value, focus);
+  if (!t) return;
+  const to = dir < 0 ? t.start : dir > 0 ? t.end : focus - t.start < t.end - focus ? t.start : t.end;
+  if (anchor === focus) ta.setSelectionRange(to, to);
+  else if (to < anchor) ta.setSelectionRange(to, anchor, "backward");
+  else ta.setSelectionRange(anchor, to, "forward");
+}
+
 /** Take a badge out of the prompt: its token (and a space after it) and the attachment. */
 function removeToken(S, a) {
   inPane(S, () => {
@@ -5411,6 +5433,15 @@ function bindPane(P) {
       const hit = S && tokenUnder(S, e.clientX, e.clientY);
       if (hit?.onX) { e.preventDefault(); removeToken(S, hit.a); $("input").focus(); }
     });
+    // The cursor moved by a key may land after the keydown's check: check
+    // again when the key comes up.
+    $("input").addEventListener("keyup", (e) => {
+      const S = curS();
+      if (!S?.attachments?.some((a) => a.token) || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) return;
+      snapCaret(S, $("input"), e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 1);
+    });
+    // A click inside a badge puts the cursor at its nearer edge.
+    $("input").addEventListener("mouseup", () => { const S = curS(); if (S?.attachments?.length) setTimeout(() => snapCaret(S, $("input"), 0), 0); });
     $("input").addEventListener("dblclick", (e) => {
       const S = curS();
       const hit = S && tokenUnder(S, e.clientX, e.clientY);
@@ -5443,6 +5474,13 @@ function bindPane(P) {
           const t = tokenAt(S, v, i);
           if (t) ta.setSelectionRange(t.end, t.end);
         }
+      }
+      // Moving the cursor (arrows, ⌥ by word, up/down): it never stops inside
+      // a badge, it steps over it in the way it was going.
+      if (S && !e.isComposing && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key) && S.attachments?.some((a) => a.token)) {
+        const dir = e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 1;
+        arrowMove = { S, ta, dir, at: Date.now() };
+        setTimeout(() => snapCaret(S, ta, dir), 0);
       }
       // A question waiting in this tab: y / n + Enter, or Esc, answer it.
       const sure = S && !e.isComposing && sureIn(S);

@@ -577,7 +577,8 @@ function zoomBarHtml(S) {
 
 /** The scale that shows the whole diagram in the view. */
 function fitScale(g, inner) {
-  const W = inner.offsetWidth, H = inner.offsetHeight;
+  // A free diagram: its boxes (its canvas can be as big as the view).
+  const W = Number(inner.dataset.boxW) || inner.offsetWidth, H = Number(inner.dataset.boxH) || inner.offsetHeight;
   if (!W || !H) return 1;
   return clampZoom(Math.min((g.clientWidth - 16) / W, (g.clientHeight - 16) / H, 2));
 }
@@ -590,6 +591,8 @@ function applyZoom(host, S, anchor = null) {
   const z = S.factory.zoom === "fit" ? fitScale(g, inner) : clampZoom(Number(S.factory.zoom) || 1);
   inner.style.transform = `scale(${z})`;
   inner.dataset.zoom = String(z);
+  // An unlocked canvas fills the view at this zoom.
+  if (inner.classList.contains("fa-free")) fitFree(inner);
   sizer.style.width = `${Math.ceil(inner.offsetWidth * z)}px`;
   sizer.style.height = `${Math.ceil(inner.offsetHeight * z)}px`;
   const pct = host.querySelector(".fa-zpct");
@@ -684,17 +687,31 @@ function placeNodes(zoomEl, S) {
   fitFree(zoomEl);
 }
 
-/** A free diagram's size: around its boxes. */
+/** A free diagram's size: around its boxes; unlocked, at least the whole
+ *  board you see at this zoom, and while dragging, room past the last box. */
 function fitFree(zoomEl, grow = false) {
   let w = 0, h = 0;
   for (const n of zoomEl.querySelectorAll(":scope > .tk-node")) {
     w = Math.max(w, parseFloat(n.style.left) + n.offsetWidth);
     h = Math.max(h, parseFloat(n.style.top) + n.offsetHeight);
   }
+  // What Fit fits: the boxes, not the canvas around them.
+  zoomEl.dataset.boxW = String(Math.ceil(w + 12));
+  zoomEl.dataset.boxH = String(Math.ceil(h + 12));
+  w += 12; h += 12;
+  const g = zoomEl.closest(".fa-graph");
+  if (g && zoomEl.closest(".fa-graph-wrap.unlocked")) {
+    const z = Number(zoomEl.dataset.zoom) || 1, cs = getComputedStyle(g);
+    const viewW = g.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    const viewH = g.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+    // Dragging: room past the last box, so a box can go further out.
+    w = Math.max(w + (grow ? 160 : 0), Math.floor(viewW / z) - 1);
+    h = Math.max(h + (grow ? 120 : 0), Math.floor(viewH / z) - 1);
+  }
   // While dragging it only grows, so the view doesn't jump under the pointer.
   if (grow) { w = Math.max(w, parseFloat(zoomEl.style.width) || 0); h = Math.max(h, parseFloat(zoomEl.style.height) || 0); }
-  zoomEl.style.width = `${Math.ceil(w + 12)}px`;
-  zoomEl.style.height = `${Math.ceil(h + 12)}px`;
+  zoomEl.style.width = `${Math.ceil(w)}px`;
+  zoomEl.style.height = `${Math.ceil(h)}px`;
 }
 
 /** A box's place in the diagram's own (unscaled) space. */

@@ -1375,6 +1375,8 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
 .fa-lock { display: inline-flex; align-items: center; justify-content: center; }
 .fa-graph-wrap.unlocked .fa-zoombar { opacity: 1; }
 .fa-graph-wrap.unlocked .fa-graph { padding: 18px 0 0 18px; }
+/* Unlocked, the canvas starts at the rulers' corner instead of floating in the middle. */
+.fa-graph-wrap.unlocked .fa-sizer { margin: 0; }
 .fa-graph-wrap.unlocked .fa-zoom {
   background-image: radial-gradient(color-mix(in srgb, var(--t-fg) 16%, transparent) 1px, transparent 1.2px);
   background-size: 20px 20px; background-position: 4px 4px;

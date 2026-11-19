@@ -50,7 +50,7 @@ I18N.add("tr", {
   "search earlier prompts and commands": "önceki istemlerde ve komutlarda ara",
   "the commands as you type, then their parameters (models, factories, folders…); Tab takes one": "yazdıkça komutlar, ardından parametreleri (modeller, fabrikalar, klasörler…); Tab birini seçer",
   "complete commands and paths · previous prompts": "komutları ve yolları tamamla · önceki istemler",
-  "attach files · paste an image · long pasted text becomes a badge (click it to edit)": "dosya ekle · görsel yapıştır · uzun yapıştırılan metin bir rozete dönüşür (düzenlemek için tıklayın)",
+  "attach files · paste an image · drop files on the prompt · each goes in as a badge at the cursor (Backspace removes it; double-click pasted text to edit it)": "dosya ekle · görsel yapıştır · dosyaları istem alanına sürükle · her biri imlecin olduğu yere rozet olarak girer (Geri tuşu onu siler; yapıştırılan metni düzenlemek için çift tıklayın)",
   "shell output": "kabuk çıktısı",
   "short output goes to {name} right away; long output only if you click “Follow up” under it": "kısa çıktı hemen {name} ajanına gider; uzun çıktı yalnızca altındaki “Devam et”e tıklarsanız",
   "short output goes to {name} with your next message; long output only if you click “Follow up” under it": "kısa çıktı bir sonraki mesajınızla {name} ajanına gider; uzun çıktı yalnızca altındaki “Devam et”e tıklarsanız",
@@ -490,4 +490,10 @@ I18N.add("tr", {
   "(no longer asked)": "(artık sorulmuyor)",
   "Close and stop": "Kapat ve durdur",
   "Delete": "Sil",
+  // badges in the prompt, dropped files
+  "{n} line": "{n} satır",
+  "folders can't be attached": "klasörler eklenemez",
+  "it isn't there": "orada değil",
+  "✗ couldn't attach {path}: {why}": "✗ {path} eklenemedi: {why}",
+  "Double-click to edit it in the prompt.": "İstem alanında düzenlemek için çift tıklayın.",
 });

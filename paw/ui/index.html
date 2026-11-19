@@ -204,8 +204,11 @@
               <div class="prompt-row">
                 <span class="prompt-glyph" data-id="prompt-glyph">❯</span>
                 <div data-id="att-tray" class="att-tray hidden"></div>
-                <textarea data-id="input" rows="1" spellcheck="false" autocomplete="off"></textarea>
-                <button data-id="attach-btn" class="attach-btn" title="Attach files or images (you can also paste an image)">
+                <div data-id="input-wrap" class="input-wrap">
+                  <div data-id="input-backdrop" class="input-backdrop" aria-hidden="true"></div>
+                  <textarea data-id="input" rows="1" spellcheck="false" autocomplete="off"></textarea>
+                </div>
+                <button data-id="attach-btn" class="attach-btn" title="Attach files or images (or paste or drop them here)">
                   <svg viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg>
                 </button>
               </div>

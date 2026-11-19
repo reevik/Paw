@@ -450,6 +450,7 @@ fn main() {
             sessions::load_session,
             sessions::delete_session,
             attachments::describe_attachment,
+            attachments::attach_paths,
             specs::specs_list,
             specs::specs_import,
             specs::specs_save,

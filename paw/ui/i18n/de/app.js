@@ -50,7 +50,7 @@ I18N.add("de", {
   "search earlier prompts and commands": "frühere Eingaben und Befehle durchsuchen",
   "the commands as you type, then their parameters (models, factories, folders…); Tab takes one": "die Befehle beim Tippen, dann ihre Parameter (Modelle, Fabriken, Ordner…); Tab übernimmt einen",
   "complete commands and paths · previous prompts": "Befehle und Pfade vervollständigen · frühere Eingaben",
-  "attach files · paste an image · long pasted text becomes a badge (click it to edit)": "Dateien anhängen · ein Bild einfügen · langer eingefügter Text wird zu einem Badge (zum Bearbeiten anklicken)",
+  "attach files · paste an image · drop files on the prompt · each goes in as a badge at the cursor (Backspace removes it; double-click pasted text to edit it)": "Dateien anhängen · ein Bild einfügen · Dateien auf den Prompt ziehen · jede kommt als Badge an die Cursorstelle (Rücktaste entfernt es; Doppelklick auf eingefügten Text bearbeitet ihn)",
   "shell output": "Shell-Ausgabe",
   "short output goes to {name} right away; long output only if you click “Follow up” under it": "kurze Ausgabe geht sofort an {name}; lange nur, wenn du darunter auf „Nachfassen“ klickst",
   "short output goes to {name} with your next message; long output only if you click “Follow up” under it": "kurze Ausgabe geht mit deiner nächsten Nachricht an {name}; lange nur, wenn du darunter auf „Nachfassen“ klickst",
@@ -490,4 +490,10 @@ I18N.add("de", {
   "(no longer asked)": "(nicht mehr gefragt)",
   "Close and stop": "Schließen und stoppen",
   "Delete": "Löschen",
+  // badges in the prompt, dropped files
+  "{n} line": "{n} Zeile",
+  "folders can't be attached": "Ordner können nicht angehängt werden",
+  "it isn't there": "sie ist nicht da",
+  "✗ couldn't attach {path}: {why}": "✗ {path} konnte nicht angehängt werden: {why}",
+  "Double-click to edit it in the prompt.": "Doppelklick, um ihn im Prompt zu bearbeiten.",
 });

@@ -490,12 +490,27 @@ function sandboxSummary(p) {
   return tx("Sandbox: changes only in its folder{extra} · {programs} · {net}", { extra, programs, net });
 }
 
+/** A factory node's sandbox: its factory's (the file's section over Settings'), else Settings'. */
+function nodeSandbox(S) {
+  const def = factoryState.runs.get(S.nodeOf.run)?.def ?? factoryById(S.nodeOf.factory)?.factory;
+  return def?.sandbox ? factorySandbox(def.sandbox) : settings.sandbox ?? {};
+}
+
 function renderSandboxPill(S) {
   const b = $("sl-sandbox");
   if (!b) return;
-  const show = isPaw(S.agent) && !S.nodeOf;
+  const show = isPaw(S.agent);
   b.classList.toggle("hidden", !show);
   if (!show) return;
+  // A factory node's tab: its factory's sandbox, shown (set in the factory, not here).
+  if (S.nodeOf) {
+    const p = nodeSandbox(S);
+    b.classList.toggle("on", !!p.enabled);
+    b.textContent = p.enabled ? tx("Sandbox") : tx("No sandbox");
+    b.title = (p.enabled ? sandboxSummary(p) : tx("This factory's nodes run without a sandbox.")) + "\n" +
+      tx("Set by the factory: the sandbox section in its file, else Settings › Sandbox.");
+    return;
+  }
   const p = tabSandbox(S);
   b.classList.toggle("on", !!p.enabled);
   b.textContent = p.enabled ? tx("Sandbox") : tx("No sandbox");
@@ -515,6 +530,15 @@ async function toggleTabSandbox(S) {
 function sandboxMenu(e) {
   const S = curS();
   if (!S) return;
+  // A node's sandbox is its factory's: where to change it.
+  if (S.nodeOf) {
+    const r = e.currentTarget.getBoundingClientRect();
+    contextMenu(r.left, r.top - 60, [
+      { label: tx("Open the factory"), run: () => openFactory(S.nodeOf.factory) },
+      { label: tx("Settings › Sandbox…"), run: () => invoke("open_preferences", { tab: "sandbox" }) },
+    ]);
+    return;
+  }
   const on = !!tabSandbox(S).enabled;
   const r = e.currentTarget.getBoundingClientRect();
   contextMenu(r.left, r.top - 90, [

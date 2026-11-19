@@ -282,4 +282,8 @@ I18N.add("tr", {
   "No task of this factory is running in the run shown.": "Gösterilen çalıştırmada bu fabrikanın süren bir görevi yok.",
   "Nothing to reset: unlock the diagram first, after moving its boxes.": "Sıfırlanacak bir şey yok: önce kutularını taşıdıktan sonra diyagramın kilidini açın.",
   "The factory can't do that now.": "Fabrika bunu şu anda yapamaz.",
+  // a node tab's sandbox
+  "This factory's nodes run without a sandbox.": "Bu fabrikanın düğümleri korumalı alan olmadan çalışır.",
+  "Set by the factory: the sandbox section in its file, else Settings › Sandbox.": "Fabrika belirler: dosyasındaki sandbox bölümü, yoksa Ayarlar › Korumalı Alan.",
+  "Open the factory": "Fabrikayı aç",
 });

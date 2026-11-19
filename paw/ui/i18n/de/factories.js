@@ -282,4 +282,8 @@ I18N.add("de", {
   "No task of this factory is running in the run shown.": "Im angezeigten Lauf dieser Fabrik läuft keine Aufgabe.",
   "Nothing to reset: unlock the diagram first, after moving its boxes.": "Nichts zurückzusetzen: Entsperre zuerst das Diagramm, nachdem du seine Kästen verschoben hast.",
   "The factory can't do that now.": "Das kann die Fabrik gerade nicht.",
+  // a node tab's sandbox
+  "This factory's nodes run without a sandbox.": "Die Knoten dieser Fabrik laufen ohne Sandbox.",
+  "Set by the factory: the sandbox section in its file, else Settings › Sandbox.": "Von der Fabrik festgelegt: der Abschnitt sandbox in ihrer Datei, sonst Einstellungen › Sandbox.",
+  "Open the factory": "Fabrik öffnen",
 });

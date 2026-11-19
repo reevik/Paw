@@ -13,7 +13,7 @@ The sandbox limits what an action can do once it runs; the approval level (ask, 
 
 ## In a tab
 
-The button under the prompt shows the tab's sandbox (**⛨ Sandbox**, or **No sandbox**); its tooltip says what it allows. Click it to turn the sandbox on or off for that tab; the conversation goes on.
+The button under the prompt shows the tab's sandbox (a shield and **Sandbox**, or **No sandbox**); its tooltip says what it allows. Click it to turn the sandbox on or off for that tab; the conversation goes on.
 
 When the sandbox stops something, the tab says what and why:
 

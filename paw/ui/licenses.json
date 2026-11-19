@@ -13,6 +13,12 @@
    "about": "Sizes the terminal to its pane"
   },
   {
+   "name": "Feather Icons",
+   "license": "MIT",
+   "url": "https://github.com/feathericons/feather",
+   "about": "The shield on the status bar's sandbox button"
+  },
+  {
    "name": "marked",
    "version": "12.0.2",
    "license": "MIT",

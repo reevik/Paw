@@ -277,4 +277,9 @@ I18N.add("de", {
   "Drag along the box's edge": "Entlang des Kastenrands ziehen",
   "Reset this diagram's layout? The boxes and lines go back to where Paw puts them.": "Die Anordnung dieses Diagramms zurücksetzen? Kästen und Linien kommen dorthin zurück, wo Paw sie hinsetzt.",
   "Reset": "Zurücksetzen",
+  // the Factory menu
+  "The Factory menu acts on a factory's tab: open one first (the sidebar's Factories).": "Das Menü „Fabrik“ wirkt auf den Tab einer Fabrik: Öffne zuerst eine (in der Seitenleiste unter Fabriken).",
+  "No task of this factory is running in the run shown.": "Im angezeigten Lauf dieser Fabrik läuft keine Aufgabe.",
+  "Nothing to reset: unlock the diagram first, after moving its boxes.": "Nichts zurückzusetzen: Entsperre zuerst das Diagramm, nachdem du seine Kästen verschoben hast.",
+  "The factory can't do that now.": "Das kann die Fabrik gerade nicht.",
 });

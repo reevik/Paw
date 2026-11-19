@@ -503,18 +503,22 @@ function renderSandboxPill(S) {
 }
 
 /** The status-bar button: this tab's sandbox on or off (the conversation goes on), or Settings. */
+/** The tab's sandbox on, or off (the conversation continues). */
+async function toggleTabSandbox(S) {
+  const on = !!tabSandbox(S).enabled;
+  S.sandboxMode = on ? "off" : "on";
+  saveWorkspaceSoon();
+  await restart(S, on ? tx("sandbox off · conversation continues") : tx("sandbox on · conversation continues"), { resume: true });
+  renderHeader();
+}
+
 function sandboxMenu(e) {
   const S = curS();
   if (!S) return;
   const on = !!tabSandbox(S).enabled;
   const r = e.currentTarget.getBoundingClientRect();
   contextMenu(r.left, r.top - 90, [
-    { label: on ? tx("Turn the sandbox off in this tab") : tx("Turn the sandbox on in this tab"), run: async () => {
-      S.sandboxMode = on ? "off" : "on";
-      saveWorkspaceSoon();
-      await restart(S, on ? tx("sandbox off · conversation continues") : tx("sandbox on · conversation continues"), { resume: true });
-      renderHeader();
-    } },
+    { label: on ? tx("Turn the sandbox off in this tab") : tx("Turn the sandbox on in this tab"), run: () => toggleTabSandbox(S) },
     { label: tx("Settings › Sandbox…"), run: () => invoke("open_preferences", { tab: "sandbox" }) },
   ]);
 }
@@ -5692,11 +5696,8 @@ $("sidebar-toggle").onclick = toggleSidebar;
 // ⌃⌘S is a menu accelerator (View › Toggle Sidebar); the menu forwards it here.
 listen("ui:toggle-sidebar", toggleSidebar);
 // The View menu's splits and right panel (their keys are the menu's, so they work wherever the focus is).
-listen("ui:menu", ({ payload: id }) => {
-  if (id === "split-row") splitPane("row");
-  else if (id === "split-column") splitPane("column");
-  else if (id === "toggle-panel") setPanel(!panel.open);
-});
+// The native menu's items (and their shortcuts).
+listen("ui:menu", ({ payload: id }) => runAction(id));
 try { setSidebar(localStorage.getItem("paw.sidebar") !== "0", false); } catch { setSidebar(true, false); }
 
 // ---------- side panels give way to the prompt ----------
@@ -5786,40 +5787,74 @@ document.addEventListener("keydown", (e) => {
     return;
   }
   if (e.metaKey && e.altKey && e.key.startsWith("Arrow")) { e.preventDefault(); focusNeighbour(e.key); return; }
-  // The menu's shortcuts come from the native menu (ui:menu): handling them
-  // here too would act twice. Without one (a browser), they're handled here.
-  const id = keyActionFor(settings, e, window.__TAURI_INTERNALS__ ? ["window"] : ["window", "menu"]);
+  // The menu's shortcuts come from the native menu (ui:menu): handling the
+  // key a menu item shows here too would act twice. Its other keys (⌘N for a
+  // new tab…) and everything without a native menu (a browser) are handled here.
+  const id = keyActionFor(settings, e, ["window", "menu"]);
   if (!id) return;
-  const done = () => e.preventDefault();
+  if (window.__TAURI_INTERNALS__ && KEY_ACTIONS.find((a) => a.id === id)?.where === "menu" && keysOf(settings, id)[0] === keyCombo(e)) return;
+  if (runAction(id)) e.preventDefault();
+});
+
+/** Do what a shortcut or a menu item stands for; false if there was nothing to do. */
+function runAction(id) {
+  const S = curS();
   switch (id) {
-    case "new-tab": done(); newSession(); break;
-    case "new-tab-with": done(); openMenu(); break;
-    case "close-tab": if (S) { done(); closeSession(S.sid); } break;
-    case "clear": if (S) { done(); S.lines = []; renderOutput(); } break;
-    case "interrupt": if (S) { done(); interrupt(S); } break;
+    case "new-tab": newSession(); return true;
+    case "new-tab-with": openMenu(); return true;
+    case "close-tab": if (!S) return false; closeSession(S.sid); return true;
+    case "clear": if (!S) return false; S.lines = []; renderOutput(); return true;
+    case "interrupt": if (!S) return false; interrupt(S); return true;
     case "next-tab": case "prev-tab": {
-      if (!openTabs.length) break;
-      done();
+      if (!openTabs.length) return false;
       const i = openTabs.indexOf(activeId);
       const d = id === "next-tab" ? 1 : -1;
       select(openTabs[(i + d + openTabs.length) % openTabs.length]);
-      break;
+      return true;
     }
     // The transcript's font size, or a factory diagram's zoom while the pointer is over it.
     case "font-bigger": case "font-smaller": case "font-reset": {
-      done();
       const k = id === "font-reset" ? "0" : id === "font-smaller" ? "-" : "+";
-      if (factoryZoomKey(k)) break;
-      stepFontSize(k === "0" ? 0 : k === "-" ? -1 : 1);
-      break;
+      if (!factoryZoomKey(k)) stepFontSize(k === "0" ? 0 : k === "-" ? -1 : 1);
+      return true;
     }
-    case "settings": done(); invoke("open_preferences", {}); break;
-    case "split-row": done(); splitPane("row"); break;
-    case "split-column": done(); splitPane("column"); break;
-    case "toggle-sidebar": done(); toggleSidebar(); break;
-    case "toggle-panel": done(); setPanel(!panel.open); break;
+    case "settings": invoke("open_preferences", {}); return true;
+    case "split-row": splitPane("row"); return true;
+    case "split-column": splitPane("column"); return true;
+    case "toggle-sidebar": toggleSidebar(); return true;
+    case "toggle-panel": setPanel(!panel.open); return true;
+    // The menu's own (File, View, Factory, Help).
+    case "new-plan": newTask({ model: S?.model, cwd: S?.cwd, goal: "" }); return true;
+    case "new-factory": setSidebar(true); setNavTab("factories"); askFactoryName(); return true;
+    case "attach-files": if (!S) return false; $("attach-btn")?.click(); return true;
+    case "session-folder": if (!S) return false; slashCommand(S, "/session"); return true;
+    case "sandbox-toggle": if (!S || S.nodeOf) return false; toggleTabSandbox(S); return true;
+    case "factory-run": case "factory-stop": case "factory-lock": case "factory-reset-layout": case "factory-edit": case "factory-delete":
+      return factoryMenu(S, id);
+    case "help-readme": invoke("open_url", { url: "https://github.com/reevik/Paw#readme" }).catch(() => {}); return true;
+    case "help-factories": invoke("open_url", { url: "https://github.com/reevik/Paw/blob/main/docs/factories.md" }).catch(() => {}); return true;
+    case "help-sandbox": invoke("open_url", { url: "https://github.com/reevik/Paw/blob/main/docs/sandbox.md" }).catch(() => {}); return true;
+    case "help-issue": invoke("open_url", { url: "https://github.com/reevik/Paw/issues/new" }).catch(() => {}); return true;
   }
-});
+  return false;
+}
+
+/** Factory menu: what the factory tab you're in does (the same as its buttons). */
+function factoryMenu(S, id) {
+  if (!S?.factory) {
+    if (S) sys(S, tx("The Factory menu acts on a factory's tab: open one first (the sidebar's Factories)."));
+    return false;
+  }
+  if (id === "factory-delete") { deleteFactory(S.factory.id); return true; }
+  const fact = { "factory-run": "run", "factory-stop": "stop", "factory-lock": "lock", "factory-reset-layout": "layout-reset", "factory-edit": "edit" }[id];
+  const b = $("task-view")?.querySelector(`[data-fact="${fact}"]`);
+  if (b) { b.click(); return true; }
+  sys(S, {
+    stop: tx("No task of this factory is running in the run shown."),
+    "layout-reset": tx("Nothing to reset: unlock the diagram first, after moving its boxes."),
+  }[fact] ?? tx("The factory can't do that now."));
+  return false;
+}
 
 // Tick the sidebar/tabs while something is running (elapsed timers, dots).
 setInterval(() => {

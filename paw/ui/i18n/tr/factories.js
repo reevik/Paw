@@ -277,4 +277,9 @@ I18N.add("tr", {
   "Drag along the box's edge": "Kutunun kenarı boyunca sürükleyin",
   "Reset this diagram's layout? The boxes and lines go back to where Paw puts them.": "Bu diyagramın yerleşimi sıfırlansın mı? Kutular ve çizgiler Paw'ın yerleştirdiği yere döner.",
   "Reset": "Sıfırla",
+  // the Factory menu
+  "The Factory menu acts on a factory's tab: open one first (the sidebar's Factories).": "Fabrika menüsü bir fabrikanın sekmesinde çalışır: önce birini açın (kenar çubuğundaki Fabrikalar).",
+  "No task of this factory is running in the run shown.": "Gösterilen çalıştırmada bu fabrikanın süren bir görevi yok.",
+  "Nothing to reset: unlock the diagram first, after moving its boxes.": "Sıfırlanacak bir şey yok: önce kutularını taşıdıktan sonra diyagramın kilidini açın.",
+  "The factory can't do that now.": "Fabrika bunu şu anda yapamaz.",
 });

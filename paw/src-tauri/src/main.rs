@@ -266,28 +266,129 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         let quit_key = (!MENU_KEYS_OFF.load(std::sync::atomic::Ordering::SeqCst)).then_some("CmdOrCtrl+Q");
         app_menu.append(&MenuItem::with_id(app, "quit", i18n::t("Quit Paw"), true, quit_key)?)?;
     }
-    // View: the splits (⌘D, ⌘⇧D, like iTerm2) and the two side panels (⌃⌘S,
-    // the macOS convention for a sidebar; ⌃⌘M). In the menu, the keys work
-    // wherever the focus is, an embedded terminal included, and can be found.
-    let split_row = keyed_item(app, "split-row", "split-row", i18n::t("Split Side by Side"), "Cmd+D")?;
-    let split_col = keyed_item(app, "split-column", "split-column", i18n::t("Split Stacked"), "Shift+Cmd+D")?;
-    let toggle = keyed_item(app, "toggle-sidebar", "toggle-sidebar", i18n::t("Toggle Sidebar"), "Ctrl+Cmd+S")?;
-    let panel = keyed_item(app, "toggle-panel", "toggle-panel", i18n::t("Toggle Right Panel"), "Ctrl+Cmd+M")?;
-    let view = menu
-        .items()?
-        .into_iter()
-        .filter_map(|i| i.as_submenu().cloned())
-        .find(|s| s.text().map(|t| t == "View").unwrap_or(false));
     let sep = || PredefinedMenuItem::separator(app);
-    match view {
+    // An item with its shortcut (Settings › Keys can change it), or without one.
+    let key = |id: &str, text: &'static str, default: &str| keyed_item(app, id, id, i18n::t(text), default);
+    let item = |id: &str, text: &'static str| MenuItem::with_id(app, id, i18n::t(text), true, None::<&str>);
+    let submenu = |title: &str| -> Option<Submenu<tauri::Wry>> {
+        menu.items().ok()?.into_iter().filter_map(|i| i.as_submenu().cloned()).find(|s| s.text().map(|t| t == title).unwrap_or(false))
+    };
+    // Paw: the shortcuts, right under Settings.
+    if let Some(app_menu) = menu.items()?.first().and_then(|i| i.as_submenu().cloned()) {
+        app_menu.insert(&item("settings-keys", "Keyboard Shortcuts…")?, 3)?;
+    }
+    // File: tabs, plans, factories and attachments. (Its Close Window would
+    // take ⌘W, which closes a tab in Paw; the window's red button closes it.)
+    if let Some(file) = submenu("File") {
+        while !file.items()?.is_empty() {
+            file.remove_at(0)?;
+        }
+        file.append_items(&[
+            &key("new-tab", "New Tab", "Cmd+T")?,
+            &key("new-tab-with", "New Tab with Another Model…", "Shift+Cmd+T")?,
+            &sep()?,
+            &item("new-plan", "New Plan…")?,
+            &item("new-factory", "New Factory…")?,
+            &sep()?,
+            &item("attach-files", "Attach Files…")?,
+            &item("session-folder", "Open the Tab's Folder")?,
+            &sep()?,
+            &key("close-tab", "Close Tab", "Cmd+W")?,
+        ])?;
+        file.set_text(i18n::t("File"))?;
+    }
+    if let Some(edit) = submenu("Edit") {
+        edit.set_text(i18n::t("Edit"))?;
+    }
+    // View: the splits (⌘D, ⌘⇧D, like iTerm2), the side panels (⌃⌘S, the
+    // macOS convention for a sidebar; ⌃⌘M), the text size and clearing. In
+    // the menu, the keys work wherever the focus is, a terminal included.
+    let view_items = [
+        &key("split-row", "Split Side by Side", "Cmd+D")? as &dyn tauri::menu::IsMenuItem<tauri::Wry>,
+        &key("split-column", "Split Stacked", "Shift+Cmd+D")?,
+        &sep()?,
+        &key("toggle-sidebar", "Toggle Sidebar", "Ctrl+Cmd+S")?,
+        &key("toggle-panel", "Toggle Right Panel", "Ctrl+Cmd+M")?,
+        &sep()?,
+        &key("font-bigger", "Bigger Text", "Cmd+=")?,
+        &key("font-smaller", "Smaller Text", "Cmd+-")?,
+        &key("font-reset", "Actual Size", "Cmd+0")?,
+        &sep()?,
+        &key("clear", "Clear the Screen", "Cmd+K")?,
+        &key("interrupt", "Stop the Agent or Command", "Cmd+.")?,
+        &item("sandbox-toggle", "Turn the Tab's Sandbox On or Off")?,
+        &sep()?,
+    ];
+    let view = match submenu("View") {
         Some(view) => {
-            for item in [&sep()? as &dyn tauri::menu::IsMenuItem<tauri::Wry>, &panel, &toggle, &sep()?, &split_col, &split_row] {
-                view.prepend(item)?;
+            for (i, it) in view_items.iter().enumerate() {
+                view.insert(*it, i)?;
+            }
+            view
+        }
+        None => {
+            let v = Submenu::with_items(app, "View", true, &view_items)?;
+            menu.append(&v)?;
+            v
+        }
+    };
+    view.set_text(i18n::t("View"))?;
+    // Factory: what the factory tab you're in does (its buttons, here too).
+    let factory = Submenu::with_items(
+        app,
+        i18n::t("Factory"),
+        true,
+        &[
+            &item("factory-run", "Run a Task")?,
+            &item("factory-stop", "Stop Task")?,
+            &sep()?,
+            &item("factory-lock", "Lock or Unlock the Diagram")?,
+            &item("factory-reset-layout", "Reset the Layout…")?,
+            &sep()?,
+            &item("factory-edit", "Edit the File")?,
+            &item("factory-delete", "Delete Factory…")?,
+        ],
+    )?;
+    let at = menu.items()?.iter().position(|i| i.as_submenu().is_some_and(|s| s.text().map(|t| t == i18n::t("View")).unwrap_or(false))).map_or(menu.items()?.len(), |i| i + 1);
+    menu.insert(&factory, at)?;
+    // Window: next and previous tab; not Close Window (⌘W is Close Tab).
+    if let Some(window) = submenu("Window") {
+        for (i, it) in window.items()?.iter().enumerate().rev() {
+            if it.as_predefined_menuitem().is_some_and(|p| p.text().map(|t| t == "Close Window").unwrap_or(false)) {
+                window.remove_at(i)?;
             }
         }
-        None => menu.append(&Submenu::with_items(app, "View", true, &[&split_row, &split_col, &sep()?, &toggle, &panel])?)?,
+        window.append_items(&[&key("next-tab", "Next Tab", "Shift+Cmd+]")?, &key("prev-tab", "Previous Tab", "Shift+Cmd+[")?])?;
+        window.set_text(i18n::t("Window"))?;
+    }
+    // Help: the guides.
+    if let Some(help) = submenu("Help") {
+        help.append_items(&[
+            &item("help-readme", "Paw Help")?,
+            &item("help-factories", "Factories Guide")?,
+            &item("help-sandbox", "Sandbox Guide")?,
+            &sep()?,
+            &item("help-issue", "Report an Issue…")?,
+        ])?;
+        help.set_text(i18n::t("Help"))?;
     }
     Ok(menu)
+}
+
+/// The menu's items the window acts on (ui:menu): Paw's own, by id.
+const MENU_ACTIONS: &[&str] = &[
+    "new-tab", "new-tab-with", "new-plan", "new-factory", "attach-files", "session-folder", "close-tab",
+    "split-row", "split-column", "toggle-panel", "font-bigger", "font-smaller", "font-reset", "clear", "interrupt", "sandbox-toggle",
+    "factory-run", "factory-stop", "factory-lock", "factory-reset-layout", "factory-edit", "factory-delete",
+    "next-tab", "prev-tab", "help-readme", "help-factories", "help-sandbox", "help-issue",
+];
+
+/// The focused window, when it's another than the main one (Settings, About): closed.
+fn close_other_window(app: &AppHandle) -> bool {
+    match app.webview_windows().into_values().find(|w| w.label() != "main" && w.is_focused().unwrap_or(false)) {
+        Some(w) => w.close().is_ok(),
+        None => false,
+    }
 }
 
 /// The shortcuts set in Settings › Keys (`keys` in settings.json).
@@ -309,7 +410,9 @@ fn keyed_item(app: &AppHandle, id: &str, action: &str, text: String, default: &s
         Some(list) => list.first().and_then(|k| k.as_str()).map(str::to_string),
         None => Some(default.to_string()),
     };
-    MenuItem::with_id(app, id, &text, true, key.as_deref()).or_else(|_| MenuItem::with_id(app, id, &text, true, Some(default)))
+    MenuItem::with_id(app, id, &text, true, key.as_deref())
+        .or_else(|_| MenuItem::with_id(app, id, &text, true, Some(default)))
+        .or_else(|_| MenuItem::with_id(app, id, &text, true, None::<&str>))
 }
 
 #[cfg(test)]
@@ -379,9 +482,13 @@ fn main() {
                 let _ = show_about(app, None);
             } else if event.id() == "preferences" {
                 let _ = show_preferences(app, None);
+            } else if event.id() == "settings-keys" {
+                let _ = show_preferences(app, Some("keys"));
             } else if event.id() == "toggle-sidebar" {
                 let _ = app.emit_to("main", "ui:toggle-sidebar", ());
-            } else if ["split-row", "split-column", "toggle-panel"].contains(&event.id().as_ref()) {
+            } else if event.id() == "close-tab" && close_other_window(app) {
+                // ⌘W in Settings or About closes that window, not a tab.
+            } else if MENU_ACTIONS.contains(&event.id().as_ref()) {
                 let _ = app.emit_to("main", "ui:menu", event.id().as_ref());
             } else if event.id() == "quit" {
                 // The window quits; the agents keep running in the daemon.

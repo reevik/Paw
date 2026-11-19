@@ -244,7 +244,9 @@ fn menu_shortcuts(app: AppHandle, on: bool) -> Result<(), String> {
         Submenu::with_items(&app, "Paw", true, &[&quit]).and_then(|paw| Menu::with_items(&app, &[&paw]))
     }
     .map_err(|e| e.to_string())?;
-    app.set_menu(menu).map(|_| ()).map_err(|e| e.to_string())
+    app.set_menu(menu).map_err(|e| e.to_string())?;
+    edit_menu_checks(&app);
+    Ok(())
 }
 
 fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
@@ -386,6 +388,29 @@ fn menu_state(app: AppHandle, enabled: std::collections::HashMap<String, bool>) 
     if let Some(menu) = app.menu() {
         apply_menu_state(&menu);
     }
+}
+
+/// The Edit menu (Undo, Cut, Copy, Paste…) checked by macOS itself: the menu
+/// library turns that off for every menu, so Copy stayed on with nothing
+/// selected. With it on, macOS asks the focused view: Copy and Cut need a
+/// selection, Paste a field to paste into, Undo something to undo.
+fn edit_menu_checks(app: &AppHandle) {
+    #[cfg(target_os = "macos")]
+    let _ = app.run_on_main_thread(|| {
+        use objc2::{sel, MainThreadMarker};
+        use objc2_app_kit::NSApplication;
+        let Some(mtm) = MainThreadMarker::new() else { return };
+        let Some(main) = NSApplication::sharedApplication(mtm).mainMenu() else { return };
+        for top in main.itemArray().iter() {
+            let Some(sub) = top.submenu() else { continue };
+            // The Edit menu, whatever its title in your language: the one with Copy.
+            if sub.itemArray().iter().any(|i| i.action() == Some(sel!(copy:))) {
+                sub.setAutoenablesItems(true);
+            }
+        }
+    });
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
 }
 
 /// Enable or disable the menu's items as the window last said.
@@ -544,6 +569,9 @@ fn main() {
             }
             // First start after the rename: bring Hive's settings along.
             paths::move_to_paw_home(app.handle());
+            if !daemon_mode {
+                edit_menu_checks(app.handle());
+            }
             // Another language or other shortcuts in Settings: the app menu follows.
             {
                 use tauri::Listener;
@@ -557,6 +585,7 @@ fn main() {
                         *was = now;
                         if let Ok(menu) = build_menu(&handle) {
                             let _ = handle.set_menu(menu);
+                            edit_menu_checks(&handle);
                         }
                     }
                 });

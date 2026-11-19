@@ -1835,6 +1835,16 @@ function ensureTerm(S) {
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
   term.open(host);
+  // ⌘C with text selected in the terminal copies it. (The Edit menu's Copy
+  // needs a selection in the page, which a terminal selection isn't.)
+  term.attachCustomKeyEventHandler((e) => {
+    if (e.type === "keydown" && e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.code === "KeyC" && term.hasSelection()) {
+      navigator.clipboard.writeText(term.getSelection()).catch(() => {});
+      e.preventDefault();
+      return false;
+    }
+    return true;
+  });
   term.onData((data) => invoke("shell_write_raw", { id: S.shell, data }).catch(() => {}));
   term.onResize(({ cols, rows }) => invoke("shell_resize", { id: S.shell, cols, rows }).catch(() => {}));
   S.term = { term, fit, host };

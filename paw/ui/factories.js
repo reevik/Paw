@@ -253,7 +253,14 @@ async function newFactory(name) {
   try {
     const id = await invoke("factory_new", { name });
     await loadFactories();
-    return openFactory(id);
+    const S = await openFactory(id);
+    if (S) {
+      pushLine(S, { stream: "info", cls: "fa-guide", html: factoryGuideHtml(S), ts: Date.now() });
+      refresh(S);
+      // Open at the guide's start, not at the bottom of the output.
+      requestAnimationFrame(() => [...document.querySelectorAll(".tl.info.fa-guide")].at(-1)?.scrollIntoView({ block: "start" }));
+    }
+    return S;
   } catch (e) {
     const S = curS();
     if (S) sys(S, `✗ ${e}`);
@@ -274,6 +281,39 @@ function factoryDotState(S) {
 
 function factoryBanner(S) {
   pushLine(S, { stream: "system", ts: Date.now(), text: tx("— factory {id}: ask {agent} below to change it (nodes, prompts, models, triggers). Run a task runs it in the background.", { id: S.factory.id, agent: S.agent.name }) });
+}
+
+/** Under a new factory's diagram: how to build it by talking to the agent. */
+function factoryGuideHtml(S) {
+  const agent = S.agent.name;
+  const head = (t) => `<span class="help-h">${esc(t)}</span>`;
+  const say = (t) => `  <span class="cmd">“${esc(t)}”</span>`;
+  return [
+    head(tx("Build this factory with {agent}", { agent })),
+    `<span class="dim">${tx("It starts with one node. Tell {agent} below what the factory should do, in your own words: it writes the file and the diagram above follows.", { agent: esc(agent) })}</span>`,
+    "",
+    head(tx("Describe the process")),
+    say(tx("When a customer email arrives, sort it, draft a reply and wait for my approval before sending it.")),
+    say(tx("Check the repo every morning, update the dependencies, run the tests and open a pull request.")),
+    "",
+    head(tx("Change it step by step")),
+    say(tx("Add a node after research that writes a summary.")),
+    say(tx("Run the tests and fix in a loop until they pass.")),
+    say(tx("Let the draft wait for my approval.")),
+    say(tx("Ask me which project to work on before you start.")),
+    say(tx("Use a different model for the summary node.")),
+    "",
+    head(tx("Start it on its own")),
+    say(tx("Run it every day at 9:00.")),
+    say(tx("Start a run when a webhook arrives.")),
+    say(tx("Start a run when ./inbox changes.")),
+    "",
+    head(tx("Ask about it")),
+    say(tx("What does this factory do?")),
+    say(tx("Why did the last run fail?")),
+    "",
+    `<span class="dim">${tx("Run a task starts a run. Edit file opens the YAML if you'd rather write it yourself.")}</span>`,
+  ].join("\n");
 }
 
 // ---------- the prompt: Paw Agent changes the factory file ----------

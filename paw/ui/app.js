@@ -4361,7 +4361,7 @@ function summarizeToolInput(input) {
 }
 
 function renderLine(S, l) {
-  if (l.stream === "info") return div("tl info", l.html);
+  if (l.stream === "info") return div(l.cls ? `tl info ${l.cls}` : "tl info", l.html);
   if (l.stream === "approval") return renderApprovalCard(S, l);
   if (l.stream === "system") return div("tl sys", esc(l.text));
   if (l.stream === "cmd") return div("tl input shcmd", `<span class="sh">$</span> ${esc(l.text)}`);

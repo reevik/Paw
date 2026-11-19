@@ -281,7 +281,7 @@ I18N.add("de", {
   // the sandbox
   "Sandbox": "Sandbox",
   "Run Paw Agent in a sandbox": "Paw Agent in einer Sandbox ausführen",
-  "For new tabs and for factories (a factory's file can say otherwise). A tab can turn it off or on with the sandbox button under its prompt, and a project's <code>.paw/sandbox.yaml</code> can make it stricter.": "Für neue Tabs und für Fabriken (die Datei einer Fabrik kann etwas anderes sagen). Ein Tab kann sie mit dem Sandbox-Knopf unter seiner Eingabe aus- oder einschalten, und die <code>.paw/sandbox.yaml</code> eines Projekts kann sie strenger machen.",
+  "For new tabs and factory runs (a factory's file can say otherwise); open tabs keep the sandbox they started with. A tab can turn it off or on with the sandbox button under its prompt, and a project's <code>.paw/sandbox.yaml</code> can make it stricter.": "Für neue Tabs und Fabrik-Läufe (die Datei einer Fabrik kann etwas anderes sagen); offene Tabs behalten die Sandbox, mit der sie gestartet sind. Ein Tab kann sie mit dem Sandbox-Knopf unter seiner Eingabe aus- oder einschalten, und die <code>.paw/sandbox.yaml</code> eines Projekts kann sie strenger machen.",
   "Where it may write": "Wo es schreiben darf",
   "Always the folder it works in, its session's scripts, a factory run's shared files and temp. Add folders it may also change:": "Immer der Ordner, in dem es arbeitet, die Skripte seiner Sitzung, die gemeinsamen Dateien eines Fabriklaufs und temp. Füge Ordner hinzu, die es auch ändern darf:",
   "Programs": "Programme",

@@ -507,7 +507,6 @@ I18N.add("de", {
   "You're up to date": "Du bist auf dem neuesten Stand",
   "Paw {version} is the newest version.": "Paw {version} ist die neueste Version.",
   "OK": "OK",
-  // tabs following Settings › Sandbox
-  "Settings › Sandbox changed: sandbox on · conversation continues": "Einstellungen › Sandbox geändert: Sandbox an · Unterhaltung geht weiter",
-  "Settings › Sandbox changed: sandbox off · conversation continues": "Einstellungen › Sandbox geändert: Sandbox aus · Unterhaltung geht weiter",
+  // a tab keeps its sandbox
+  "Settings › Sandbox has changed since this tab started: new tabs get the new setting, this one keeps its own.": "Einstellungen › Sandbox wurde geändert, seit dieser Tab gestartet ist: Neue Tabs bekommen die neue Einstellung, dieser behält seine.",
 });

@@ -511,16 +511,22 @@ function renderSandboxPill(S) {
       tx("Set by the factory: the sandbox section in its file, else Settings › Sandbox.");
     return;
   }
-  const p = tabSandbox(S);
+  const p = runningSandbox(S);
   b.classList.toggle("on", !!p.enabled);
   b.textContent = p.enabled ? tx("Sandbox") : tx("No sandbox");
-  b.title = p.enabled ? sandboxSummary(p) : tx("Paw Agent runs without a sandbox in this tab. Click to turn it on.");
+  const changed = S.sandboxStarted && !S.sandboxMode && !!settings.sandbox?.enabled !== !!p.enabled;
+  b.title = (p.enabled ? sandboxSummary(p) : tx("Paw Agent runs without a sandbox in this tab. Click to turn it on.")) +
+    (changed ? "\n" + tx("Settings › Sandbox has changed since this tab started: new tabs get the new setting, this one keeps its own.") : "");
 }
+
+/** The sandbox this tab's agent runs with (it keeps it when Settings change),
+ *  or will start with. */
+const runningSandbox = (S) => (S.proc != null && S.sandboxStarted ? S.sandboxStarted : tabSandbox(S));
 
 /** The status-bar button: this tab's sandbox on or off (the conversation goes on), or Settings. */
 /** The tab's sandbox on, or off (the conversation continues). */
 async function toggleTabSandbox(S) {
-  const on = !!tabSandbox(S).enabled;
+  const on = !!runningSandbox(S).enabled;
   S.sandboxMode = on ? "off" : "on";
   saveWorkspaceSoon();
   await restart(S, on ? tx("sandbox off · conversation continues") : tx("sandbox on · conversation continues"), { resume: true });
@@ -539,7 +545,7 @@ function sandboxMenu(e) {
     ]);
     return;
   }
-  const on = !!tabSandbox(S).enabled;
+  const on = !!runningSandbox(S).enabled;
   const r = e.currentTarget.getBoundingClientRect();
   contextMenu(r.left, r.top - 90, [
     { label: on ? tx("Turn the sandbox off in this tab") : tx("Turn the sandbox on in this tab"), run: () => toggleTabSandbox(S) },
@@ -775,27 +781,6 @@ function turnFinished(S) {
   if (!S.working) return;
   S.working = false;
   setTimeout(pumpAgents, 0);
-  // Settings › Sandbox changed while it worked: it takes the new one now.
-  if (S.sandboxStale) setTimeout(() => sandboxFollow(S), 0);
-}
-
-/** Settings › Sandbox changed: tabs that go by it (not turned on or off in
- *  the tab) take the new sandbox, the conversation going on; a tab at work
- *  takes it when its turn ends. */
-function sandboxFollowsSettings() {
-  for (const S of sessions.values()) {
-    if (!isPaw(S.agent) || S.nodeOf || S.proc == null || !S.sandboxStarted) continue;
-    if (JSON.stringify(tabSandbox(S)) === JSON.stringify(S.sandboxStarted)) continue;
-    if (S.working || isBusy(S)) S.sandboxStale = true;
-    else sandboxFollow(S);
-  }
-}
-async function sandboxFollow(S) {
-  S.sandboxStale = false;
-  if (!sessions.has(S.sid) || S.proc == null || JSON.stringify(tabSandbox(S)) === JSON.stringify(S.sandboxStarted)) return;
-  const on = !!tabSandbox(S).enabled;
-  await restart(S, on ? tx("Settings › Sandbox changed: sandbox on · conversation continues") : tx("Settings › Sandbox changed: sandbox off · conversation continues"), { resume: true });
-  inPane(S, renderHeader);
 }
 
 /** Start waiting prompts (oldest first), then task steps, while there's room. */
@@ -5173,7 +5158,6 @@ listen("agent:status", ({ payload: pinfo }) => {
 
 listen("settings:changed", ({ payload }) => {
   const limit = settings?.general?.max_sessions;
-  const sandboxWas = JSON.stringify(settings?.sandbox ?? null);
   settings = payload;
   // Another language: the window loads again in it (tabs come back as after a restart).
   if (I18N.pick(payload.general?.language) !== I18N.lang) {
@@ -5188,9 +5172,10 @@ listen("settings:changed", ({ payload }) => {
   if (payload.general?.max_sessions !== limit) refreshArchive();
   setTimeout(pumpAgents, 0);
   if (activeId == null) renderWelcome();
-  // The status bar (the sandbox button and the rest) as Settings now say.
+  // The status bar again (a factory node's tab shows its factory's sandbox,
+  // which can come from Settings). Open tabs keep the sandbox they started
+  // with: Settings › Sandbox is for new tabs and runs.
   for (const P of panes.values()) if (P.sid != null) withPane(P, renderHeader);
-  if (JSON.stringify(payload.sandbox ?? null) !== sandboxWas) sandboxFollowsSettings();
 });
 listen("agents:detected", ({ payload }) => {
   detections = payload;

@@ -6,7 +6,7 @@ The sandbox limits what an action can do once it runs; the approval level (ask, 
 
 ## Settings › Sandbox
 
-- **Sandbox:** on or off for new tabs, and for factories unless their file says otherwise.
+- **Sandbox:** on or off for new tabs, and for factory runs unless their file says otherwise. Open tabs keep the sandbox they started with; their button changes it for one tab.
 - **Where it may write:** always the folder it works in, its session's scripts, a factory run's shared files and temp. Add folders it may also change, such as `~/.cargo` or `~/.npm` for their caches.
 - **Programs:** any program, or only the ones listed (a starter list of common tools comes with it). A program's helpers come along: `git` brings `git-remote-https`.
 - **Network:** on, off, or only for the listed programs (say `git`, `gh`, `npm`). Off still lets commands reach this Mac (localhost), so local servers and tests work.

@@ -281,7 +281,7 @@ I18N.add("tr", {
   // the sandbox
   "Sandbox": "Korumalı Alan",
   "Run Paw Agent in a sandbox": "Paw Agent'ı korumalı alanda çalıştır",
-  "For new tabs and for factories (a factory's file can say otherwise). A tab can turn it off or on with the sandbox button under its prompt, and a project's <code>.paw/sandbox.yaml</code> can make it stricter.": "Yeni sekmeler ve fabrikalar için (bir fabrikanın dosyası farklı bir şey söyleyebilir). Bir sekme, isteminin altındaki korumalı alan düğmesiyle onu kapatıp açabilir; bir projenin <code>.paw/sandbox.yaml</code> dosyası onu daha sıkı hale getirebilir.",
+  "For new tabs and factory runs (a factory's file can say otherwise); open tabs keep the sandbox they started with. A tab can turn it off or on with the sandbox button under its prompt, and a project's <code>.paw/sandbox.yaml</code> can make it stricter.": "Yeni sekmeler ve fabrika çalıştırmaları için (bir fabrikanın dosyası farklı bir şey söyleyebilir); açık sekmeler başladıkları korumalı alanı korur. Bir sekme, isteminin altındaki korumalı alan düğmesiyle onu kapatıp açabilir; bir projenin <code>.paw/sandbox.yaml</code> dosyası onu daha sıkı hale getirebilir.",
   "Where it may write": "Nereye yazabilir",
   "Always the folder it works in, its session's scripts, a factory run's shared files and temp. Add folders it may also change:": "Her zaman çalıştığı klasör, oturumunun betikleri, bir fabrika çalıştırmasının ortak dosyaları ve temp. Değiştirebileceği başka klasörler ekleyin:",
   "Programs": "Programlar",

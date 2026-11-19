@@ -858,6 +858,8 @@ async function sendToAgent(S, text, atts = [], opts = {}) {
 function helpHtml(S) {
   const row = (k, d) => `<span class="cmd">${esc(k.padEnd(17))}</span><span class="dim">${esc(d)}</span>`;
   const head = (t) => `<span class="help-h">${esc(t)}</span>`;
+  // The keys as set in Settings › Keys (each action's first).
+  const kl = (...ids) => ids.map((id) => { const k = keysOf(settings, id)[0]; return k ? keyLabel(k) : "–"; }).join(" · ");
   const name = S.agent.name;
   const turns = (S.turns ?? []).filter((t) => !t.open).length;
   const convo = {
@@ -880,8 +882,8 @@ function helpHtml(S) {
       S.inputMode === "agent" ? tx("goes to {name} (Agent mode)", { name }) : tx("goes to {name}; lines that look like commands run in the shell", { name })),
     row("!<command>", tx("always run in the shell")),
     row("/ask <text>", tx("always send to {name}", { name })),
-    row("⇧Tab", tx("switch input mode: Auto → Shell → Agent")),
-    row("⌃R", tx("search earlier prompts and commands")),
+    row(kl("input-mode"), tx("switch input mode: Auto → Shell → Agent")),
+    row(kl("history-search"), tx("search earlier prompts and commands")),
     row("/", tx("the commands as you type, then their parameters (models, factories, folders…); Tab takes one")),
     row("Tab · ↑↓", tx("complete commands and paths · previous prompts")),
     row("+ · ⌘V", tx("attach files · paste an image · long pasted text becomes a badge (click it to edit)")),
@@ -913,7 +915,7 @@ function helpHtml(S) {
     row("/factory delete <name>", tx("delete a factory (asks first; it goes to the Trash)")),
     row("/sessions", tx("list stored sessions, open and closed; click one to reopen it in a new tab")),
     row("/stats [day|week|month]", tx("tokens, queries, plans and time per model: today, this week, this month")),
-    row("/clear", tx("clear the screen (⌘K)")),
+    row("/clear", tx("clear the screen ({key})", { key: kl("clear") })),
     row("/session", tx("open this tab's folder: its conversation, files, scripts and command log")),
     row("/plugins", tx("the plugins installed and their commands (Settings › Plugins adds more)")),
     ...(pluginHost.commands.size ? ["", head(tx("Plugins")), ...pluginHelpRows(row)] : []),
@@ -922,12 +924,12 @@ function helpHtml(S) {
     row("history [n | -c]", tx("show the last n shell commands, or clear the history")),
     row("vim, top, ssh…", tx("full-screen and interactive programs open in a terminal view")),
     "", head(tx("Window")),
-    row("⌘T · ⌘⇧T · ⌘W", CLI_AGENTS ? tx("new tab · new tab with another agent · close tab") : tx("new tab · new tab with another model · close tab")),
-    row("⌘1–9 · ⌘⇧[ ]", tx("go to tab · previous / next tab")),
-    row("⌘D · ⌘⇧D", tx("split side by side · split stacked")),
-    row("⌃U · ⌃W", tx("delete to the start of the line · the word before the cursor")),
+    row(kl("new-tab", "new-tab-with", "close-tab"), CLI_AGENTS ? tx("new tab · new tab with another agent · close tab") : tx("new tab · new tab with another model · close tab")),
+    row(`⌘1–9 · ${kl("prev-tab", "next-tab")}`, tx("go to tab · previous / next tab")),
+    row(kl("split-row", "split-column"), tx("split side by side · split stacked")),
+    row(kl("delete-line", "delete-word"), tx("delete to the start of the line · the word before the cursor")),
     row("⌘⌥ arrows", tx("move between panes")),
-    row("⌃⌘S · ⌃⌘M · ⌘,", tx("show / hide the sidebar (specs, factories, sessions) · the right panel (MCPs, skills) · settings")),
+    row(kl("toggle-sidebar", "toggle-panel", "settings"), tx("show / hide the sidebar (specs, factories, sessions) · the right panel (MCPs, skills) · settings")),
   );
   return out.join("\n");
 }
@@ -1699,7 +1701,7 @@ function acceptAc(i) {
 
 /** Handles popup keys; returns true when the key was consumed. */
 function autocompleteKey(e) {
-  if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "r") {
+  if (keyIs(settings, e, "history-search")) {
     e.preventDefault();
     historySearch(true);
     return true;
@@ -1709,7 +1711,7 @@ function autocompleteKey(e) {
     if (ac.sel >= 0) acceptAc(ac.sel);
     return true;
   }
-  if (e.key === "Tab" && e.shiftKey) {
+  if (keyIs(settings, e, "input-mode")) {
     e.preventDefault();
     const S = curS();
     if (S) cycleInputMode(S);
@@ -5214,11 +5216,12 @@ function bindPane(P) {
       }
       // ⌃U and ⌃W, like a shell's line editing: delete from the start of the
       // line, or the word, before the cursor (⌃A, ⌃E and ⌃K come with macOS).
-      if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && (e.key === "u" || e.key === "w")) {
+      const del = keyIs(settings, e, "delete-line") ? "line" : keyIs(settings, e, "delete-word") ? "word" : null;
+      if (del) {
         e.preventDefault();
         const end = ta.selectionStart;
         const before = ta.value.slice(0, end);
-        const start = e.key === "u" ? before.lastIndexOf("\n") + 1 : before.replace(/\S+\s*$/, "").length;
+        const start = del === "line" ? before.lastIndexOf("\n") + 1 : before.replace(/\S+\s*$/, "").length;
         if (start < end || ta.selectionEnd > end) {
           ta.setSelectionRange(start, Math.max(end, ta.selectionEnd));
           // As an edit (⌘Z undoes it), and the prompt reacts as to typing.
@@ -5228,7 +5231,7 @@ function bindPane(P) {
         return;
       }
       // Ctrl-C with nothing selected interrupts, like a terminal.
-      if (e.ctrlKey && e.key === "c" && S && ta.selectionStart === ta.selectionEnd) {
+      if (keyIs(settings, e, "prompt-interrupt") && S && ta.selectionStart === ta.selectionEnd) {
         e.preventDefault();
         interrupt(S);
       }
@@ -5468,36 +5471,49 @@ $("tab-add").onclick = () => newSession();
 $("settings-btn").onclick = () => invoke("open_preferences", {});
 
 // ---------- keyboard ----------
+// The shortcuts are in keys.js; Settings › Keys changes them (settings.keys).
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") closeMenu();
-  if (!e.metaKey) return;
-  // ⌘D, ⌘⇧D and ⌃⌘M come from the View menu (ui:menu), like ⌃⌘S: handling them
-  // here too would act twice. Without a native menu (a browser), they're handled here.
-  if (!window.__TAURI_INTERNALS__ && e.ctrlKey && (e.key === "m" || e.key === "M")) { e.preventDefault(); setPanel(!panel.open); return; }
-  // ⌘+ (also ⌘= without shift) / ⌘− / ⌘0: the transcript's font size, or a
-  // factory diagram's zoom while the pointer is over it.
-  if (!e.ctrlKey && !e.altKey && ["=", "+", "-", "_", "0"].includes(e.key)) {
-    e.preventDefault();
-    if (factoryZoomKey(e.key)) return;
-    stepFontSize(e.key === "0" ? 0 : e.key === "-" || e.key === "_" ? -1 : 1);
+  const S = curS();
+  // Fixed: ⌘1–⌘9 go to a tab, ⌥⌘ arrows to the pane beside.
+  if (e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && /^Digit[1-9]$/.test(e.code)) {
+    const sid = openTabs[Number(e.code.slice(5)) - 1];
+    if (sid != null) { e.preventDefault(); select(sid); }
     return;
   }
-  const S = curS();
-  if (e.altKey && e.key.startsWith("Arrow")) { e.preventDefault(); focusNeighbour(e.key); return; }
-  if (e.key === ",") { e.preventDefault(); invoke("open_preferences", {}); }
-  else if ((e.key === "d" || e.key === "D") && !window.__TAURI_INTERNALS__) { e.preventDefault(); splitPane(e.shiftKey ? "column" : "row"); }
-  else if (e.key === "t" || e.key === "n") { e.preventDefault(); e.shiftKey ? openMenu() : newSession(); }
-  else if (e.key === "w" && S) { e.preventDefault(); closeSession(S.sid); }
-  else if (e.key === "k" && S) { e.preventDefault(); S.lines = []; renderOutput(); }
-  else if (e.key === "." && S) { e.preventDefault(); interrupt(S); }
-  else if (/^[1-9]$/.test(e.key)) {
-    const sid = openTabs[Number(e.key) - 1];
-    if (sid != null) { e.preventDefault(); select(sid); }
-  } else if (e.shiftKey && "[]{}".includes(e.key) && openTabs.length) {
-    e.preventDefault();
-    const i = openTabs.indexOf(activeId);
-    const d = e.key === "]" || e.key === "}" ? 1 : -1;
-    select(openTabs[(i + d + openTabs.length) % openTabs.length]);
+  if (e.metaKey && e.altKey && e.key.startsWith("Arrow")) { e.preventDefault(); focusNeighbour(e.key); return; }
+  // The menu's shortcuts come from the native menu (ui:menu): handling them
+  // here too would act twice. Without one (a browser), they're handled here.
+  const id = keyActionFor(settings, e, window.__TAURI_INTERNALS__ ? ["window"] : ["window", "menu"]);
+  if (!id) return;
+  const done = () => e.preventDefault();
+  switch (id) {
+    case "new-tab": done(); newSession(); break;
+    case "new-tab-with": done(); openMenu(); break;
+    case "close-tab": if (S) { done(); closeSession(S.sid); } break;
+    case "clear": if (S) { done(); S.lines = []; renderOutput(); } break;
+    case "interrupt": if (S) { done(); interrupt(S); } break;
+    case "next-tab": case "prev-tab": {
+      if (!openTabs.length) break;
+      done();
+      const i = openTabs.indexOf(activeId);
+      const d = id === "next-tab" ? 1 : -1;
+      select(openTabs[(i + d + openTabs.length) % openTabs.length]);
+      break;
+    }
+    // The transcript's font size, or a factory diagram's zoom while the pointer is over it.
+    case "font-bigger": case "font-smaller": case "font-reset": {
+      done();
+      const k = id === "font-reset" ? "0" : id === "font-smaller" ? "-" : "+";
+      if (factoryZoomKey(k)) break;
+      stepFontSize(k === "0" ? 0 : k === "-" ? -1 : 1);
+      break;
+    }
+    case "settings": done(); invoke("open_preferences", {}); break;
+    case "split-row": done(); splitPane("row"); break;
+    case "split-column": done(); splitPane("column"); break;
+    case "toggle-sidebar": done(); toggleSidebar(); break;
+    case "toggle-panel": done(); setPanel(!panel.open); break;
   }
 });
 

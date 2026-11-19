@@ -153,7 +153,16 @@ pub(crate) fn show_preferences(app: &AppHandle, tab: Option<&str>) -> tauri::Res
             ..Default::default()
         })
         .center()
-        .build()?;
+        .build()?
+        .on_window_event({
+            let app = app.clone();
+            // Closed while recording a shortcut: the menu gets its keys back.
+            move |e| {
+                if matches!(e, tauri::WindowEvent::Destroyed) && MENU_KEYS_OFF.load(std::sync::atomic::Ordering::SeqCst) {
+                    let _ = menu_shortcuts(app.clone(), true);
+                }
+            }
+        });
     Ok(())
 }
 
@@ -219,6 +228,25 @@ fn show_about(app: &AppHandle, view: Option<&str>) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Off while Settings › Keys records a shortcut: the menu's keys would act
+/// (⌘Q quits) before Settings sees them.
+static MENU_KEYS_OFF: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Settings › Keys: the menu without its shortcuts while one is recorded, and back.
+#[tauri::command]
+fn menu_shortcuts(app: AppHandle, on: bool) -> Result<(), String> {
+    MENU_KEYS_OFF.store(!on, std::sync::atomic::Ordering::SeqCst);
+    let menu = if on {
+        build_menu(&app)
+    } else {
+        // Nothing with a key (not even ⌘H, ⌘M, ⌘W or ⌘Q) while recording.
+        let quit = MenuItem::with_id(&app, "quit", i18n::t("Quit Paw"), true, None::<&str>).map_err(|e| e.to_string())?;
+        Submenu::with_items(&app, "Paw", true, &[&quit]).and_then(|paw| Menu::with_items(&app, &[&paw]))
+    }
+    .map_err(|e| e.to_string())?;
+    app.set_menu(menu).map(|_| ()).map_err(|e| e.to_string())
+}
+
 fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let menu = Menu::default(app)?;
     // The first submenu on macOS is the application menu ("Paw").
@@ -227,7 +255,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         let about = MenuItem::with_id(app, "about", i18n::t("About Paw"), true, None::<&str>)?;
         app_menu.remove_at(0)?;
         app_menu.insert(&about, 0)?;
-        let settings = MenuItem::with_id(app, "preferences", i18n::t("Settings…"), true, Some("CmdOrCtrl+,"))?;
+        let settings = keyed_item(app, "preferences", "settings", i18n::t("Settings…"), "Cmd+,")?;
         app_menu.insert(&PredefinedMenuItem::separator(app)?, 1)?;
         app_menu.insert(&settings, 2)?;
         // Quits the window only: the agents keep running in the daemon.
@@ -235,15 +263,16 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         if n > 0 {
             app_menu.remove_at(n - 1)?;
         }
-        app_menu.append(&MenuItem::with_id(app, "quit", i18n::t("Quit Paw"), true, Some("CmdOrCtrl+Q"))?)?;
+        let quit_key = (!MENU_KEYS_OFF.load(std::sync::atomic::Ordering::SeqCst)).then_some("CmdOrCtrl+Q");
+        app_menu.append(&MenuItem::with_id(app, "quit", i18n::t("Quit Paw"), true, quit_key)?)?;
     }
     // View: the splits (⌘D, ⌘⇧D, like iTerm2) and the two side panels (⌃⌘S,
     // the macOS convention for a sidebar; ⌃⌘M). In the menu, the keys work
     // wherever the focus is, an embedded terminal included, and can be found.
-    let split_row = MenuItem::with_id(app, "split-row", i18n::t("Split Side by Side"), true, Some("CmdOrCtrl+D"))?;
-    let split_col = MenuItem::with_id(app, "split-column", i18n::t("Split Stacked"), true, Some("CmdOrCtrl+Shift+D"))?;
-    let toggle = MenuItem::with_id(app, "toggle-sidebar", i18n::t("Toggle Sidebar"), true, Some("Ctrl+Cmd+S"))?;
-    let panel = MenuItem::with_id(app, "toggle-panel", i18n::t("Toggle Right Panel"), true, Some("Ctrl+Cmd+M"))?;
+    let split_row = keyed_item(app, "split-row", "split-row", i18n::t("Split Side by Side"), "Cmd+D")?;
+    let split_col = keyed_item(app, "split-column", "split-column", i18n::t("Split Stacked"), "Shift+Cmd+D")?;
+    let toggle = keyed_item(app, "toggle-sidebar", "toggle-sidebar", i18n::t("Toggle Sidebar"), "Ctrl+Cmd+S")?;
+    let panel = keyed_item(app, "toggle-panel", "toggle-panel", i18n::t("Toggle Right Panel"), "Ctrl+Cmd+M")?;
     let view = menu
         .items()?
         .into_iter()
@@ -259,6 +288,28 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         None => menu.append(&Submenu::with_items(app, "View", true, &[&split_row, &split_col, &sep()?, &toggle, &panel])?)?,
     }
     Ok(menu)
+}
+
+/// The shortcuts set in Settings › Keys (`keys` in settings.json).
+fn menu_keys() -> serde_json::Value {
+    paths::home()
+        .and_then(|h| std::fs::read_to_string(h.join("settings.json")).ok())
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|v| v.get("keys").cloned())
+        .unwrap_or(serde_json::Value::Null)
+}
+
+/// A menu item with its shortcut: the one set in Settings › Keys for `action`
+/// (none if you removed it), else `default`. A key the menu can't take falls
+/// back to the default.
+fn keyed_item(app: &AppHandle, id: &str, action: &str, text: String, default: &str) -> tauri::Result<MenuItem<tauri::Wry>> {
+    let mine = menu_keys().get(action).and_then(|k| k.as_array().cloned());
+    let key = match &mine {
+        _ if MENU_KEYS_OFF.load(std::sync::atomic::Ordering::SeqCst) => None,
+        Some(list) => list.first().and_then(|k| k.as_str()).map(str::to_string),
+        None => Some(default.to_string()),
+    };
+    MenuItem::with_id(app, id, &text, true, key.as_deref()).or_else(|_| MenuItem::with_id(app, id, &text, true, Some(default)))
 }
 
 #[cfg(test)]
@@ -353,13 +404,14 @@ fn main() {
             }
             // First start after the rename: bring Hive's settings along.
             paths::move_to_paw_home(app.handle());
-            // Another language in Settings: the app menu follows.
+            // Another language or other shortcuts in Settings: the app menu follows.
             {
                 use tauri::Listener;
                 let handle = app.handle().clone();
-                let shown = std::sync::Mutex::new(i18n::lang());
+                // The language, and the shortcuts (Settings › Keys).
+                let shown = std::sync::Mutex::new((i18n::lang(), menu_keys().to_string()));
                 app.listen_any("settings:changed", move |_| {
-                    let now = i18n::lang();
+                    let now = (i18n::lang(), menu_keys().to_string());
                     let mut was = shown.lock().unwrap();
                     if *was != now {
                         *was = now;
@@ -450,6 +502,7 @@ fn main() {
             sessions::load_session,
             sessions::delete_session,
             attachments::describe_attachment,
+            menu_shortcuts,
             specs::specs_list,
             specs::specs_import,
             specs::specs_save,

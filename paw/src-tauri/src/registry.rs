@@ -271,6 +271,10 @@ pub struct Settings {
     /// Paw Agent's sandbox for new tabs and factories (Settings › Sandbox).
     #[serde(default)]
     pub sandbox: crate::paw_agent::sandbox::Policy,
+    /// Shortcuts you changed (Settings › Keys): action id -> keys like
+    /// "Cmd+Shift+D" (ui/keys.js lists the actions and their defaults).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub keys: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 /// One of Paw Agent's providers, as the scan found it.

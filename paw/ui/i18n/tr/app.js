@@ -71,7 +71,6 @@ I18N.add("tr", {
   "start a run of a factory in this tab's folder, with the task": "bu sekmenin klasöründe görevle bir fabrika çalıştırması başlat",
   "list stored sessions, open and closed; click one to reopen it in a new tab": "kayıtlı oturumları listele, açık ve kapalı; yeni sekmede yeniden açmak için tıklayın",
   "tokens, queries, plans and time per model: today, this week, this month": "model başına token, sorgu, plan ve süre: bugün, bu hafta, bu ay",
-  "clear the screen (⌘K)": "ekranı temizle (⌘K)",
   "open this tab's folder: its conversation, files, scripts and command log": "bu sekmenin klasörünü aç: konuşması, dosyaları, betikleri ve komut günlüğü",
   "the plugins installed and their commands (Settings › Plugins adds more)": "kurulu eklentiler ve komutları (Ayarlar › Eklentiler’den daha fazlası eklenir)",
   "Plugins": "Eklentiler",

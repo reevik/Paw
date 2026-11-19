@@ -71,7 +71,6 @@ I18N.add("de", {
   "start a run of a factory in this tab's folder, with the task": "einen Lauf einer Fabrik im Ordner dieses Tabs starten, mit der Aufgabe",
   "list stored sessions, open and closed; click one to reopen it in a new tab": "gespeicherte Sitzungen auflisten, offene und geschlossene; zum erneuten Öffnen in einem neuen Tab anklicken",
   "tokens, queries, plans and time per model: today, this week, this month": "Tokens, Anfragen, Pläne und Zeit pro Modell: heute, diese Woche, diesen Monat",
-  "clear the screen (⌘K)": "Bildschirm leeren (⌘K)",
   "open this tab's folder: its conversation, files, scripts and command log": "Ordner dieses Tabs öffnen: Unterhaltung, Dateien, Skripte und Befehlsprotokoll",
   "the plugins installed and their commands (Settings › Plugins adds more)": "installierte Plugins und ihre Befehle (Einstellungen › Plugins fügt weitere hinzu)",
   "Plugins": "Plugins",

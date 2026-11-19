@@ -1389,7 +1389,8 @@ $("ap-import").onclick = async () => {
   renderDetail();
   let tab = location.hash.slice(1);
   if (!tab) { try { tab = localStorage.getItem("paw.prefsTab"); } catch {} }
-  selectTab(["general", "appearance", "agents", "about"].includes(tab) ? tab : "agents");
+  renderKeys();
+  selectTab(["general", "appearance", "agents", "sandbox", "keys", "plugins", "about"].includes(tab) ? tab : "agents");
 })();
 
 document.addEventListener("keydown", (e) => {
@@ -1557,3 +1558,113 @@ $("pl-source").addEventListener("input", (e) => {
 $("pl-reload").onclick = () => loadPluginLists();
 document.querySelector('#ptabs button[data-tab="plugins"]').addEventListener("click", () => { if (!plState.catalog && !plState.loading) loadPluginLists(); });
 invoke("about_info").then((i) => { plState.appVersion = i.version; }).catch(() => {});
+
+// ---------- keys (keys.js lists the actions) ----------
+// Click a shortcut, press the new keys: taken ones are turned down with what
+// uses them. Saved in settings.keys only where they differ from the defaults.
+let keyRec = null;      // the action being recorded
+let keyNote = null;     // { id, text, bad } under that action's row
+
+/** Start (an action id) or stop (null) recording; the menu's own keys are off meanwhile. */
+function recordKey(id) {
+  const was = keyRec;
+  keyRec = id;
+  if (!was !== !id) invoke("menu_shortcuts", { on: !id }).catch(() => {});
+}
+window.addEventListener("blur", () => { if (keyRec) { recordKey(null); renderKeys(); } });
+window.addEventListener("pagehide", () => { if (keyRec) recordKey(null); });
+
+function setKeys(id, list) {
+  const def = KEY_ACTIONS.find((a) => a.id === id)?.keys ?? [];
+  settings.keys ??= {};
+  if (list.length === def.length && list.every((k, i) => k === def[i])) delete settings.keys[id];
+  else settings.keys[id] = list;
+  save();
+}
+
+function renderKeys() {
+  const box = $("keys-list");
+  if (!box || !settings) return;
+  const chip = (k) => `<kbd class="kb">${esc(keyLabel(k))}</kbd>`;
+  const groups = KEY_GROUPS.map((g) => {
+    const rows = KEY_ACTIONS.filter((a) => a.group === g).map((a) => {
+      const keys = keysOf(settings, a.id);
+      const changed = Array.isArray(settings.keys?.[a.id]);
+      const rec = keyRec === a.id;
+      const note = keyNote?.id === a.id ? `<div class="key-note${keyNote.bad ? " bad" : ""}">${esc(keyNote.text)}</div>` : "";
+      return `<div class="key-row${rec ? " rec" : ""}" data-key-action="${esc(a.id)}">
+        <span class="key-name">${esc(a.label())}</span>
+        <button type="button" class="key-set" data-key-set="${esc(a.id)}" title="${esc(tx("Click, then press the new keys"))}">${rec ? `<span class="key-wait">${esc(tx("Press the keys…"))}</span>` : keys.length ? keys.map(chip).join("") : `<span class="key-none">${esc(tx("None"))}</span>`}</button>
+        <button type="button" class="icon-btn key-reset${changed ? "" : " invisible"}" data-key-reset="${esc(a.id)}" title="${esc(tx("Back to the default ({keys})", { keys: a.keys.map(keyLabel).join(", ") }))}">↺</button>
+        ${note}
+      </div>`;
+    }).join("");
+    return `<h3 class="keys-h">${esc(keyGroupLabel(g))}</h3><div class="keys-group">${rows}</div>`;
+  }).join("");
+  const fixed = `<h3 class="keys-h">${esc(tx("Fixed"))}</h3><div class="keys-group">${KEY_FIXED.map((f) =>
+    `<div class="key-row fixed"><span class="key-name">${esc(f.label())}</span><span class="key-set">${f.show ? `<kbd class="kb">${esc(f.show)}</kbd>` : f.keys.map(chip).join("")}</span><span></span></div>`).join("")}</div>`;
+  box.innerHTML = groups + fixed;
+}
+
+$("keys-list").addEventListener("click", (e) => {
+  const set = e.target.closest("[data-key-set]");
+  if (set) {
+    recordKey(keyRec === set.dataset.keySet ? null : set.dataset.keySet);
+    keyNote = null;
+    renderKeys();
+    return;
+  }
+  const reset = e.target.closest("[data-key-reset]");
+  if (reset) {
+    const id = reset.dataset.keyReset;
+    const def = KEY_ACTIONS.find((a) => a.id === id)?.keys ?? [];
+    // Its defaults may have been given to another action since.
+    const taken = def.map((k) => [k, keyConflict(settings, k, id)]).find(([, by]) => by);
+    if (taken) { keyNote = { id, text: tx("Its default {key} is used by “{action}” now. Change that one first.", { key: keyLabel(taken[0]), action: taken[1] }), bad: true }; renderKeys(); return; }
+    setKeys(id, def);
+    recordKey(null); keyNote = null;
+    renderKeys();
+  }
+});
+
+// While recording, the keys go to the shortcut (before ⌘W and the like).
+document.addEventListener("keydown", (e) => {
+  if (!keyRec) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  const id = keyRec;
+  const plain = !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey;
+  if (plain && e.key === "Escape") { recordKey(null); renderKeys(); return; }
+  if (plain && (e.key === "Backspace" || e.key === "Delete")) {
+    setKeys(id, []);
+    recordKey(null);
+    keyNote = { id, text: tx("No shortcut now."), bad: false };
+    renderKeys();
+    return;
+  }
+  const combo = keyCombo(e);
+  if (!combo) return; // a modifier alone: wait for the key
+  const problem = keyProblem(combo);
+  const by = problem ? null : keyConflict(settings, combo, id);
+  if (problem || by) {
+    // Turned down: the old keys stay, and you can try another.
+    keyNote = { id, text: problem ?? (by === KEY_MACOS ? tx("{key} belongs to macOS.", { key: keyLabel(combo) }) : tx("{key} is already used by “{action}”.", { key: keyLabel(combo), action: by })), bad: true };
+    renderKeys();
+    return;
+  }
+  setKeys(id, [combo]);
+  recordKey(null);
+  keyNote = { id, text: tx("Now {key}.", { key: keyLabel(combo) }), bad: false };
+  renderKeys();
+}, true);
+
+$("keys-reset-all").addEventListener("click", () => {
+  if (!settings.keys || !Object.keys(settings.keys).length) return;
+  if (!confirm(tx("Put every shortcut back to its default?"))) return;
+  settings.keys = {};
+  recordKey(null); keyNote = null;
+  save();
+  renderKeys();
+});
+// Leaving the tab stops recording.
+document.querySelectorAll("#ptabs button").forEach((b) => b.addEventListener("click", () => { if (keyRec) { recordKey(null); renderKeys(); } }));

@@ -386,10 +386,9 @@ function renderFactoryView(S, host) {
   $("task-split")?.classList.remove("hidden");
   applyBoardSizes(host);
   if (host.dataset.dragging) return;
-  // Typing an answer or an approval: don't redraw it under the cursor.
-  if (host.querySelector("[data-fact-in]:focus")) return;
   if (!factoryState.loaded) {
     if (!factoryState.loading) loadFactories();
+    host.dataset.shown = "";
     host.innerHTML = `<div class="tk-empty"><span class="spin-ch">${SPIN[spinFrame % SPIN.length]}</span> ${tx("Reading the factory…")}</div>`;
     return;
   }
@@ -431,8 +430,13 @@ function renderFactoryView(S, host) {
     const graph = `<div class="fa-graph-wrap"><div class="tk-graph fa-graph"><div class="fa-sizer"><div class="fa-zoom${loop}" data-zoom="${z}" style="transform: scale(${z})">${graphHtml(plan)}</div></div></div>${zoomBarHtml(S)}</div>`;
     body = `<div class="tk-body">${graph}${vsplit}<aside class="tk-side">${factorySideHtml(S, plan, f)}</aside></div>`;
   }
-  // Not under the user's typing; keep where the graph was scrolled.
-  if (host.contains(document.activeElement) && document.activeElement.matches("input, textarea")) return;
+  // Not under the user's typing (an answer, an approval) while the same run and
+  // node are shown; another tab, run or node is drawn even if a box kept focus
+  // (a click on the sidebar or the run picker doesn't always move it).
+  const shown = ["factory", S.sid, S.factory.id, S.factory.run ?? "", plan?.selected ?? ""].join("|");
+  if (host.dataset.shown === shown && host.contains(document.activeElement) && document.activeElement.matches("input, textarea")) return;
+  host.dataset.shown = shown;
+  // Keep where the graph was scrolled.
   const old = host.querySelector(".fa-graph");
   const scroll = old ? [old.scrollLeft, old.scrollTop] : null;
   const sideScroll = host.querySelector(".tk-side")?.scrollTop ?? 0;

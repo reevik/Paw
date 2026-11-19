@@ -583,16 +583,19 @@ function renderTaskView() {
   const t = S?.task;
   host.classList.toggle("hidden", !t);
   renderTaskLower(S);
-  if (!t) { host.innerHTML = ""; $("task-split")?.classList.add("hidden"); return; }
+  if (!t) { host.innerHTML = ""; host.dataset.shown = ""; $("task-split")?.classList.add("hidden"); return; }
   // Sizes the user dragged (the dividers): the board's height, the details' width.
   $("task-split")?.classList.toggle("hidden", !t);
   applyBoardSizes(host);
   if (host.dataset.dragging) return; // a divider is being dragged
-  // Don't rebuild under the user's typing (the step editor is part of it).
-  if (host.contains(document.activeElement) && document.activeElement.matches("input, textarea, select")) {
+  // Don't rebuild under the user's typing (the step editor is part of it), as
+  // long as it's this plan's board: another tab's is drawn even if a box kept focus.
+  const shown = ["plan", S.sid].join("|");
+  if (host.dataset.shown === shown && host.contains(document.activeElement) && document.activeElement.matches("input, textarea, select")) {
     updateTaskTimes(host, t);
     return;
   }
+  host.dataset.shown = shown;
   const scroll = host.querySelector(".tk-graph")?.scrollLeft ?? 0;
   const canRun = t.steps.length && ["draft", "stopped", "failed"].includes(t.state);
   const buttons = [

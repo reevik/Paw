@@ -858,7 +858,7 @@ function graphHtml(t) {
     const v = stepView(s);
     const time = stepTime(s);
     return `<button class="tk-node v-${v}${t.selected === s.id ? " sel" : ""}" data-step="${esc(s.id)}" title="${esc(s.title)}">
-      <span class="tk-node-title">${esc(s.title)}</span>
+      ${s.sandbox ? `<span class="tk-sb${s.sandbox === "on" ? " on" : ""}" title="${esc(s.sandbox === "on" ? tx("Runs in the factory's sandbox") : s.sandbox === "wait" ? tx("Its check command runs without a sandbox") : tx("Runs without a sandbox"))}"></span>` : ""}<span class="tk-node-title">${esc(s.title)}</span>
       <span class="tk-node-sub"><span class="tk-dot v-${v}"></span>${esc(stepModelName(s))} · ${esc(STEP_STATE_TEXT[v] ?? v)}${time && v !== "waiting" ? ` · <span data-time="${esc(s.id)}">${esc(time)}</span>` : ""}${s.edits ? "" : ` · <span class="tk-ro">${tx("reads")}</span>`}${s.badge ? ` · <span class="tk-round">${esc(s.badge)}</span>` : ""}</span>
     </button>`;
   }).join("")}</div>`).join("");

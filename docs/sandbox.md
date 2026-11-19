@@ -34,7 +34,7 @@ sandbox:
   network: [git, gh]        # only these may use the network (true / false for all)
 ```
 
-The section turns the sandbox on for the factory's nodes (`enabled: false` turns it off), over Settings' policy. Without it, Settings › Sandbox decides. The factory view says which sandbox its runs use.
+The section turns the sandbox on for the factory's nodes (`enabled: false` turns it off), over Settings' policy. Without it, Settings › Sandbox decides. The factory view says which sandbox its runs use, and each box on its diagram shows a shield when that node runs in the sandbox, or a crossed-out one when it doesn't. A `wait` node's check and a `watch` trigger's command are plain commands and run without the sandbox; the factory view says so. (The sandbox button under a factory's prompt is for the Paw Agent of that tab, which changes the factory's file.)
 
 ## In a project
 

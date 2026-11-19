@@ -450,6 +450,8 @@ function factoryPlan(S) {
     if (!n.loop) continue;
     for (const id of loopRegion(def.nodes, n.loop.back_to, n.id)) loopOf.set(id, n);
   }
+  // Whether its agent nodes run in a sandbox: the file's section over Settings', else Settings'.
+  const boxed = !!(def.sandbox ? factorySandbox(def.sandbox) : settings.sandbox ?? {}).enabled;
   const steps = def.nodes.map((n) => {
     const r = run?.nodes.find((x) => x.id === n.id);
     const lp = loopOf.get(n.id);
@@ -466,6 +468,8 @@ function factoryPlan(S) {
       edits: n.wait ? true : n.edits !== false,
       startedAt: r?.started_at ?? null,
       endedAt: r?.ended_at ?? null,
+      // A wait node's check is a plain command: never in the sandbox.
+      sandbox: n.wait ? "wait" : boxed ? "on" : "off",
     };
   });
   return { def, run, latest, steps, selected: S.factory.selected };
@@ -1173,6 +1177,12 @@ function factorySummaryHtml(S, plan, f) {
   // Its nodes' sandbox: the file's section over Settings', or Settings' as it is.
   const sb = def.sandbox ? factorySandbox(def.sandbox) : settings.sandbox;
   parts.push(`<div class="tk-dim">${sb?.enabled ? esc(sandboxSummary(sb)) : tx("No sandbox: its nodes run like a tab without one.")}</div>`);
+  // What runs outside it even so: wait nodes' and the watch trigger's commands.
+  const waits = def.nodes.filter((n) => n.wait).length, watch = !!def.trigger?.watch;
+  if (sb?.enabled && (waits || watch)) {
+    parts.push(`<div class="tk-dim fa-unboxed">${waits && watch ? tx("Its wait nodes' and its watch trigger's commands run without a sandbox.")
+      : waits ? tx("Its wait nodes' commands run without a sandbox.") : tx("Its watch trigger's command runs without a sandbox.")}</div>`);
+  }
   // The trigger as the file has it now (the run may be of an older version).
   parts.push(triggerHtml(S.factory.id, f?.factory ?? def));
   if (run && f?.factory && JSON.stringify(f.factory) !== JSON.stringify(def)) {

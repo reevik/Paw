@@ -286,4 +286,12 @@ I18N.add("de", {
   "This factory's nodes run without a sandbox.": "Die Knoten dieser Fabrik laufen ohne Sandbox.",
   "Set by the factory: the sandbox section in its file, else Settings › Sandbox.": "Von der Fabrik festgelegt: der Abschnitt sandbox in ihrer Datei, sonst Einstellungen › Sandbox.",
   "Open the factory": "Fabrik öffnen",
+  // what runs in the factory's sandbox
+  "The Paw Agent of this tab, which changes the factory's file (its nodes' sandbox is on the boxes and in the summary):": "Der Paw Agent dieses Tabs, der die Datei der Fabrik ändert (die Sandbox ihrer Knoten steht an den Kästen und in der Übersicht):",
+  "Its wait nodes' and its watch trigger's commands run without a sandbox.": "Die Befehle ihrer Warte-Knoten und ihres Watch-Auslösers laufen ohne Sandbox.",
+  "Its wait nodes' commands run without a sandbox.": "Die Befehle ihrer Warte-Knoten laufen ohne Sandbox.",
+  "Its watch trigger's command runs without a sandbox.": "Der Befehl ihres Watch-Auslösers läuft ohne Sandbox.",
+  "Runs in the factory's sandbox": "Läuft in der Sandbox der Fabrik",
+  "Its check command runs without a sandbox": "Sein Prüfbefehl läuft ohne Sandbox",
+  "Runs without a sandbox": "Läuft ohne Sandbox",
 });

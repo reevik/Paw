@@ -517,6 +517,8 @@ function renderSandboxPill(S) {
   const changed = S.sandboxStarted && !S.sandboxMode && !!settings.sandbox?.enabled !== !!p.enabled;
   b.title = (p.enabled ? sandboxSummary(p) : tx("Paw Agent runs without a sandbox in this tab. Click to turn it on.")) +
     (changed ? "\n" + tx("Settings › Sandbox has changed since this tab started: new tabs get the new setting, this one keeps its own.") : "");
+  // A factory's tab: this is the agent that changes its file, not its nodes.
+  if (S.factory) b.title = tx("The Paw Agent of this tab, which changes the factory's file (its nodes' sandbox is on the boxes and in the summary):") + "\n" + b.title;
 }
 
 /** The sandbox this tab's agent runs with (it keeps it when Settings change),

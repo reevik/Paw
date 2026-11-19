@@ -286,4 +286,12 @@ I18N.add("tr", {
   "This factory's nodes run without a sandbox.": "Bu fabrikanın düğümleri korumalı alan olmadan çalışır.",
   "Set by the factory: the sandbox section in its file, else Settings › Sandbox.": "Fabrika belirler: dosyasındaki sandbox bölümü, yoksa Ayarlar › Korumalı Alan.",
   "Open the factory": "Fabrikayı aç",
+  // what runs in the factory's sandbox
+  "The Paw Agent of this tab, which changes the factory's file (its nodes' sandbox is on the boxes and in the summary):": "Bu sekmenin, fabrikanın dosyasını değiştiren Paw Agent'ı (düğümlerinin korumalı alanı kutularda ve özette):",
+  "Its wait nodes' and its watch trigger's commands run without a sandbox.": "Bekleme düğümlerinin ve watch tetikleyicisinin komutları korumalı alan olmadan çalışır.",
+  "Its wait nodes' commands run without a sandbox.": "Bekleme düğümlerinin komutları korumalı alan olmadan çalışır.",
+  "Its watch trigger's command runs without a sandbox.": "Watch tetikleyicisinin komutu korumalı alan olmadan çalışır.",
+  "Runs in the factory's sandbox": "Fabrikanın korumalı alanında çalışır",
+  "Its check command runs without a sandbox": "Denetim komutu korumalı alan olmadan çalışır",
+  "Runs without a sandbox": "Korumalı alan olmadan çalışır",
 });

@@ -5842,12 +5842,120 @@ function runAction(id) {
     case "sandbox-toggle": if (!S || S.nodeOf) return false; toggleTabSandbox(S); return true;
     case "factory-run": case "factory-stop": case "factory-lock": case "factory-reset-layout": case "factory-edit": case "factory-delete":
       return factoryMenu(S, id);
+    case "check-updates": checkForUpdates({ manual: true }); return true;
     case "help-readme": invoke("open_url", { url: "https://github.com/reevik/Paw#readme" }).catch(() => {}); return true;
     case "help-factories": invoke("open_url", { url: "https://github.com/reevik/Paw/blob/main/docs/factories.md" }).catch(() => {}); return true;
     case "help-sandbox": invoke("open_url", { url: "https://github.com/reevik/Paw/blob/main/docs/sandbox.md" }).catch(() => {}); return true;
     case "help-issue": invoke("open_url", { url: "https://github.com/reevik/Paw/issues/new" }).catch(() => {}); return true;
   }
   return false;
+}
+
+// ---------- updates ----------
+// Paw looks at its latest release on GitHub when it starts and every few
+// hours, and says when there's a newer one: Download (the DMG), Skip This
+// Version (Settings remembers it), or Remind Me Later (a day later).
+// Paw › Check for Updates… looks now and says so either way.
+const UPDATE_REPO = "reevik/Paw";
+const UPDATE_EVERY = 6 * 3600e3, UPDATE_LATER = 24 * 3600e3;
+let updateShown = false;
+
+/** Is version a newer than b? ("0.12.0" > "0.11.1"; pre-releases aren't offered.) */
+function newerVersion(a, b) {
+  const p = (v) => String(v).replace(/^v/, "").split("-")[0].split(".").map((n) => parseInt(n, 10) || 0);
+  const x = p(a), y = p(b);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) > (y[i] ?? 0);
+  return false;
+}
+
+const laterOf = () => { try { return JSON.parse(localStorage.getItem("paw.update.later") || "null"); } catch { return null; } };
+
+async function checkForUpdates({ manual = false } = {}) {
+  if (!manual && settings.general?.check_updates === false) return;
+  if (updateShown) return;
+  try { localStorage.setItem("paw.update.checked", String(Date.now())); } catch {}
+  const mine = (await invoke("about_info").catch(() => null))?.version;
+  let rel;
+  try {
+    const r = await fetch(`https://api.github.com/repos/${UPDATE_REPO}/releases/latest`, { headers: { Accept: "application/vnd.github+json" } });
+    if (!r.ok) throw new Error(r.status === 403 || r.status === 429 ? tx("GitHub asks to wait a little (too many checks)") : `HTTP ${r.status}`);
+    rel = await r.json();
+  } catch (e) {
+    if (manual) showUpdate({ error: e.message ?? String(e) });
+    return;
+  }
+  const latest = String(rel.tag_name ?? "").replace(/^v/, "");
+  if (!mine || !latest || !newerVersion(latest, mine)) {
+    if (manual) showUpdate({ upToDate: mine });
+    return;
+  }
+  if (!manual) {
+    if (settings.general?.skip_version === latest) return;
+    const later = laterOf();
+    if (later?.version === latest && Date.now() < later.until) return;
+  }
+  showUpdate({ rel, latest, mine });
+}
+
+/** The update window: a newer release (with Download, Skip, Later), or a manual check's answer. */
+function showUpdate({ rel, latest, mine, upToDate, error }) {
+  document.querySelector(".upd-overlay")?.remove();
+  const box = document.createElement("div");
+  box.className = "upd-overlay";
+  let body, buttons;
+  if (rel) {
+    const notes = String(rel.body ?? "").trim();
+    body = `<div class="upd-title">${tx("Paw {version} is available", { version: esc(latest) })}</div>
+      <div class="upd-sub">${tx("You have {version}. Download it, open the DMG and drag Paw to Applications; your tabs and settings stay.", { version: esc(mine) })}</div>
+      ${notes ? `<div class="upd-notes tk-md">${renderMarkdown(notes.length > 4000 ? notes.slice(0, 4000) + "…" : notes)}</div>` : ""}
+      <a class="upd-link" data-upd="notes" href="#">${tx("The release on GitHub")}</a>`;
+    buttons = `<button class="tk-btn" data-upd="skip">${tx("Skip This Version")}</button><span class="grow"></span>
+      <button class="tk-btn" data-upd="later">${tx("Remind Me Later")}</button><button class="tk-btn primary" data-upd="download">${tx("Download")}</button>`;
+  } else {
+    body = error
+      ? `<div class="upd-title">${tx("Paw couldn't check for updates")}</div><div class="upd-sub">${esc(error)}</div>`
+      : `<div class="upd-title">${tx("You're up to date")}</div><div class="upd-sub">${tx("Paw {version} is the newest version.", { version: esc(upToDate ?? "") })}</div>`;
+    buttons = `<span class="grow"></span><button class="tk-btn primary" data-upd="ok">${tx("OK")}</button>`;
+  }
+  box.innerHTML = `<div class="upd-card" role="dialog" aria-modal="true"><img class="upd-icon" src="icon.png" alt="">
+    <div class="upd-main">${body}<div class="upd-row">${buttons}</div></div></div>`;
+  const close = () => { box.remove(); updateShown = false; document.removeEventListener("keydown", onKey, true); $("input")?.focus(); };
+  const onKey = (e) => {
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); if (rel) remindLater(); close(); }
+  };
+  const remindLater = () => { try { localStorage.setItem("paw.update.later", JSON.stringify({ version: latest, until: Date.now() + UPDATE_LATER })); } catch {} };
+  box.addEventListener("click", async (e) => {
+    const b = e.target.closest("[data-upd]");
+    if (!b) return;
+    e.preventDefault();
+    switch (b.dataset.upd) {
+      case "download": {
+        const dmg = (rel.assets ?? []).find((a) => /\.dmg$/i.test(a.name));
+        invoke("open_url", { url: dmg?.browser_download_url ?? rel.html_url }).catch(() => {});
+        remindLater();
+        break;
+      }
+      case "notes": invoke("open_url", { url: rel.html_url }).catch(() => {}); return;
+      case "skip":
+        settings.general.skip_version = latest;
+        await invoke("save_settings", { settings }).catch(() => {});
+        break;
+      case "later": remindLater(); break;
+    }
+    close();
+  });
+  document.addEventListener("keydown", onKey, true);
+  document.body.appendChild(box);
+  updateShown = true;
+  box.querySelector(".upd-row .primary")?.focus();
+}
+
+/** When it starts (a little later, not in its way) and every few hours after. */
+function scheduleUpdateChecks() {
+  let last = 0;
+  try { last = Number(localStorage.getItem("paw.update.checked")) || 0; } catch {}
+  const first = Math.max(15e3, last + UPDATE_EVERY - Date.now());
+  setTimeout(() => { checkForUpdates(); setInterval(() => checkForUpdates(), UPDATE_EVERY); }, Math.min(first, UPDATE_EVERY));
 }
 
 // ---------- which menu items apply ----------
@@ -5935,6 +6043,8 @@ function waitForDetections(timeoutMs) {
   detectionsReady = Object.keys(detections).length > 0;
   invoke("history_list").then((list) => { shellHistory = list; });
   invoke("shell_commands").then((list) => { shellCommands = new Set(list); for (const P of panes.values()) withPane(P, updateGlyph); });
+  // A newer Paw on GitHub? (Settings › General › Updates can turn this off.)
+  if (window.__TAURI_INTERNALS__) scheduleUpdateChecks();
 
   // Which daemon runs the agents (started now if it wasn't running).
   try {

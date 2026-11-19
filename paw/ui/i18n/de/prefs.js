@@ -336,4 +336,10 @@ I18N.add("de", {
   "Keys": "Tasten",
   "Click a shortcut, then press the keys you want for it. Esc cancels; ⌫ removes the shortcut. A key that's already in use is turned down.": "Klick auf einen Kurzbefehl und drück dann die Tasten, die du dafür willst. Esc bricht ab; ⌫ entfernt den Kurzbefehl. Tasten, die schon belegt sind, werden abgelehnt.",
   "{key} belongs to macOS.": "{key} gehört zu macOS.",
+  // updates
+  "Updates": "Updates",
+  "Check for new versions of Paw": "Nach neuen Versionen von Paw suchen",
+  "Paw looks on GitHub when it starts and every few hours, and asks you when there's a newer version. Paw › Check for Updates… looks now.": "Paw schaut beim Start und alle paar Stunden auf GitHub nach und fragt dich, wenn es eine neuere Version gibt. Paw › Nach Updates suchen… schaut sofort.",
+  "You skipped {version}.": "Du hast {version} übersprungen.",
+  "Offer it again": "Wieder anbieten",
 });

@@ -336,4 +336,10 @@ I18N.add("tr", {
   "Keys": "Tuşlar",
   "Click a shortcut, then press the keys you want for it. Esc cancels; ⌫ removes the shortcut. A key that's already in use is turned down.": "Bir kısayola tıklayın, sonra onun için istediğiniz tuşlara basın. Esc iptal eder; ⌫ kısayolu kaldırır. Zaten kullanılan bir tuş reddedilir.",
   "{key} belongs to macOS.": "{key} macOS'a ait.",
+  // updates
+  "Updates": "Güncellemeler",
+  "Check for new versions of Paw": "Paw'ın yeni sürümlerini denetle",
+  "Paw looks on GitHub when it starts and every few hours, and asks you when there's a newer version. Paw › Check for Updates… looks now.": "Paw açılırken ve birkaç saatte bir GitHub'a bakar, daha yeni bir sürüm olduğunda size sorar. Paw › Güncellemeleri Denetle… hemen bakar.",
+  "You skipped {version}.": "{version} sürümünü atladınız.",
+  "Offer it again": "Yeniden öner",
 });

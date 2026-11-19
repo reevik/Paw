@@ -68,6 +68,8 @@ function renderGeneral() {
   $("g-mode").value = settings.general.input_mode || "auto";
   $("g-approval").value = settings.general.approval || "edits";
   $("g-share-shell").checked = settings.general.share_shell !== false;
+  $("g-check-updates").checked = settings.general.check_updates !== false;
+  showSkipped();
   showHistoryCount();
   // Deprecated: CLI agents (CLI_AGENTS). Without them new tabs open the default model.
   if (CLI_AGENTS) {
@@ -86,6 +88,20 @@ if (CLI_AGENTS) $("g-agent").addEventListener("change", (e) => { settings.genera
 $("g-mode").addEventListener("change", (e) => { settings.general.input_mode = e.target.value; save(); });
 $("g-approval").addEventListener("change", (e) => { settings.general.approval = e.target.value; save(); });
 $("g-share-shell").addEventListener("change", (e) => { settings.general.share_shell = e.target.checked; save(); });
+$("g-check-updates").addEventListener("change", (e) => { settings.general.check_updates = e.target.checked; save(); });
+
+/** A version you skipped (in the update window): said, with a way to undo it. */
+function showSkipped() {
+  const hint = $("g-updates-hint");
+  hint.querySelector(".g-skipped")?.remove();
+  const v = settings.general.skip_version;
+  if (!v) return;
+  const el = document.createElement("span");
+  el.className = "g-skipped";
+  el.innerHTML = ` ${tx("You skipped {version}.", { version: v.replace(/[<&>]/g, "") })} <a href="#">${tx("Offer it again")}</a>`;
+  el.querySelector("a").onclick = (e) => { e.preventDefault(); settings.general.skip_version = ""; save(); showSkipped(); };
+  hint.appendChild(el);
+}
 
 // Shell history size
 async function showHistoryCount() {

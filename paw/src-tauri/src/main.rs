@@ -278,6 +278,8 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     // Paw: the shortcuts, right under Settings.
     if let Some(app_menu) = menu.items()?.first().and_then(|i| i.as_submenu().cloned()) {
         app_menu.insert(&item("settings-keys", "Keyboard Shortcuts…")?, 3)?;
+        // Right under About, where macOS apps have it.
+        app_menu.insert(&item("check-updates", "Check for Updates…")?, 1)?;
     }
     // File: tabs, plans, factories and attachments. (Its Close Window would
     // take ⌘W, which closes a tab in Paw; the window's red button closes it.)
@@ -438,7 +440,7 @@ const MENU_ACTIONS: &[&str] = &[
     "new-tab", "new-tab-with", "new-plan", "new-factory", "attach-files", "session-folder", "close-tab",
     "split-row", "split-column", "toggle-panel", "font-bigger", "font-smaller", "font-reset", "clear", "interrupt", "sandbox-toggle",
     "factory-run", "factory-stop", "factory-lock", "factory-reset-layout", "factory-edit", "factory-delete",
-    "next-tab", "prev-tab", "help-readme", "help-factories", "help-sandbox", "help-issue",
+    "next-tab", "prev-tab", "check-updates", "help-readme", "help-factories", "help-sandbox", "help-issue",
 ];
 
 /// The focused window, when it's another than the main one (Settings, About): closed.

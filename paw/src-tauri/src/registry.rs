@@ -109,6 +109,16 @@ pub struct General {
     /// The language Paw speaks, and Paw Agent answers in: "en" (default), "de" or "tr".
     #[serde(default = "default_language")]
     pub language: String,
+    /// Look for a newer Paw on GitHub now and then, and say when there is one.
+    #[serde(default = "default_true")]
+    pub check_updates: bool,
+    /// A release you chose to skip ("0.12.0"): not offered again, newer ones are.
+    #[serde(default)]
+    pub skip_version: String,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_language() -> String {
@@ -134,6 +144,8 @@ impl Default for General {
             max_waiting: default_max_waiting(),
             plugin_source: String::new(),
             language: default_language(),
+            check_updates: true,
+            skip_version: String::new(),
         }
     }
 }

@@ -495,4 +495,16 @@ I18N.add("tr", {
   "it isn't there": "orada değil",
   "✗ couldn't attach {path}: {why}": "✗ {path} eklenemedi: {why}",
   "Double-click to edit it in the prompt.": "İstem alanında düzenlemek için çift tıklayın.",
+  // updates
+  "GitHub asks to wait a little (too many checks)": "GitHub biraz beklemenizi istiyor (çok fazla denetim)",
+  "Paw {version} is available": "Paw {version} çıktı",
+  "You have {version}. Download it, open the DMG and drag Paw to Applications; your tabs and settings stay.": "Sizdeki sürüm {version}. İndirin, DMG'yi açın ve Paw'ı Uygulamalar'a sürükleyin; sekmeleriniz ve ayarlarınız kalır.",
+  "The release on GitHub": "GitHub'daki sürüm",
+  "Skip This Version": "Bu Sürümü Atla",
+  "Remind Me Later": "Daha Sonra Hatırlat",
+  "Download": "İndir",
+  "Paw couldn't check for updates": "Paw güncellemeleri denetleyemedi",
+  "You're up to date": "Güncelsiniz",
+  "Paw {version} is the newest version.": "Paw {version} en yeni sürüm.",
+  "OK": "Tamam",
 });

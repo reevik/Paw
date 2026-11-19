@@ -29,6 +29,7 @@ fn tr_in(lang: &str, en: &'static str) -> &'static str {
         "Split Stacked" => ("Untereinander teilen", "Alt Alta Böl"),
         "Open Paw" => ("Paw öffnen", "Paw'ı Aç"),
         "Keyboard Shortcuts…" => ("Tastaturkurzbefehle…", "Klavye Kısayolları…"),
+        "Check for Updates…" => ("Nach Updates suchen…", "Güncellemeleri Denetle…"),
         "File" => ("Ablage", "Dosya"),
         "Edit" => ("Bearbeiten", "Düzen"),
         "View" => ("Darstellung", "Görüntü"),

@@ -495,4 +495,16 @@ I18N.add("de", {
   "it isn't there": "sie ist nicht da",
   "✗ couldn't attach {path}: {why}": "✗ {path} konnte nicht angehängt werden: {why}",
   "Double-click to edit it in the prompt.": "Doppelklick, um ihn im Prompt zu bearbeiten.",
+  // updates
+  "GitHub asks to wait a little (too many checks)": "GitHub bittet, kurz zu warten (zu viele Abfragen)",
+  "Paw {version} is available": "Paw {version} ist verfügbar",
+  "You have {version}. Download it, open the DMG and drag Paw to Applications; your tabs and settings stay.": "Du hast {version}. Lade es herunter, öffne das DMG und zieh Paw in „Programme“; deine Tabs und Einstellungen bleiben.",
+  "The release on GitHub": "Die Version auf GitHub",
+  "Skip This Version": "Diese Version überspringen",
+  "Remind Me Later": "Später erinnern",
+  "Download": "Herunterladen",
+  "Paw couldn't check for updates": "Paw konnte nicht nach Updates suchen",
+  "You're up to date": "Du bist auf dem neuesten Stand",
+  "Paw {version} is the newest version.": "Paw {version} ist die neueste Version.",
+  "OK": "OK",
 });

@@ -634,6 +634,41 @@ pub fn set_parallel(id: &str, n: u32) -> Result<(), String> {
     std::fs::write(&path, new).map_err(|e| e.to_string())
 }
 
+/// Delete a factory: its file and its folder (runs, their files and the
+/// queue) go to the Trash, so they can be put back. The caller stops its runs
+/// and trigger first. Returns what was moved.
+pub fn delete(id: &str) -> Result<Vec<PathBuf>, String> {
+    if !valid_id(id) {
+        return Err(format!("There's no factory “{id}”."));
+    }
+    let d = crate::paths::home().map(|h| dir(&h)).ok_or("Paw can't find its folder (~/.paw).")?;
+    let files: Vec<PathBuf> = ["yaml", "yml"].iter().map(|e| d.join(format!("{id}.{e}"))).filter(|p| p.is_file()).collect();
+    if files.is_empty() {
+        return Err(format!("There's no factory “{id}”."));
+    }
+    let mut moved = vec![];
+    for p in files.into_iter().chain(Some(d.join(id)).filter(|p| p.is_dir())) {
+        to_trash(&p).map_err(|e| format!("Paw couldn't move {} to the Trash: {e}", p.display()))?;
+        moved.push(p);
+    }
+    Ok(moved)
+}
+
+/// Move a file or folder to the Trash (Finder's Put Back works).
+#[cfg(target_os = "macos")]
+fn to_trash(p: &Path) -> Result<(), String> {
+    use objc2_foundation::{NSFileManager, NSString, NSURL};
+    let url = NSURL::fileURLWithPath(&NSString::from_str(&p.to_string_lossy()));
+    NSFileManager::defaultManager()
+        .trashItemAtURL_resultingItemURL_error(&url, None)
+        .map_err(|e| e.localizedDescription().to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn to_trash(p: &Path) -> Result<(), String> {
+    if p.is_dir() { std::fs::remove_dir_all(p) } else { std::fs::remove_file(p) }.map_err(|e| e.to_string())
+}
+
 /// A factory by its id or its name (any case): its id and definition.
 pub fn find(dir: &Path, which: &str) -> Result<(String, Factory), String> {
     let all = load_all(dir);

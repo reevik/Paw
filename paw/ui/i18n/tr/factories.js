@@ -260,4 +260,12 @@ I18N.add("tr", {
   "What does this factory do?": "Bu fabrika ne yapıyor?",
   "Why did the last run fail?": "Son çalıştırma neden başarısız oldu?",
   "Run a task starts a run. Edit file opens the YAML if you'd rather write it yourself.": "Görev çalıştır bir çalıştırma başlatır. Kendiniz yazmayı tercih ederseniz Dosyayı düzenle YAML dosyasını açar.",
+  // deleting factories
+  "Open": "Aç",
+  "Delete factory…": "Fabrikayı sil…",
+  "Delete the factory “{name}”?": "“{name}” fabrikası silinsin mi?",
+  "Its run that's going stops. ": "Süren çalıştırması durdurulur. ",
+  "Its {n} runs that are going stop. ": "Süren {n} çalıştırması durdurulur. ",
+  "Its file and its run history go to the Trash, where you can put them back.": "Dosyası ve çalıştırma geçmişi Çöp Sepeti'ne gider; oradan geri alabilirsiniz.",
+  "— factory {name} deleted: its file and run history are in the Trash.": "— {name} fabrikası silindi: dosyası ve çalıştırma geçmişi Çöp Sepeti'nde.",
 });

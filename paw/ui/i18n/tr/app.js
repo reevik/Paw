@@ -475,4 +475,10 @@ I18N.add("tr", {
   "{program} is on the list now (Settings › Sandbox): ask Paw Agent to try again.": "{program} artık listede (Ayarlar › Korumalı Alan): Paw Agent'tan tekrar denemesini isteyin.",
   "{program} may run in this tab now: ask Paw Agent to try again.": "{program} artık bu sekmede çalışabilir: Paw Agent'tan tekrar denemesini isteyin.",
   "delete to the start of the line · the word before the cursor": "satır başına kadar sil · imleçten önceki sözcüğü sil",
+  // deleting factories
+  "delete a factory (asks first; it goes to the Trash)": "bir fabrikayı sil (önce sorar; Çöp Sepeti'ne gider)",
+  "Which factory? /factory delete <name>": "Hangi fabrika? /factory delete <ad>",
+  "No factory “{arg}”. /factories lists them.": "“{arg}” adında bir fabrika yok. /factories hepsini listeler.",
+  "open, make, run or delete a factory": "bir fabrika aç, oluştur, çalıştır ya da sil",
+  "delete a factory": "bir fabrikayı sil",
 });

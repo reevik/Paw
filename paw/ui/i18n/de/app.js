@@ -475,4 +475,10 @@ I18N.add("de", {
   "{program} is on the list now (Settings › Sandbox): ask Paw Agent to try again.": "{program} steht jetzt auf der Liste (Einstellungen › Sandbox): Bitte Paw Agent, es noch einmal zu versuchen.",
   "{program} may run in this tab now: ask Paw Agent to try again.": "{program} darf in diesem Tab jetzt laufen: Bitte Paw Agent, es noch einmal zu versuchen.",
   "delete to the start of the line · the word before the cursor": "bis zum Zeilenanfang löschen · das Wort vor dem Cursor",
+  // deleting factories
+  "delete a factory (asks first; it goes to the Trash)": "eine Fabrik löschen (fragt vorher; sie kommt in den Papierkorb)",
+  "Which factory? /factory delete <name>": "Welche Fabrik? /factory delete <name>",
+  "No factory “{arg}”. /factories lists them.": "Keine Fabrik „{arg}“. /factories listet sie auf.",
+  "open, make, run or delete a factory": "eine Fabrik öffnen, anlegen, ausführen oder löschen",
+  "delete a factory": "eine Fabrik löschen",
 });

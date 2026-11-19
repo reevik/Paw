@@ -428,6 +428,22 @@ impl Runner {
         }
     }
 
+    /// A factory being deleted: stop its runs (the newest first, so a queued
+    /// one doesn't start as an older one stops) and forget them.
+    pub fn forget(self: &Arc<Self>, factory: &str) {
+        let ids: Vec<String> = self.state.lock().unwrap().runs.iter().rev().filter(|r| r.factory == factory).map(|r| r.id.clone()).collect();
+        for id in &ids {
+            let _ = self.stop(id);
+        }
+        let mut st = self.state.lock().unwrap();
+        st.runs.retain(|r| r.factory != factory);
+        for id in &ids {
+            st.dirty.remove(id);
+        }
+        drop(st);
+        self.paused.lock().unwrap().remove(factory);
+    }
+
     fn is_paused(&self, factory: &str) -> bool {
         self.paused.lock().unwrap().contains(factory)
     }

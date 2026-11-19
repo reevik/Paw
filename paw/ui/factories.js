@@ -179,6 +179,56 @@ document.addEventListener("click", (e) => {
   if (row) openFactory(row.dataset.factory);
 });
 
+// Right-click a factory in the sidebar.
+document.addEventListener("contextmenu", (e) => {
+  const row = e.target.closest?.("#factories-body [data-factory]");
+  if (!row) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const id = row.dataset.factory;
+  contextMenu(e.clientX, e.clientY, [
+    { label: tx("Open"), run: () => openFactory(id) },
+    { label: isPinned("factories", id) ? tx("Unpin") : tx("Pin to the top"), run: () => togglePin("factories", id) },
+    "-",
+    { label: tx("Delete factory…"), run: () => deleteFactory(id) },
+  ]);
+}, true);
+
+/** Delete a factory, after asking: its runs stop, its trigger stops listening,
+ *  its file and run history go to the Trash, and its tabs close. */
+async function deleteFactory(id) {
+  if (!factoryState.loaded) await loadFactories();
+  const f = factoryById(id);
+  if (!f) return false;
+  const name = f.factory?.name || id;
+  const going = runsOf(id).filter((r) => r.state === "running").length;
+  const ask = tx("Delete the factory “{name}”?", { name }) + "\n\n" +
+    (going === 1 ? tx("Its run that's going stops. ") : going > 1 ? tx("Its {n} runs that are going stop. ", { n: going }) : "") +
+    tx("Its file and its run history go to the Trash, where you can put them back.");
+  if (!confirm(ask)) return false;
+  try {
+    await invoke("factory_delete", { factory: id });
+  } catch (e) {
+    const S = curS();
+    if (S) sys(S, `✗ ${e}`);
+    return false;
+  }
+  for (const [rid, r] of factoryState.runs) if (r.factory === id) factoryState.runs.delete(rid);
+  // Its tabs: the factory's own and its nodes'.
+  for (const S of [...sessions.values()]) if (S.factory?.id === id || S.nodeOf?.factory === id) await closeSession(S.sid);
+  // What was allowed for it, and its pin: a new factory may get the same id.
+  const rules = settings.allow_rules ?? [];
+  if (rules.some((r) => r.agent === `factory:${id}`)) {
+    settings.allow_rules = rules.filter((r) => r.agent !== `factory:${id}`);
+    await invoke("save_settings", { settings }).catch(() => {});
+  }
+  if (isPinned("factories", id)) togglePin("factories", id);
+  await loadFactories();
+  const S = curS();
+  if (S && !S.factory) sys(S, tx("— factory {name} deleted: its file and run history are in the Trash.", { name }));
+  return true;
+}
+
 /** + in the sidebar: name the new factory in place. */
 function askFactoryName() {
   const body = $("factories-body");

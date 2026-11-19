@@ -4,6 +4,8 @@ A factory is a pipeline of agents that you describe once in a YAML file. Paw run
 
 Factory files live in `~/.paw/factories/<id>.yaml`: the file name is the factory's **id** (`error-spike`), which webhooks, run folders and `/factory` use; `name` is what you see. The sidebar's **Factories** section lists them. Click one to open it, or press **+** to make a new one. In a tab, `/factories` lists them and `/factory new <name>` makes one.
 
+To delete a factory, right-click it in the sidebar and choose **Delete factory…**, or type `/factory delete <name>`. Paw asks first. Then its runs that are going stop, its trigger stops listening and its tabs close. Its file and its run history (`~/.paw/factories/<id>/`) go to the Trash, where Finder's **Put Back** restores them. What you always allowed for it is removed too, so a new factory with the same name starts afresh.
+
 ## The factory view
 
 A factory opens in a tab that looks like a plan's:

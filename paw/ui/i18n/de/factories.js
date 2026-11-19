@@ -260,4 +260,12 @@ I18N.add("de", {
   "What does this factory do?": "Was macht diese Fabrik?",
   "Why did the last run fail?": "Warum ist der letzte Lauf fehlgeschlagen?",
   "Run a task starts a run. Edit file opens the YAML if you'd rather write it yourself.": "„Aufgabe starten“ startet einen Lauf. „Datei bearbeiten“ öffnet die YAML-Datei, wenn du sie lieber selbst schreibst.",
+  // deleting factories
+  "Open": "Öffnen",
+  "Delete factory…": "Fabrik löschen…",
+  "Delete the factory “{name}”?": "Die Fabrik „{name}“ löschen?",
+  "Its run that's going stops. ": "Ihr laufender Lauf wird gestoppt. ",
+  "Its {n} runs that are going stop. ": "Ihre {n} laufenden Läufe werden gestoppt. ",
+  "Its file and its run history go to the Trash, where you can put them back.": "Ihre Datei und ihr Lauf-Verlauf kommen in den Papierkorb, wo du sie zurücklegen kannst.",
+  "— factory {name} deleted: its file and run history are in the Trash.": "— Fabrik {name} gelöscht: Ihre Datei und ihr Lauf-Verlauf liegen im Papierkorb.",
 });

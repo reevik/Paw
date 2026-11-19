@@ -28,7 +28,7 @@ const DAEMON_COMMANDS = new Set([
   "paw_agent_start", "paw_agent_send", "paw_agent_note", "paw_agent_cancel", "paw_agent_close", "paw_agent_approve", "paw_agent_sandbox",
   "factory_answer", "factory_decide", "factory_conversation", "factory_set_parallel",
   "tray_update", "daemon_attach",
-  "factory_list", "factory_get", "factory_run", "factory_stop", "factory_retry", "factory_skip", "factory_new", "factory_pause",
+  "factory_list", "factory_get", "factory_run", "factory_stop", "factory_retry", "factory_skip", "factory_new", "factory_delete", "factory_pause",
 ]);
 const invoke = (cmd, args) => (DAEMON_COMMANDS.has(cmd) ? tauriInvoke("daemon_call", { cmd, args: args ?? {} }) : tauriInvoke(cmd, args));
 const eventHandlers = new Map(); // event → [handler]
@@ -857,6 +857,7 @@ function helpHtml(S) {
     row("/factories", tx("list your factories and their last runs (click one to open it)")),
     row("/factory <name>", tx("open a factory; /factory new <name> makes one")),
     row("/factory run <name> [task]", tx("start a run of a factory in this tab's folder, with the task")),
+    row("/factory delete <name>", tx("delete a factory (asks first; it goes to the Trash)")),
     row("/sessions", tx("list stored sessions, open and closed; click one to reopen it in a new tab")),
     row("/stats [day|week|month]", tx("tokens, queries, plans and time per model: today, this week, this month")),
     row("/clear", tx("clear the screen (⌘K)")),
@@ -1008,6 +1009,18 @@ async function slashCommand(S, line) {
       echo();
       const m = /^new\s+(.+)$/i.exec(arg);
       if (m) { await newFactory(m[1].trim()); return true; }
+      // /factory delete <name>: asks first, then to the Trash.
+      const d = /^delete(?:\s+([\s\S]+))?$/i.exec(arg);
+      if (d) {
+        const which = (d[1] ?? "").trim();
+        if (!which) { sys(S, tx("Which factory? /factory delete <name>")); return true; }
+        await loadFactories();
+        const w = which.toLowerCase();
+        const hit = factoryState.list.find((x) => x.id === which) ?? factoryState.list.find((x) => x.id.toLowerCase() === w || x.factory?.name?.toLowerCase() === w);
+        if (!hit) { sys(S, tx("No factory “{arg}”. /factories lists them.", { arg: which })); return true; }
+        await deleteFactory(hit.id);
+        return true;
+      }
       // /factory run <id> [task]: a run in this tab's folder, with the task.
       const r = /^run\s+(\S+)\s*([\s\S]*)$/i.exec(arg);
       if (r) { await runFactoryFromTab(S, r[1], r[2].trim()); return true; }
@@ -1466,9 +1479,10 @@ function slashSpecs(S) {
     { cmd: "/plan", usage: "[what]", desc: tx("make a plan with {name} and run its steps", { name }), args: () => ({ free: tx("what you want done (or leave it out, and describe it in the plan's tab)") }) },
     { cmd: "/plans", desc: tx("the open plans and how far each one is") },
     { cmd: "/factories", desc: tx("your factories and their last runs") },
-    { cmd: "/factory", usage: "<name> · new <name> · run <name> [task]", desc: tx("open, make or run a factory"), args: (w) => {
-      if (!w.length) return { options: [opt("run", tx("start a run in this tab's folder"), true), opt("new", tx("make a new factory"), true), ...factories()] };
+    { cmd: "/factory", usage: "<name> · new <name> · run <name> [task] · delete <name>", desc: tx("open, make, run or delete a factory"), args: (w) => {
+      if (!w.length) return { options: [opt("run", tx("start a run in this tab's folder"), true), opt("new", tx("make a new factory"), true), opt("delete", tx("delete a factory"), true), ...factories()] };
       if (w[0] === "new") return { free: tx("the new factory's name") };
+      if (w[0] === "delete") return w.length === 1 ? { options: factories() } : {};
       if (w[0] === "run" && w.length === 1) return { options: factories().map((o) => ({ ...o, more: true })) };
       if (w[0] === "run") return { free: tx("the task for this run (optional)") };
       return {};

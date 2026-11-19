@@ -37,7 +37,7 @@ pub const COMMANDS: &[&str] = &[
     "shell_open", "shell_run", "shell_write", "shell_interrupt", "shell_close", "shell_write_raw", "shell_resize", "shell_raw_exit",
     "paw_agent_start", "paw_agent_send", "paw_agent_note", "paw_agent_cancel", "paw_agent_close", "paw_agent_approve", "paw_agent_sandbox",
     "tray_update", "daemon_attach",
-    "factory_list", "factory_get", "factory_run", "factory_stop", "factory_retry", "factory_skip", "factory_new", "factory_pause",
+    "factory_list", "factory_get", "factory_run", "factory_stop", "factory_retry", "factory_skip", "factory_new", "factory_delete", "factory_pause",
     "factory_answer", "factory_decide", "factory_conversation", "factory_set_parallel",
 ];
 
@@ -515,6 +515,18 @@ async fn dispatch(app: AppHandle, cmd: String, a: Value) -> Result<Value, String
         "factory_retry" => ok(factory_runner(&app).retry(&arg::<String>(&a, "run")?, &arg::<String>(&a, "node")?)?),
         "factory_skip" => ok(factory_runner(&app).skip(&arg::<String>(&a, "run")?, &arg::<String>(&a, "node")?)?),
         "factory_new" => ok(crate::factories::create(&arg::<String>(&a, "name")?)?),
+        "factory_delete" => {
+            let id: String = arg(&a, "factory")?;
+            let triggers = app.state::<Arc<crate::factories::triggers::Triggers>>();
+            // Nothing new starts while it goes: its trigger paused, its runs stopped.
+            triggers.set_paused(&id, true);
+            factory_runner(&app).forget(&id);
+            let moved = crate::factories::delete(&id);
+            triggers.rescan();
+            // Not left in the paused list (a new factory may take the name).
+            triggers.set_paused(&id, false);
+            ok(moved?)
+        }
         "factory_set_parallel" => {
             crate::factories::set_parallel(&arg::<String>(&a, "factory")?, arg(&a, "parallel")?)?;
             // The trigger takes it now (waiting runs may start), not at the next scan.

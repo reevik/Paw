@@ -3091,6 +3091,7 @@ function tabLabel(S) {
 
 function renderTabs() {
   trayUpdateSoon();
+  menuState();
   const tabs = $("tabs");
   tabs.innerHTML = "";
   const shown = new Set();
@@ -5837,6 +5838,41 @@ function runAction(id) {
     case "help-issue": invoke("open_url", { url: "https://github.com/reevik/Paw/issues/new" }).catch(() => {}); return true;
   }
   return false;
+}
+
+// ---------- which menu items apply ----------
+// The native menu greys out what makes no sense in the tab you're in: the
+// Factory menu outside a factory, Stop with nothing running, Stop Task with
+// no task going… The window works it out and tells the app when it changes.
+let menuSent = "", menuTimer = 0;
+function menuState() {
+  clearTimeout(menuTimer);
+  menuTimer = setTimeout(() => {
+    const S = curS();
+    const host = $("task-view");
+    const has = (fact) => !!(S?.factory && host?.querySelector(`[data-fact="${fact}"]`));
+    const f = S?.factory ? factoryById(S.factory.id) : null;
+    const on = {
+      "close-tab": !!S,
+      "clear": !!S,
+      "interrupt": !!S && (isBusy(S) || !!S.shellBusy),
+      "attach-files": !!S && !S.shellBusy,
+      "session-folder": !!S,
+      "sandbox-toggle": !!S && !S.nodeOf && isPaw(S.agent),
+      "next-tab": openTabs.length > 1,
+      "prev-tab": openTabs.length > 1,
+      "factory-run": has("run"),
+      "factory-stop": has("stop"),
+      "factory-lock": has("lock"),
+      "factory-reset-layout": has("layout-reset"),
+      "factory-edit": has("edit"),
+      "factory-delete": !!f,
+    };
+    const key = JSON.stringify(on);
+    if (key === menuSent || !window.__TAURI_INTERNALS__) return;
+    menuSent = key;
+    invoke("menu_state", { enabled: on }).catch(() => {});
+  }, 60);
 }
 
 /** Factory menu: what the factory tab you're in does (the same as its buttons). */

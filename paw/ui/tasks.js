@@ -575,6 +575,7 @@ function stepTime(st) {
 }
 
 function renderTaskView() {
+  menuState(); // the Factory menu follows the board's buttons
   const host = $("task-view");
   if (!host) return;
   const S = curS();

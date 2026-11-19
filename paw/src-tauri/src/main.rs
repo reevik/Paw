@@ -372,7 +372,40 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         ])?;
         help.set_text(i18n::t("Help"))?;
     }
+    apply_menu_state(&menu);
     Ok(menu)
+}
+
+/// Which of the menu's items apply now (the window says, as you switch tabs
+/// and runs come and go): {id: enabled}. Kept for a menu built again later.
+static MENU_ENABLED: std::sync::Mutex<Option<std::collections::HashMap<String, bool>>> = std::sync::Mutex::new(None);
+
+#[tauri::command]
+fn menu_state(app: AppHandle, enabled: std::collections::HashMap<String, bool>) {
+    *MENU_ENABLED.lock().unwrap() = Some(enabled);
+    if let Some(menu) = app.menu() {
+        apply_menu_state(&menu);
+    }
+}
+
+/// Enable or disable the menu's items as the window last said.
+fn apply_menu_state(menu: &Menu<tauri::Wry>) {
+    fn walk(items: Vec<tauri::menu::MenuItemKind<tauri::Wry>>, on: &std::collections::HashMap<String, bool>) {
+        for it in items {
+            match it {
+                tauri::menu::MenuItemKind::MenuItem(i) => {
+                    if let Some(&e) = on.get(i.id().as_ref()) {
+                        let _ = i.set_enabled(e);
+                    }
+                }
+                tauri::menu::MenuItemKind::Submenu(s) => walk(s.items().unwrap_or_default(), on),
+                _ => {}
+            }
+        }
+    }
+    if let Some(on) = MENU_ENABLED.lock().unwrap().as_ref() {
+        walk(menu.items().unwrap_or_default(), on);
+    }
 }
 
 /// The menu's items the window acts on (ui:menu): Paw's own, by id.
@@ -610,6 +643,7 @@ fn main() {
             sessions::delete_session,
             attachments::describe_attachment,
             menu_shortcuts,
+            menu_state,
             attachments::attach_paths,
             specs::specs_list,
             specs::specs_import,

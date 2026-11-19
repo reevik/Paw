@@ -507,4 +507,7 @@ I18N.add("de", {
   "You're up to date": "Du bist auf dem neuesten Stand",
   "Paw {version} is the newest version.": "Paw {version} ist die neueste Version.",
   "OK": "OK",
+  // tabs following Settings › Sandbox
+  "Settings › Sandbox changed: sandbox on · conversation continues": "Einstellungen › Sandbox geändert: Sandbox an · Unterhaltung geht weiter",
+  "Settings › Sandbox changed: sandbox off · conversation continues": "Einstellungen › Sandbox geändert: Sandbox aus · Unterhaltung geht weiter",
 });

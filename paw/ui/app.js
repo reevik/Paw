@@ -443,7 +443,7 @@ async function pawStart(S, { resume = false } = {}) {
       cwd: S.cwd,
       approval: S.approval,
       allow_rules: saved,
-      sandbox: tabSandbox(S),
+      sandbox: (S.sandboxStarted = tabSandbox(S)),
       session: resume && S.session ? S.session : null,
       key_source: settings.providers?.anthropic?.key_source || "",
       paw_session: S.pawId,
@@ -775,6 +775,27 @@ function turnFinished(S) {
   if (!S.working) return;
   S.working = false;
   setTimeout(pumpAgents, 0);
+  // Settings › Sandbox changed while it worked: it takes the new one now.
+  if (S.sandboxStale) setTimeout(() => sandboxFollow(S), 0);
+}
+
+/** Settings › Sandbox changed: tabs that go by it (not turned on or off in
+ *  the tab) take the new sandbox, the conversation going on; a tab at work
+ *  takes it when its turn ends. */
+function sandboxFollowsSettings() {
+  for (const S of sessions.values()) {
+    if (!isPaw(S.agent) || S.nodeOf || S.proc == null || !S.sandboxStarted) continue;
+    if (JSON.stringify(tabSandbox(S)) === JSON.stringify(S.sandboxStarted)) continue;
+    if (S.working || isBusy(S)) S.sandboxStale = true;
+    else sandboxFollow(S);
+  }
+}
+async function sandboxFollow(S) {
+  S.sandboxStale = false;
+  if (!sessions.has(S.sid) || S.proc == null || JSON.stringify(tabSandbox(S)) === JSON.stringify(S.sandboxStarted)) return;
+  const on = !!tabSandbox(S).enabled;
+  await restart(S, on ? tx("Settings › Sandbox changed: sandbox on · conversation continues") : tx("Settings › Sandbox changed: sandbox off · conversation continues"), { resume: true });
+  inPane(S, renderHeader);
 }
 
 /** Start waiting prompts (oldest first), then task steps, while there's room. */
@@ -2577,6 +2598,8 @@ function tabSnapshot(S) {
       stepOf: S.stepOf ?? undefined,
       sandboxMode: S.sandboxMode ?? undefined,
       sandboxPrograms: S.sandboxPrograms?.length ? S.sandboxPrograms : undefined,
+      // The sandbox its agent runs with (a window started again re-attaches to it).
+      sandboxStarted: S.proc != null ? S.sandboxStarted : undefined,
       nodeOf: S.nodeOf ?? undefined,
       // Its processes in the daemon: a window that starts again re-attaches.
       live: daemon.instance && (S.proc != null || S.shell != null) ? {
@@ -2788,6 +2811,7 @@ async function restoreTab(t, note = null) {
   if (t.nodeOf) S.nodeOf = t.nodeOf;
   if (t.sandboxMode) S.sandboxMode = t.sandboxMode;
   if (t.sandboxPrograms) S.sandboxPrograms = t.sandboxPrograms;
+  if (t.sandboxStarted && attach) S.sandboxStarted = t.sandboxStarted;
   if (t.group) S.group = t.group;
   sessions.set(S.sid, S);
   openTabs.push(S.sid);
@@ -5149,6 +5173,7 @@ listen("agent:status", ({ payload: pinfo }) => {
 
 listen("settings:changed", ({ payload }) => {
   const limit = settings?.general?.max_sessions;
+  const sandboxWas = JSON.stringify(settings?.sandbox ?? null);
   settings = payload;
   // Another language: the window loads again in it (tabs come back as after a restart).
   if (I18N.pick(payload.general?.language) !== I18N.lang) {
@@ -5163,6 +5188,9 @@ listen("settings:changed", ({ payload }) => {
   if (payload.general?.max_sessions !== limit) refreshArchive();
   setTimeout(pumpAgents, 0);
   if (activeId == null) renderWelcome();
+  // The status bar (the sandbox button and the rest) as Settings now say.
+  for (const P of panes.values()) if (P.sid != null) withPane(P, renderHeader);
+  if (JSON.stringify(payload.sandbox ?? null) !== sandboxWas) sandboxFollowsSettings();
 });
 listen("agents:detected", ({ payload }) => {
   detections = payload;

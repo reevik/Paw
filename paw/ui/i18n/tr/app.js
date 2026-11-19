@@ -507,4 +507,7 @@ I18N.add("tr", {
   "You're up to date": "Güncelsiniz",
   "Paw {version} is the newest version.": "Paw {version} en yeni sürüm.",
   "OK": "Tamam",
+  // tabs following Settings › Sandbox
+  "Settings › Sandbox changed: sandbox on · conversation continues": "Ayarlar › Korumalı Alan değişti: korumalı alan açık · konuşma sürüyor",
+  "Settings › Sandbox changed: sandbox off · conversation continues": "Ayarlar › Korumalı Alan değişti: korumalı alan kapalı · konuşma sürüyor",
 });

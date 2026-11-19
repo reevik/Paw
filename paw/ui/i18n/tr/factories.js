@@ -268,4 +268,13 @@ I18N.add("tr", {
   "Its {n} runs that are going stop. ": "Süren {n} çalıştırması durdurulur. ",
   "Its file and its run history go to the Trash, where you can put them back.": "Dosyası ve çalıştırma geçmişi Çöp Sepeti'ne gider; oradan geri alabilirsiniz.",
   "— factory {name} deleted: its file and run history are in the Trash.": "— {name} fabrikası silindi: dosyası ve çalıştırma geçmişi Çöp Sepeti'nde.",
+  // laying the diagram out by hand
+  "Drag the boxes, and the dots where lines meet them · ⌥ doesn't snap": "Kutuları ve çizgilerin onlara değdiği noktaları sürükleyin · ⌥ hizalamaz",
+  "Lock the layout": "Yerleşimi kilitle",
+  "Unlock the layout: move the boxes and where lines meet them": "Yerleşimin kilidini aç: kutuları ve çizgilerin onlara değdiği yerleri taşıyın",
+  "Put the boxes and lines back where Paw puts them": "Kutuları ve çizgileri Paw'ın yerleştirdiği yere geri koy",
+  "Reset layout": "Yerleşimi sıfırla",
+  "Drag along the box's edge": "Kutunun kenarı boyunca sürükleyin",
+  "Reset this diagram's layout? The boxes and lines go back to where Paw puts them.": "Bu diyagramın yerleşimi sıfırlansın mı? Kutular ve çizgiler Paw'ın yerleştirdiği yere döner.",
+  "Reset": "Sıfırla",
 });

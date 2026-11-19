@@ -1017,6 +1017,9 @@ function bindTaskView(P) {
   });
   // A factory's diagram: ⌘-scroll or pinch zooms it.
   host.addEventListener("wheel", (e) => { const T = S(); if (T?.factory) factoryWheel(T, e, host); }, { passive: false });
+  // Unlocked, its boxes and their lines' ends are dragged; its rulers follow the scroll.
+  host.addEventListener("pointerdown", (e) => { const T = S(); if (T?.factory) factoryPointer(T, e, host); });
+  host.addEventListener("scroll", (e) => { const T = S(); if (T?.factory?.unlocked && e.target.classList?.contains("fa-graph")) drawRulers(host, T); }, true);
   host.addEventListener("click", (e) => {
     const T = S();
     if (T?.factory) return factoryClick(T, e, P);

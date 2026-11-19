@@ -1347,3 +1347,34 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
 .tl.info .tk-btn:hover { background: color-mix(in srgb, var(--t-fg) 13%, transparent); }
 .tl.info .tk-btn.danger { background: color-mix(in srgb, var(--t-red) 12%, transparent); box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--t-red) 45%, transparent); font-weight: 600; }
 .tl.info .tk-btn.danger:hover { background: color-mix(in srgb, var(--t-red) 20%, transparent); }
+
+/* A factory's diagram laid out by hand (unlocked: the lock in the zoom bar). */
+.fa-zoom.fa-free { display: block; }
+.fa-zoom.fa-free > .tk-node { position: absolute; margin: 0; }
+.fa-zsep { width: 0.5px; align-self: stretch; margin: 3px 3px; background: var(--t-border); }
+.fa-lock { display: inline-flex; align-items: center; justify-content: center; }
+.fa-graph-wrap.unlocked .fa-zoombar { opacity: 1; }
+.fa-graph-wrap.unlocked .fa-graph { padding: 18px 0 0 18px; }
+.fa-graph-wrap.unlocked .fa-zoom {
+  background-image: radial-gradient(color-mix(in srgb, var(--t-fg) 16%, transparent) 1px, transparent 1.2px);
+  background-size: 20px 20px; background-position: 4px 4px;
+}
+.fa-graph-wrap.unlocked .tk-node { cursor: grab; }
+.fa-graph-wrap.unlocked .tk-node.fa-moving { cursor: grabbing; --ring: inset 0 0 0 1.5px var(--accent); box-shadow: var(--ring), 0 6px 18px rgba(0, 0, 0, .18); z-index: 2; }
+body.fa-dragging, body.fa-dragging * { cursor: grabbing !important; user-select: none; }
+.fa-anchors { position: absolute; left: 0; top: 0; z-index: 3; pointer-events: none; overflow: visible; }
+.fa-anchors .fa-anchor { pointer-events: all; cursor: grab; fill: var(--accent); stroke: var(--t-bg-solid, var(--t-bg, #fff)); stroke-width: 1.5; }
+.fa-anchors .fa-anchor:hover { r: 6; }
+.fa-guide { position: absolute; z-index: 2; pointer-events: none; background: color-mix(in srgb, var(--accent) 75%, transparent); }
+.fa-guide-v { top: 0; bottom: 0; width: 1px; }
+.fa-guide-h { left: 0; right: 0; height: 1px; }
+.fa-ruler, .fa-ruler-corner {
+  position: absolute; z-index: 2; pointer-events: none;
+  background: color-mix(in srgb, var(--t-fg) 5%, var(--t-bg-solid, var(--t-bg, #fff)));
+  color: var(--t-dim); outline-color: var(--accent); font-family: var(--mono, monospace);
+}
+.fa-ruler-x { left: 18px; top: 0; width: calc(100% - 18px); height: 18px; border-bottom: 0.5px solid var(--t-border); }
+.fa-ruler-y { left: 0; top: 18px; width: 18px; height: calc(100% - 18px); border-right: 0.5px solid var(--t-border); }
+.fa-ruler-corner { left: 0; top: 0; width: 18px; height: 18px; border-right: 0.5px solid var(--t-border); border-bottom: 0.5px solid var(--t-border); }
+.fa-edit-hint { position: absolute; left: 26px; bottom: 10px; z-index: 2; pointer-events: none; font-size: 11px; color: var(--t-dim); }
+.fa-edit-hint { max-width: calc(100% - 330px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

@@ -268,4 +268,13 @@ I18N.add("de", {
   "Its {n} runs that are going stop. ": "Ihre {n} laufenden Läufe werden gestoppt. ",
   "Its file and its run history go to the Trash, where you can put them back.": "Ihre Datei und ihr Lauf-Verlauf kommen in den Papierkorb, wo du sie zurücklegen kannst.",
   "— factory {name} deleted: its file and run history are in the Trash.": "— Fabrik {name} gelöscht: Ihre Datei und ihr Lauf-Verlauf liegen im Papierkorb.",
+  // laying the diagram out by hand
+  "Drag the boxes, and the dots where lines meet them · ⌥ doesn't snap": "Zieh die Kästen und die Punkte, an denen Linien sie treffen · ⌥ rastet nicht ein",
+  "Lock the layout": "Anordnung sperren",
+  "Unlock the layout: move the boxes and where lines meet them": "Anordnung entsperren: Kästen verschieben und wo Linien sie treffen",
+  "Put the boxes and lines back where Paw puts them": "Kästen und Linien dorthin zurücksetzen, wo Paw sie hinsetzt",
+  "Reset layout": "Anordnung zurücksetzen",
+  "Drag along the box's edge": "Entlang des Kastenrands ziehen",
+  "Reset this diagram's layout? The boxes and lines go back to where Paw puts them.": "Die Anordnung dieses Diagramms zurücksetzen? Kästen und Linien kommen dorthin zurück, wo Paw sie hinsetzt.",
+  "Reset": "Zurücksetzen",
 });

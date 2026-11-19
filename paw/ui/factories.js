@@ -517,7 +517,10 @@ function renderFactoryView(S, host) {
     const loop = repeats(plan.def) ? " fa-loop" : "";
     // The diagram scales inside a box of its zoomed size (so the scrollbars fit it), with the zoom bar over it.
     const z = typeof S.factory.zoom === "number" ? S.factory.zoom : 1;
-    const graph = `<div class="fa-graph-wrap"><div class="tk-graph fa-graph"><div class="fa-sizer"><div class="fa-zoom${loop}" data-zoom="${z}" style="transform: scale(${z})">${graphHtml(plan)}</div></div></div>${zoomBarHtml(S)}</div>`;
+    // Unlocked: rulers over the view's top and left, and a hint.
+    const open = S.factory.unlocked;
+    const rulers = open ? `<canvas class="fa-ruler fa-ruler-x"></canvas><canvas class="fa-ruler fa-ruler-y"></canvas><div class="fa-ruler-corner"></div><div class="fa-edit-hint">${tx("Drag the boxes, and the dots where lines meet them · ⌥ doesn't snap")}</div>` : "";
+    const graph = `<div class="fa-graph-wrap${open ? " unlocked" : ""}"><div class="tk-graph fa-graph"><div class="fa-sizer"><div class="fa-zoom${loop}" data-zoom="${z}" style="transform: scale(${z})">${graphHtml(plan)}</div></div></div>${rulers}${zoomBarHtml(S)}</div>`;
     body = `<div class="tk-body">${graph}${vsplit}<aside class="tk-side">${factorySideHtml(S, plan, f)}</aside></div>`;
   }
   // Not under the user's typing (an answer, an approval) while the same run and
@@ -533,10 +536,13 @@ function renderFactoryView(S, host) {
   host.innerHTML = head + body;
   const g = host.querySelector(".fa-graph");
   if (g) {
+    // Boxes where the layout puts them (now, before the first paint).
+    placeNodes(g.querySelector(".fa-zoom"), S);
     requestAnimationFrame(() => {
       drawFactoryEdges(g.querySelector(".fa-zoom"), S, plan);
       applyZoom(host, S);
       if (scroll) [g.scrollLeft, g.scrollTop] = scroll;
+      drawRulers(host, S);
     });
   }
   const side = host.querySelector(".tk-side");
@@ -550,9 +556,18 @@ const ZOOM_STEPS = [0.25, 0.33, 0.5, 0.67, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2,
 const ZOOM_MIN = ZOOM_STEPS[0], ZOOM_MAX = ZOOM_STEPS.at(-1);
 const clampZoom = (z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
 
+const LOCK_SVG = `<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>`;
+const LOCK_OPEN_SVG = `<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M5.5 7V5a2.5 2.5 0 0 1 4.9-.7" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>`;
+
 function zoomBarHtml(S) {
   const fit = S.factory.zoom === "fit";
+  const open = !!S.factory.unlocked;
+  const L = layoutOf(S);
+  const placed = L && (Object.keys(L.nodes ?? {}).length || Object.keys(L.ends ?? {}).length);
   return `<div class="fa-zoombar" role="toolbar" aria-label="${esc(tx("Zoom"))}">
+    <button class="fa-zb fa-lock${open ? " on" : ""}" data-fact="lock" title="${esc(open ? tx("Lock the layout") : tx("Unlock the layout: move the boxes and where lines meet them"))}">${open ? LOCK_OPEN_SVG : LOCK_SVG}</button>
+    ${open && placed ? `<button class="fa-zb" data-fact="layout-reset" title="${esc(tx("Put the boxes and lines back where Paw puts them"))}">${tx("Reset layout")}</button>` : ""}
+    <span class="fa-zsep"></span>
     <button class="fa-zb" data-fact="zoom-out" title="${esc(tx("Zoom out (⌘− over the diagram)"))}">−</button>
     <button class="fa-zb fa-zpct" data-fact="zoom-100" title="${esc(tx("Actual size (⌘0 over the diagram)"))}">100%</button>
     <button class="fa-zb" data-fact="zoom-in" title="${esc(tx("Zoom in (⌘+ over the diagram)"))}">+</button>
@@ -584,6 +599,7 @@ function applyZoom(host, S, anchor = null) {
     g.scrollLeft = sizer.offsetLeft + anchor.px * z - anchor.x;
     g.scrollTop = sizer.offsetTop + anchor.py * z - anchor.y;
   }
+  drawRulers(host, S);
   return z;
 }
 
@@ -636,6 +652,275 @@ function factoryZoomKey(key) {
   return false;
 }
 
+// ---------- laying the diagram out by hand ----------
+// Unlocked (the lock in the zoom bar), the boxes can be dragged, and the dots
+// where lines meet a box moved along its edges. Where you put them is the
+// factory's layout, kept beside its runs (<id>/layout.json):
+//   { v: 1, nodes: { id: { x, y } }, ends: { "from>to": { from: { side, t }, to: { side, t } } } }
+// side is l, r, t or b, and t how far along that side (0…1). Boxes it doesn't
+// place stay where Paw's columns put them.
+const layoutOf = (S) => factoryById(S.factory.id)?.layout ?? null;
+const END_FROM = { side: "r", t: 0.5 }, END_TO = { side: "l", t: 0.5 };
+const GRID = 10, SNAP_PX = 6;
+let factoryDragAt = 0; // a drag just ended: the click that follows doesn't select
+
+/** Free positions: when unlocked, or when the layout places boxes. Each box
+ *  goes where it was saved, else where the columns had it. */
+function placeNodes(zoomEl, S) {
+  const saved = layoutOf(S)?.nodes ?? {};
+  if (!S.factory.unlocked && !Object.keys(saved).length) return;
+  const z = Number(zoomEl.dataset.zoom) || 1, zr = zoomEl.getBoundingClientRect();
+  const at = [...zoomEl.querySelectorAll(".tk-node[data-step]")].map((n) => {
+    const r = n.getBoundingClientRect(), p = saved[n.dataset.step];
+    const ok = p && Number.isFinite(p.x) && Number.isFinite(p.y);
+    return [n, ok ? Math.max(0, p.x) : (r.left - zr.left) / z, ok ? Math.max(0, p.y) : (r.top - zr.top) / z, n.offsetWidth];
+  });
+  zoomEl.classList.add("fa-free");
+  for (const [n, x, y, w] of at) {
+    Object.assign(n.style, { left: `${x}px`, top: `${y}px`, width: `${w}px` });
+    zoomEl.appendChild(n);
+  }
+  zoomEl.querySelectorAll(".tk-col").forEach((c) => c.remove());
+  fitFree(zoomEl);
+}
+
+/** A free diagram's size: around its boxes. */
+function fitFree(zoomEl, grow = false) {
+  let w = 0, h = 0;
+  for (const n of zoomEl.querySelectorAll(":scope > .tk-node")) {
+    w = Math.max(w, parseFloat(n.style.left) + n.offsetWidth);
+    h = Math.max(h, parseFloat(n.style.top) + n.offsetHeight);
+  }
+  // While dragging it only grows, so the view doesn't jump under the pointer.
+  if (grow) { w = Math.max(w, parseFloat(zoomEl.style.width) || 0); h = Math.max(h, parseFloat(zoomEl.style.height) || 0); }
+  zoomEl.style.width = `${Math.ceil(w + 12)}px`;
+  zoomEl.style.height = `${Math.ceil(h + 12)}px`;
+}
+
+/** A box's place in the diagram's own (unscaled) space. */
+function boxIn(zoomEl, el) {
+  const z = Number(zoomEl.dataset.zoom) || 1, zr = zoomEl.getBoundingClientRect(), r = el.getBoundingClientRect();
+  return { x: (r.left - zr.left) / z, y: (r.top - zr.top) / z, w: r.width / z, h: r.height / z };
+}
+
+/** The point on a box's side, and the way out of it. */
+function endPoint(b, e) {
+  const t = Math.min(1, Math.max(0, Number(e?.t ?? 0.5)));
+  switch (e?.side) {
+    case "l": return { x: b.x, y: b.y + t * b.h, nx: -1, ny: 0 };
+    case "t": return { x: b.x + t * b.w, y: b.y, nx: 0, ny: -1 };
+    case "b": return { x: b.x + t * b.w, y: b.y + b.h, nx: 0, ny: 1 };
+    default: return { x: b.x + b.w, y: b.y + t * b.h, nx: 1, ny: 0 };
+  }
+}
+
+/** The lines between nodes, each from and to its ends' points; unlocked, a
+ *  dot at each end to move it. */
+function drawLinks(g, S, plan) {
+  const svg = g.querySelector(".tk-edges");
+  if (!svg) return;
+  const w = g.scrollWidth, h = g.scrollHeight;
+  for (const s of [svg]) { s.setAttribute("width", w); s.setAttribute("height", h); s.setAttribute("viewBox", `0 0 ${w} ${h}`); }
+  const ends = layoutOf(S)?.ends ?? {};
+  const box = (id) => { const el = g.querySelector(`.tk-node[data-step="${CSS.escape(id)}"]`); return el && boxIn(g, el); };
+  let paths = "", dots = "";
+  for (const s of plan.steps) {
+    const to = box(s.id);
+    if (!to) continue;
+    for (const n of s.needs) {
+      const from = box(n);
+      if (!from) continue;
+      const key = `${n}>${s.id}`;
+      const a = endPoint(from, ends[key]?.from ?? END_FROM), b = endPoint(to, ends[key]?.to ?? END_TO);
+      // Out of each side along its way out, as far as half the distance that way.
+      const k1 = Math.max(16, Math.abs((b.x - a.x) * a.nx + (b.y - a.y) * a.ny) / 2);
+      const k2 = Math.max(16, Math.abs((a.x - b.x) * b.nx + (a.y - b.y) * b.ny) / 2);
+      const live = stepView(s) === "running" || stepView(s) === "needs";
+      const cond = s.condFrom === n ? " cond" : "";
+      paths += `<path class="${live ? "live" : ""}${cond}" d="M${a.x},${a.y} C${a.x + a.nx * k1},${a.y + a.ny * k1} ${b.x + b.nx * k2},${b.y + b.ny * k2} ${b.x},${b.y}"/>`;
+      if (S.factory.unlocked) {
+        for (const [end, p] of [["from", a], ["to", b]]) dots += `<circle class="fa-anchor" r="4.5" cx="${p.x}" cy="${p.y}" data-edge="${esc(key)}" data-end="${end}"><title>${esc(tx("Drag along the box's edge"))}</title></circle>`;
+      }
+    }
+  }
+  svg.innerHTML = paths;
+  // The dots go above the boxes (the lines go under them).
+  let over = g.querySelector(":scope > .fa-anchors");
+  if (!S.factory.unlocked) { over?.remove(); return; }
+  if (!over) { over = document.createElementNS("http://www.w3.org/2000/svg", "svg"); over.classList.add("fa-anchors"); g.appendChild(over); }
+  over.setAttribute("width", w); over.setAttribute("height", h); over.setAttribute("viewBox", `0 0 ${w} ${h}`);
+  over.innerHTML = dots;
+}
+
+async function saveLayout(S, L) {
+  const f = factoryById(S.factory.id);
+  if (f) f.layout = L;
+  await invoke("factory_set_layout", { factory: S.factory.id, layout: L }).catch((e) => { const T = curS(); if (T) sys(T, `✗ ${e}`); });
+}
+
+/** Unlocked: press on a box to move it, or on a line's dot to move that end. */
+function factoryPointer(S, e, host) {
+  if (e.button !== 0 || !S.factory.unlocked) return;
+  const zoomEl = e.target.closest?.(".fa-zoom");
+  if (!zoomEl?.classList.contains("fa-free")) return;
+  const dot = e.target.closest(".fa-anchor");
+  if (dot) return dragEnd(S, e, host, zoomEl, dot);
+  const node = e.target.closest(".tk-node");
+  if (node) dragBox(S, e, host, zoomEl, node);
+}
+
+/** Follow the pointer until it's let go (moves of 3px or more count). */
+function follow(e, host, move, done) {
+  const sx = e.clientX, sy = e.clientY;
+  let moved = false;
+  const mv = (ev) => {
+    if (!moved && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 3) return;
+    if (!moved) { moved = true; host.dataset.dragging = "1"; document.body.classList.add("fa-dragging"); }
+    move(ev, (ev.clientX - sx), (ev.clientY - sy));
+  };
+  const up = (ev) => {
+    window.removeEventListener("pointermove", mv);
+    window.removeEventListener("pointerup", up);
+    window.removeEventListener("pointercancel", up);
+    if (!moved) return;
+    delete host.dataset.dragging;
+    document.body.classList.remove("fa-dragging");
+    factoryDragAt = Date.now();
+    done(ev);
+  };
+  window.addEventListener("pointermove", mv);
+  window.addEventListener("pointerup", up);
+  window.addEventListener("pointercancel", up);
+}
+
+/** Lines across the diagram where a box lines up with another. */
+function guideLines(zoomEl, x, y) {
+  for (const [cls, v, prop] of [["fa-guide-v", x, "left"], ["fa-guide-h", y, "top"]]) {
+    let el = zoomEl.querySelector(`:scope > .${cls}`);
+    if (v == null) { el?.remove(); continue; }
+    if (!el) { el = document.createElement("div"); el.className = `fa-guide ${cls}`; zoomEl.appendChild(el); }
+    el.style[prop] = `${v}px`;
+  }
+}
+
+/** Snap one coordinate: to another box's start, middle or end within the
+ *  snapping distance (that line shown), else to the grid. */
+function snapAxis(pos, size, lines, tol) {
+  let best = null;
+  for (const a of lines) for (const off of [0, size / 2, size]) {
+    const d = a - (pos + off);
+    if (Math.abs(d) <= tol && (best == null || Math.abs(d) < Math.abs(best.d))) best = { d, at: a };
+  }
+  return best ? { pos: pos + best.d, guide: best.at } : { pos: Math.round(pos / GRID) * GRID, guide: null };
+}
+
+function dragBox(S, e, host, zoomEl, node) {
+  e.preventDefault();
+  const z = Number(zoomEl.dataset.zoom) || 1;
+  const x0 = parseFloat(node.style.left) || 0, y0 = parseFloat(node.style.top) || 0, w = node.offsetWidth, h = node.offsetHeight;
+  const others = [...zoomEl.querySelectorAll(":scope > .tk-node")].filter((n) => n !== node)
+    .map((n) => ({ x: parseFloat(n.style.left) || 0, y: parseFloat(n.style.top) || 0, w: n.offsetWidth, h: n.offsetHeight }));
+  const xs = others.flatMap((o) => [o.x, o.x + o.w / 2, o.x + o.w]), ys = others.flatMap((o) => [o.y, o.y + o.h / 2, o.y + o.h]);
+  const plan = factoryPlan(S);
+  follow(e, host, (ev, dx, dy) => {
+    let x = x0 + dx / z, y = y0 + dy / z, gx = null, gy = null;
+    // ⌥ (Alt): no snapping.
+    if (!ev.altKey) {
+      ({ pos: x, guide: gx } = snapAxis(x, w, xs, SNAP_PX / z));
+      ({ pos: y, guide: gy } = snapAxis(y, h, ys, SNAP_PX / z));
+    }
+    x = Math.max(0, x); y = Math.max(0, y);
+    node.classList.add("fa-moving");
+    Object.assign(node.style, { left: `${x}px`, top: `${y}px` });
+    fitFree(zoomEl, true);
+    guideLines(zoomEl, gx, gy);
+    drawFactoryEdges(zoomEl, S, plan);
+    drawRulers(host, S, { x, y, w, h });
+  }, () => {
+    node.classList.remove("fa-moving");
+    guideLines(zoomEl, null, null);
+    // Every box where it is now, so the others don't move if the columns change.
+    const nodes = {};
+    for (const n of zoomEl.querySelectorAll(":scope > .tk-node[data-step]")) nodes[n.dataset.step] = { x: Math.round(parseFloat(n.style.left) || 0), y: Math.round(parseFloat(n.style.top) || 0) };
+    fitFree(zoomEl);
+    applyZoom(host, S);
+    saveLayout(S, { ...(layoutOf(S) ?? {}), v: 1, nodes });
+  });
+}
+
+/** Move where a line meets a box: along the box's edges, to the side nearest the pointer. */
+function dragEnd(S, e, host, zoomEl, dot) {
+  e.preventDefault();
+  e.stopPropagation();
+  const key = dot.dataset.edge, end = dot.dataset.end;
+  const id = key.split(">")[end === "from" ? 0 : 1];
+  const el = zoomEl.querySelector(`.tk-node[data-step="${CSS.escape(id)}"]`);
+  if (!el) return;
+  const b = boxIn(zoomEl, el);
+  const z = Number(zoomEl.dataset.zoom) || 1, zr = zoomEl.getBoundingClientRect();
+  const f = factoryById(S.factory.id);
+  const L = structuredClone(layoutOf(S) ?? {});
+  L.v = 1;
+  L.ends ??= {};
+  const plan = factoryPlan(S);
+  follow(e, host, (ev) => {
+    const px = (ev.clientX - zr.left) / z, py = (ev.clientY - zr.top) / z;
+    const cx = Math.min(b.x + b.w, Math.max(b.x, px)), cy = Math.min(b.y + b.h, Math.max(b.y, py));
+    const sides = [["l", Math.hypot(px - b.x, py - cy)], ["r", Math.hypot(px - b.x - b.w, py - cy)], ["t", Math.hypot(px - cx, py - b.y)], ["b", Math.hypot(px - cx, py - b.y - b.h)]];
+    const side = sides.sort((p, q) => p[1] - q[1])[0][0];
+    let t = side === "l" || side === "r" ? (cy - b.y) / b.h : (cx - b.x) / b.w;
+    if (!ev.altKey && Math.abs(t - 0.5) < 0.08) t = 0.5; // the middle catches it
+    L.ends[key] = { from: END_FROM, to: END_TO, ...L.ends[key], [end]: { side, t: Math.round(t * 1000) / 1000 } };
+    if (f) f.layout = L;
+    drawFactoryEdges(zoomEl, S, plan);
+  }, () => saveLayout(S, L));
+}
+
+/** Unlocked: rulers along the top and left of the view, in the diagram's
+ *  units; `span` (a box being dragged) is marked on them. */
+function drawRulers(host, S, span = null) {
+  if (!S.factory.unlocked) return;
+  const zoomEl = host.querySelector(".fa-zoom");
+  if (!zoomEl) return;
+  const z = Number(zoomEl.dataset.zoom) || 1, zr = zoomEl.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const step = [5, 10, 20, 25, 50, 100, 200, 500].find((s) => s * z >= 6) ?? 500;
+  const every = [50, 100, 200, 500, 1000, 2000].find((s) => s * z >= 48) ?? 2000;
+  for (const c of host.querySelectorAll(".fa-ruler")) {
+    const across = c.classList.contains("fa-ruler-x");
+    const cr = c.getBoundingClientRect();
+    if (!cr.width || !cr.height) continue;
+    c.width = Math.round(cr.width * dpr);
+    c.height = Math.round(cr.height * dpr);
+    const ctx = c.getContext("2d");
+    ctx.scale(dpr, dpr);
+    const cs = getComputedStyle(c);
+    const len = across ? cr.width : cr.height, thick = across ? cr.height : cr.width;
+    const origin = across ? zr.left - cr.left : zr.top - cr.top;
+    if (span) {
+      ctx.fillStyle = cs.outlineColor;
+      ctx.globalAlpha = 0.22;
+      const a = origin + (across ? span.x : span.y) * z, l = (across ? span.w : span.h) * z;
+      across ? ctx.fillRect(a, 0, l, thick) : ctx.fillRect(0, a, thick, l);
+      ctx.globalAlpha = 1;
+    }
+    ctx.strokeStyle = ctx.fillStyle = cs.color;
+    ctx.lineWidth = 1;
+    ctx.font = `9px ${cs.fontFamily}`;
+    ctx.beginPath();
+    for (let u = Math.floor(-origin / z / step) * step; origin + u * z <= len; u += step) {
+      const p = Math.round(origin + u * z) + 0.5;
+      const big = u % every === 0, mid = u % (step * 5) === 0;
+      const tl = big ? thick - 3 : mid ? 6 : 3;
+      if (across) { ctx.moveTo(p, thick); ctx.lineTo(p, thick - tl); } else { ctx.moveTo(thick, p); ctx.lineTo(thick - tl, p); }
+      if (!big || u < 0) continue;
+      if (across) ctx.fillText(String(u), p + 3, 9);
+      else { ctx.save(); ctx.translate(9, p - 3); ctx.rotate(-Math.PI / 2); ctx.fillText(String(u), 0, 0); ctx.restore(); }
+    }
+    ctx.stroke();
+  }
+}
+
 /** The nodes a loop runs again: back_to, the looping node, and every node on a path between them. */
 function loopRegion(nodes, backTo, node) {
   if (backTo === node) return [node];
@@ -660,7 +945,7 @@ function drawFactoryEdges(g, S, plan = factoryPlan(S)) {
   const loops = plan.def.nodes.filter((n) => n.loop);
   // Room under the graph for the loop lines (before the lines' canvas takes its size).
   g.style.paddingBottom = loops.length || repeats(plan.def) ? `${40 + loops.length * 22}px` : "";
-  drawEdges(g, plan);
+  drawLinks(g, S, plan);
   if (!loops.length && !repeats(plan.def)) return;
   const svg = g.querySelector(".tk-edges");
   const box = g.getBoundingClientRect();
@@ -913,6 +1198,7 @@ function factorySandbox(spec) {
 async function factoryClick(S, e, P) {
   const node = e.target.closest(".tk-node");
   if (node) {
+    if (Date.now() - factoryDragAt < 300) return; // the end of a drag, not a click
     S.factory.selected = S.factory.selected === node.dataset.step ? null : node.dataset.step;
     saveWorkspaceSoon();
     withPane(P, renderTaskView);
@@ -937,6 +1223,16 @@ async function factoryClick(S, e, P) {
       case "zoom-in": case "zoom-out": setZoom(S, withPane(P, () => $("task-view")), b.dataset.fact.slice(5)); break;
       case "zoom-100": setZoom(S, withPane(P, () => $("task-view")), 1); break;
       case "zoom-fit": setZoom(S, withPane(P, () => $("task-view")), "fit"); break;
+      case "lock":
+        S.factory.unlocked = !S.factory.unlocked;
+        saveWorkspaceSoon();
+        withPane(P, renderTaskView);
+        break;
+      case "layout-reset":
+        if (!await askSure(tx("Reset this diagram's layout? The boxes and lines go back to where Paw puts them."), { yes: tx("Reset") })) break;
+        await saveLayout(S, null);
+        withPane(P, renderTaskView);
+        break;
       case "answer": {
         const r = run?.nodes.find((n) => n.id === S.factory.selected);
         if (!r?.question) break;

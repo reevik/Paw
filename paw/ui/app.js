@@ -28,7 +28,7 @@ const DAEMON_COMMANDS = new Set([
   "paw_agent_start", "paw_agent_send", "paw_agent_note", "paw_agent_cancel", "paw_agent_close", "paw_agent_approve", "paw_agent_sandbox",
   "factory_answer", "factory_decide", "factory_conversation", "factory_set_parallel",
   "tray_update", "daemon_attach",
-  "factory_list", "factory_get", "factory_run", "factory_stop", "factory_retry", "factory_skip", "factory_new", "factory_delete", "factory_pause",
+  "factory_list", "factory_get", "factory_run", "factory_stop", "factory_retry", "factory_skip", "factory_new", "factory_delete", "factory_set_layout", "factory_pause",
 ]);
 const invoke = (cmd, args) => (DAEMON_COMMANDS.has(cmd) ? tauriInvoke("daemon_call", { cmd, args: args ?? {} }) : tauriInvoke(cmd, args));
 const eventHandlers = new Map(); // event → [handler]

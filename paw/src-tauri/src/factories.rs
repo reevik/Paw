@@ -558,6 +558,9 @@ pub struct Found {
     pub factory: Option<Factory>,
     pub error: Option<String>,
     pub modified: u64,
+    /// Where you moved its boxes and lines' ends (`<id>/layout.json`), if you did.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub layout: Option<serde_json::Value>,
 }
 
 pub fn dir(paw_home: &Path) -> PathBuf {
@@ -594,7 +597,34 @@ pub fn load(id: &str, path: &Path) -> Found {
         Ok(f) => (Some(f), None),
         Err(e) => (None, Some(e)),
     };
-    Found { id: id.to_string(), path: path.to_path_buf(), factory, error, modified }
+    let layout = path
+        .parent()
+        .and_then(|d| std::fs::read_to_string(d.join(id).join("layout.json")).ok())
+        .and_then(|t| serde_json::from_str(&t).ok());
+    Found { id: id.to_string(), path: path.to_path_buf(), factory, error, modified, layout }
+}
+
+/// Save where you moved a factory's boxes and its lines' ends (the diagram's
+/// layout, kept beside its runs; not in its file). Null forgets it.
+pub fn set_layout(id: &str, layout: &serde_json::Value) -> Result<(), String> {
+    let d = crate::paths::home().map(|h| dir(&h)).ok_or("Paw can't find its folder (~/.paw).")?;
+    if !valid_id(id) || !["yaml", "yml"].iter().any(|e| d.join(format!("{id}.{e}")).is_file()) {
+        return Err(format!("There's no factory “{id}”."));
+    }
+    let path = d.join(id).join("layout.json");
+    if layout.is_null() {
+        let _ = std::fs::remove_file(&path);
+        return Ok(());
+    }
+    if !layout.is_object() {
+        return Err("A layout is an object.".into());
+    }
+    let text = serde_json::to_string_pretty(layout).map_err(|e| e.to_string())?;
+    if text.len() > 256 * 1024 {
+        return Err("That layout is too big.".into());
+    }
+    std::fs::create_dir_all(d.join(id)).map_err(|e| e.to_string())?;
+    std::fs::write(path, text).map_err(|e| e.to_string())
 }
 
 /// The file text with `parallel: n` set: the line changed (its comment kept),

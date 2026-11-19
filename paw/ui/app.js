@@ -590,11 +590,64 @@ async function restart(S, reason, { resume = true, quiet = false } = {}) {
   else refresh(S);
 }
 
+// ---------- "Are you sure…?" in the tab ----------
+// Destructive actions ask in the tab, not in a dialog: the question with Yes
+// and No under it. y / n (+ Enter) in the prompt answer it too, Esc says no.
+const sureAsks = new Map(); // id -> { S, line, resolve }
+let sureSeq = 0;
+
+/** Ask in tab S (shown first), or the current one; resolves true for Yes. */
+function askSure(question, { S = curS(), yes = tx("Yes"), detail = "" } = {}) {
+  if (!S) return Promise.resolve(confirm(question + (detail ? `\n\n${detail}` : "")));
+  if (S !== curS()) select(S.sid);
+  // One question at a time in a tab: a new one answers the old one with no.
+  for (const [id, a] of sureAsks) if (a.S === S) answerSure(id, false);
+  const id = `s${++sureSeq}`;
+  const line = { stream: "info", ts: Date.now(), html: "" };
+  line.html = sureHtml(id, question, detail, yes);
+  return new Promise((resolve) => {
+    sureAsks.set(id, { S, line, resolve, question, detail, yes });
+    pushLine(S, line);
+    $("input")?.focus();
+  });
+}
+
+function sureHtml(id, question, detail, yes, answer) {
+  const q = `<span class="sure-q">${esc(tx("Are you sure?"))}</span> ${esc(question)}` + (detail ? `\n<span class="dim">${esc(detail)}</span>` : "");
+  if (answer !== undefined) return `<span class="sure" data-sure-done>${q}\n<span class="dim">${answer ? `→ ${esc(yes)}` : `→ ${esc(tx("No: nothing changed."))}`}</span></span>`;
+  return `<span class="sure" data-sure="${id}">${q}\n<span class="sb-acts sure-acts"><button class="tk-btn danger" data-sure-yes="${id}">${esc(yes)}</button><button class="tk-btn" data-sure-no="${id}">${esc(tx("No"))}</button></span> <span class="dim">${esc(tx("or type y / n"))}</span></span>`;
+}
+
+function answerSure(id, yes) {
+  const a = sureAsks.get(id);
+  if (!a) return false;
+  sureAsks.delete(id);
+  a.line.html = sureHtml(id, a.question, a.detail, a.yes, yes);
+  const el = document.querySelector(`[data-sure="${id}"]`);
+  if (el) el.outerHTML = a.line.html;
+  saveWorkspaceSoon();
+  a.resolve(yes);
+  return true;
+}
+
+/** The question waiting in tab S, if any. */
+const sureIn = (S) => [...sureAsks].find(([, a]) => a.S === S)?.[0];
+
+document.addEventListener("click", (e) => {
+  const b = e.target.closest?.("[data-sure-yes], [data-sure-no]");
+  if (!b) return;
+  const id = b.dataset.sureYes ?? b.dataset.sureNo;
+  // From before a restart: nothing waits on it any more.
+  if (!answerSure(id, b.dataset.sureYes !== undefined)) b.closest(".sure-acts")?.replaceWith(Object.assign(document.createElement("span"), { className: "dim", textContent: tx("(no longer asked)") }));
+});
+
 async function closeSession(sid) {
   const S = sessions.get(sid);
   if (!S) return;
-  if (isBusy(S) && !confirm(tx("{name} is still working. Close the tab and stop it?", { name: S.agent.name }))) return;
-  if (S.task?.state === "running" && !confirm(tx("This plan is running. Close it and stop its steps? Their tabs stay open."))) return;
+  if (isBusy(S) && !await askSure(tx("{name} is still working. Close the tab and stop it?", { name: S.agent.name }), { S, yes: tx("Close and stop") })) return;
+  if (S.task?.state === "running" && !await askSure(tx("This plan is running. Close it and stop its steps? Their tabs stay open."), { S, yes: tx("Close and stop") })) return;
+  if (!sessions.has(sid)) return;
+  if (sureIn(S)) answerSure(sureIn(S), false);
   taskTabClosing(S);
   closeBoardView(S);
   keepClosedSession(S);
@@ -3490,7 +3543,7 @@ $("specs-body").addEventListener("pointerdown", (e) => {
   const el = e.target.closest(".nav-item[data-spec]");
   if (el) startSpecDrag(e, el);
 });
-$("specs-body").addEventListener("click", (e) => {
+$("specs-body").addEventListener("click", async (e) => {
   if (specs.dragged) return;
   const group = e.target.closest(".nav-group");
   if (!group) return;
@@ -3498,8 +3551,11 @@ $("specs-body").addEventListener("click", (e) => {
   if (e.target.closest("[data-spec-import]")) return specsCall("specs_import", { group: specs.groups[gi].name });
   if (e.target.closest("[data-group-remove]")) {
     const g = specs.groups[gi];
-    if (g.specs.length && !confirm(tx(g.specs.length > 1 ? "Remove the group “{group}”? Its {n} specs stay on disk." : "Remove the group “{group}”? Its {n} spec stays on disk.", { group: g.name, n: g.specs.length }))) return;
-    return saveSpecs(specsData().filter((_, i) => i !== gi));
+    if (g.specs.length && !await askSure(tx(g.specs.length > 1 ? "Remove the group “{group}”? Its {n} specs stay on disk." : "Remove the group “{group}”? Its {n} spec stays on disk.", { group: g.name, n: g.specs.length }), { yes: tx("Remove") })) return;
+    // The list may have changed while you answered.
+    const at = specs.groups.indexOf(g);
+    if (at < 0) return;
+    return saveSpecs(specsData().filter((_, i) => i !== at));
   }
   const item = e.target.closest(".nav-item[data-spec]");
   if (!item) return;
@@ -4087,13 +4143,13 @@ async function mcpChange(fn, done) {
   await loadMcp();
 }
 
-$("mcp-body").addEventListener("click", (e) => {
+$("mcp-body").addEventListener("click", async (e) => {
   if (e.target.closest("[data-mcp-cancel]")) { mcp.adding = null; renderMcp(); return; }
   const rm = e.target.closest("[data-mcp-remove]");
   if (rm) {
     const row = rm.closest(".mcp-srv");
     const sc = mcp.report?.scopes.find((x) => x.id === row.dataset.scope);
-    if (!confirm(tx("Remove the MCP server “{name}” from {scope}?", { name: row.dataset.name, scope: sc?.label ?? row.dataset.scope }) + `\n${tildify(sc?.file ?? "")}`)) return;
+    if (!await askSure(tx("Remove the MCP server “{name}” from {scope}?", { name: row.dataset.name, scope: sc?.label ?? row.dataset.scope }), { yes: tx("Remove"), detail: tildify(sc?.file ?? "") })) return;
     mcpChange(async (c) => { await invoke("mcp_remove", { ...c, scope: row.dataset.scope, name: row.dataset.name }); return row.dataset.scope; },
       tx("Removed {name}", { name: row.dataset.name }));
     return;
@@ -5120,6 +5176,14 @@ function bindPane(P) {
     $("input").addEventListener("keydown", (e) => {
       const ta = e.target;
       const S = curS();
+      // A question waiting in this tab: y / n + Enter, or Esc, answer it.
+      const sure = S && !e.isComposing && sureIn(S);
+      if (sure && e.key === "Escape") { e.preventDefault(); answerSure(sure, false); return; }
+      if (sure && e.key === "Enter" && !e.shiftKey) {
+        const w = ta.value.trim().toLowerCase();
+        const yes = ["y", "yes", "j", "ja", "e", "evet"].includes(w), no = ["n", "no", "nein", "h", "hayır", "hayir"].includes(w);
+        if (yes || no) { e.preventDefault(); ta.value = ""; autosize(); answerSure(sure, yes); return; }
+      }
       if (!e.isComposing && autocompleteKey(e)) return;
       // Backspace with the caret at the very start: remove the last badge.
       if (e.key === "Backspace" && !e.isComposing && ta.selectionStart === 0 && ta.selectionEnd === 0 && S && removeLastBadge(S)) {

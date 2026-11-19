@@ -481,4 +481,13 @@ I18N.add("de", {
   "No factory “{arg}”. /factories lists them.": "Keine Fabrik „{arg}“. /factories listet sie auf.",
   "open, make, run or delete a factory": "eine Fabrik öffnen, anlegen, ausführen oder löschen",
   "delete a factory": "eine Fabrik löschen",
+  // "Are you sure?" in the tab
+  "Yes": "Ja",
+  "Are you sure?": "Bist du sicher?",
+  "No: nothing changed.": "Nein: nichts geändert.",
+  "No": "Nein",
+  "or type y / n": "oder tippe j / n",
+  "(no longer asked)": "(nicht mehr gefragt)",
+  "Close and stop": "Schließen und stoppen",
+  "Delete": "Löschen",
 });

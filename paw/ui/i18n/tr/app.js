@@ -481,4 +481,13 @@ I18N.add("tr", {
   "No factory “{arg}”. /factories lists them.": "“{arg}” adında bir fabrika yok. /factories hepsini listeler.",
   "open, make, run or delete a factory": "bir fabrika aç, oluştur, çalıştır ya da sil",
   "delete a factory": "bir fabrikayı sil",
+  // "Are you sure?" in the tab
+  "Yes": "Evet",
+  "Are you sure?": "Emin misiniz?",
+  "No: nothing changed.": "Hayır: hiçbir şey değişmedi.",
+  "No": "Hayır",
+  "or type y / n": "ya da e / h yazın",
+  "(no longer asked)": "(artık sorulmuyor)",
+  "Close and stop": "Kapat ve durdur",
+  "Delete": "Sil",
 });

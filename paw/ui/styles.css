@@ -1334,3 +1334,16 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; }
 .nav-tools .nav-filter { flex: 1; min-width: 0; margin: 0; }
 .tk-round { color: var(--t-accent); }
 .tk-edges .fa-back { stroke: color-mix(in srgb, var(--wait-glow) 65%, var(--tk-line)); }
+
+/* "Are you sure…?" asked in the tab (askSure). */
+.sure { display: block; border-left: 3px solid var(--t-yellow); padding: 4px 0 4px 10px; }
+.sure-q { color: var(--t-yellow); font-weight: 700; }
+.sure[data-sure-done] { border-left-color: var(--t-dim); }
+.sure[data-sure-done] .sure-q { color: var(--t-dim); }
+.sure .sure-acts { margin: 6px 0 0; }
+/* Buttons in a tab's output (the sandbox card, "Are you sure?"): the board's
+   colors aren't defined there. */
+.tl.info .tk-btn { background: color-mix(in srgb, var(--t-fg) 7%, transparent); box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--t-fg) 28%, transparent); text-indent: 0; }
+.tl.info .tk-btn:hover { background: color-mix(in srgb, var(--t-fg) 13%, transparent); }
+.tl.info .tk-btn.danger { background: color-mix(in srgb, var(--t-red) 12%, transparent); box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--t-red) 45%, transparent); font-weight: 600; }
+.tl.info .tk-btn.danger:hover { background: color-mix(in srgb, var(--t-red) 20%, transparent); }

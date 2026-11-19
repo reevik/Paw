@@ -202,10 +202,10 @@ async function deleteFactory(id) {
   if (!f) return false;
   const name = f.factory?.name || id;
   const going = runsOf(id).filter((r) => r.state === "running").length;
-  const ask = tx("Delete the factory “{name}”?", { name }) + "\n\n" +
-    (going === 1 ? tx("Its run that's going stops. ") : going > 1 ? tx("Its {n} runs that are going stop. ", { n: going }) : "") +
+  const detail = (going === 1 ? tx("Its run that's going stops. ") : going > 1 ? tx("Its {n} runs that are going stop. ", { n: going }) : "") +
     tx("Its file and its run history go to the Trash, where you can put them back.");
-  if (!confirm(ask)) return false;
+  // Asked in the tab you're in (not the factory's own, which closes).
+  if (!await askSure(tx("Delete the factory “{name}”?", { name }), { yes: tx("Delete"), detail })) return false;
   try {
     await invoke("factory_delete", { factory: id });
   } catch (e) {

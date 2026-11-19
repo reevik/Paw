@@ -503,6 +503,7 @@ fn main() {
             sessions::delete_session,
             attachments::describe_attachment,
             menu_shortcuts,
+            attachments::attach_paths,
             specs::specs_list,
             specs::specs_import,
             specs::specs_save,

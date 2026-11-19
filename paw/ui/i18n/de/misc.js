@@ -42,7 +42,7 @@ I18N.add("de", {
   "Back to prompt": "Zurück zur Eingabe",
   "Working…": "Arbeitet…",
   "(<span data-id=\"busy-time\">0s</span> · ⌘. to stop)": "(<span data-id=\"busy-time\">0s</span> · ⌘. zum Stoppen)",
-  "Attach files or images (you can also paste an image)": "Dateien oder Bilder anhängen (du kannst auch ein Bild einfügen)",
+  "Attach files or images (or paste or drop them here)": "Dateien oder Bilder anhängen (oder hier einfügen bzw. hineinziehen)",
   "Auto": "Auto",
   "Open in Finder": "Im Finder öffnen",
   "⇧Tab mode · Tab complete · /help": "⇧Tab Modus · Tab vervollständigen · /help",

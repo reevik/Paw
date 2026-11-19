@@ -42,7 +42,7 @@ I18N.add("tr", {
   "Back to prompt": "İsteme dönün",
   "Working…": "Çalışıyor…",
   "(<span data-id=\"busy-time\">0s</span> · ⌘. to stop)": "(<span data-id=\"busy-time\">0s</span> · durdurmak için ⌘.)",
-  "Attach files or images (you can also paste an image)": "Dosya ya da görsel ekleyin (görsel de yapıştırabilirsiniz)",
+  "Attach files or images (or paste or drop them here)": "Dosya ya da görsel ekleyin (ya da buraya yapıştırın veya sürükleyin)",
   "Auto": "Otomatik",
   "Open in Finder": "Finder'da açın",
   "⇧Tab mode · Tab complete · /help": "⇧Tab mod · Tab tamamla · /help",

@@ -125,6 +125,46 @@ pub async fn pick_attachments(app: AppHandle, session: Option<String>) -> Result
     Ok(out)
 }
 
+/// Files dropped on the prompt: attached like picked ones (copied into the
+/// session). Folders and what can't be read are skipped, with the reason.
+#[derive(Serialize)]
+pub struct Dropped {
+    pub attached: Vec<Attachment>,
+    pub skipped: Vec<Skipped>,
+}
+
+#[derive(Serialize)]
+pub struct Skipped {
+    pub path: String,
+    pub why: String,
+}
+
+#[tauri::command]
+pub fn attach_paths(paths: Vec<String>, session: Option<String>) -> Result<Dropped, String> {
+    let dir = files_dir(session.as_deref())?;
+    let mut out = Dropped { attached: vec![], skipped: vec![] };
+    for p in paths.into_iter().take(50) {
+        let path = PathBuf::from(&p);
+        let why = if path.is_dir() {
+            Some("folder".to_string())
+        } else if !path.is_file() {
+            Some("missing".to_string())
+        } else {
+            match keep_copy(&path, &dir).and_then(|c| describe(&c)) {
+                Ok(a) => {
+                    out.attached.push(a);
+                    None
+                }
+                Err(e) => Some(e),
+            }
+        };
+        if let Some(why) = why {
+            out.skipped.push(Skipped { path: p, why });
+        }
+    }
+    Ok(out)
+}
+
 fn stamp() -> u128 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)
 }

@@ -505,7 +505,27 @@ button:disabled { opacity: .4; pointer-events: none; }
 
 /* Prompt row: ❯ [badges…] text… + — badges sit inline, one line each. */
 .prompt-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 1ch; }
-.prompt-row textarea { flex: 1 1 180px; min-width: 120px; }
+.prompt-row .input-wrap { position: relative; display: flex; flex: 1 1 180px; min-width: 120px; }
+.prompt-row textarea { flex: 1 1 auto; min-width: 0; position: relative; z-index: 1; }
+/* Badges in the text (attachments at the caret): the textarea's text goes
+   transparent and this layer behind it draws the same text, each badge's
+   token as a badge. Same font and wrapping, so every character lines up. */
+.input-backdrop {
+  position: absolute; inset: 0; z-index: 0; display: none; overflow: hidden; pointer-events: none;
+  font: inherit; color: var(--t-strong); white-space: pre-wrap; overflow-wrap: break-word; word-break: normal;
+}
+.input-wrap.has-tokens .input-backdrop { display: block; }
+.terminal .composer .input-wrap.has-tokens textarea { color: transparent; }
+.input-backdrop .tok {
+  border-radius: 5px; color: var(--t-fg);
+  background: color-mix(in srgb, var(--t-fg) 11%, transparent);
+  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--t-fg) 11%, transparent);
+}
+.input-backdrop .tok.text { background: color-mix(in srgb, var(--t-accent) 15%, transparent); box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--t-accent) 15%, transparent); }
+.input-backdrop .tok-b { color: transparent; }
+.input-backdrop .tok-x { color: var(--t-dim); }
+.input-backdrop .tok-x.hot { color: var(--t-fg); background: var(--t-hover); border-radius: 3px; }
+.input-wrap.drop-here { outline: 1.5px dashed color-mix(in srgb, var(--t-accent) 70%, transparent); outline-offset: 3px; border-radius: 6px; }
 .prompt-line { padding: 7px 8px 7px 12px; }
 .prompt-glyph { align-self: center; }
 .attach-btn { align-self: center; margin: 0 0 0 auto; }

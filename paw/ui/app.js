@@ -62,7 +62,7 @@ function replayEvents(events) {
 // pane being rendered (activePane). Everything else is a normal page id.
 const PANE_IDS = new Set(["session", "terminal", "output", "xterm-wrap", "xterm-title", "xterm-int", "xterm-back",
   "xterm-hosts", "busy", "busy-spin", "busy-text", "busy-time", "ac", "prompt-line", "att-tray", "input",
-  "attach-btn", "mode-pill", "task-split", "task-lower", "task-timeline", "sl-left", "sl-sandbox", "sl-path", "sl-path-text", "sl-plugins", "sl-sessions", "eof", "prompt-glyph", "task-view"]);
+  "attach-btn", "input-wrap", "input-backdrop", "mode-pill", "task-split", "task-lower", "task-timeline", "sl-left", "sl-sandbox", "sl-path", "sl-path-text", "sl-plugins", "sl-sessions", "eof", "prompt-glyph", "task-view"]);
 let activePane = null;
 const $ = (id) => (PANE_IDS.has(id) ? activePane?.root.querySelector(`[data-id="${id}"]`) : document.getElementById(id));
 /** The session shown in the pane being rendered (the focused one, normally). */
@@ -681,6 +681,9 @@ async function closeSession(sid) {
 async function submit(text) {
   const S = curS();
   if (!S || (!text.trim() && !S.attachments?.length)) return;
+  // Badges in the text become their references ("[shot.png]"): what history,
+  // commands and agents see. Pasted text and paths go in at them later.
+  text = tokensToRefs(text, S.attachments ?? []);
   // A line typed while a shell command runs is input for it (y/N, a
   // password…): it stays out of history, which is saved and shown by ⌃R.
   const forRunning = S.shellBusy && !text.startsWith("/");
@@ -698,11 +701,19 @@ async function submit(text) {
   let route = routeFor(S, text);
   if (!route.shell && S.inputMode === "auto" && (await lookupFirstWord(S, text))) route = routeFor(S, text);
   // Attachments only, no text, or pasted text: that's for the agent.
-  if (!text.trim() || S.attachments?.some(isPasted)) route = { shell: false };
+  const typed = (S.attachments ?? []).reduce((t, a) => t.split(refOf(a)).join(""), text);
+  if (!typed.trim() || S.attachments?.some(isPasted)) route = { shell: false };
   const atts = takeAttachments(S);
   if (route.shell) {
-    // Like dropping files into a terminal: quoted paths become arguments.
-    await runShell(S, [route.command, ...atts.map((a) => shq(a.path))].join(" "));
+    // Like dropping files into a terminal: each badge becomes its quoted
+    // path where it is; any without a place go at the end.
+    let cmd = route.command;
+    const rest = [];
+    for (const a of atts) {
+      if (a.token && cmd.includes(refOf(a))) cmd = cmd.split(refOf(a)).join(shq(a.path));
+      else rest.push(a);
+    }
+    await runShell(S, [cmd, ...rest.map((a) => shq(a.path))].join(" "));
     return;
   }
   if (S.task) return taskSubmit(S, text, atts);
@@ -886,7 +897,7 @@ function helpHtml(S) {
     row(kl("history-search"), tx("search earlier prompts and commands")),
     row("/", tx("the commands as you type, then their parameters (models, factories, folders…); Tab takes one")),
     row("Tab · ↑↓", tx("complete commands and paths · previous prompts")),
-    row("+ · ⌘V", tx("attach files · paste an image · long pasted text becomes a badge (click it to edit)")),
+    row("+ · ⌘V · drop", tx("attach files · paste an image · drop files on the prompt · each goes in as a badge at the cursor (Backspace removes it; double-click pasted text to edit it)")),
   ];
   if (settings.general.share_shell !== false) {
     out.push(row(tx("shell output"), isPaw(S.agent)
@@ -1930,16 +1941,217 @@ function makeThumb(a) {
   img.src = `data:${a.mime};base64,${a.data}`;
 }
 
+/** Attach files (or pasted text) to tab S's next line: each goes in the
+ *  prompt at the caret as a badge (a token in the text, see tokenOf). */
 function addAttachments(S, list) {
   S.attachments ??= [];
+  const added = [];
   for (const a of list) {
     if (S.attachments.some((x) => x.path === a.path)) continue;
+    a.token = tokenOf(S, a);
     S.attachments.push(a);
+    added.push(a);
     makeThumb(a);
   }
+  if (added.length) insertTokens(S, added.map((a) => a.token));
   renderAttachments();
   updateGlyph();
 }
+
+// ---------- badges in the prompt's text ----------
+// An attachment sits in the prompt where you put it, as a token in the text:
+// "[Pasted text #1 · 12 lines ×]" or "[shot.png ×]". The layer behind the
+// textarea (input-backdrop) draws each token as a badge. Backspace right
+// after one (Delete right before) takes the whole badge out, × removes it,
+// and a double-click on pasted text puts the text back. Sending turns each
+// token into its reference (refOf): pasted text goes in at its place, a file
+// is "[name]" for an agent and its quoted path for a shell command.
+
+/** The token for a new attachment: unique in the tab. */
+function tokenOf(S, a) {
+  const label = isPasted(a) ? `${a.name} · ${tx(a.lines === 1 ? "{n} line" : "{n} lines", { n: a.lines })}` : a.name;
+  // Not one an undo could bring back either.
+  const taken = new Set([...(S.attachments ?? []), ...(S.goneAttachments ?? [])].map((x) => x.token));
+  let t = `[${label} ×]`;
+  for (let n = 2; taken.has(t); n++) t = `[${label} #${n} ×]`;
+  return t;
+}
+/** What a token stands for once sent: the same without its ×. */
+const refOf = (a) => (a.token ? a.token.replace(/ ×\]$/, "]") : `[${a.name}]`);
+/** The text as sent: each badge's token turned into its reference. */
+function tokensToRefs(text, atts) {
+  for (const a of atts) if (a.token) text = text.split(a.token).join(refOf(a));
+  return text;
+}
+/** The text without its badges (is anything typed besides them?). */
+const withoutTokens = (text, atts) => atts.reduce((t, a) => (a.token ? t.split(a.token).join("") : t), text);
+
+/** Put tokens in tab S's prompt at the caret (or at the end of its draft when it isn't shown). */
+function insertTokens(S, tokens) {
+  const P = paneOf(S);
+  if (!P) {
+    const d = S.draft ?? "";
+    S.draft = d + (d && !/\s$/.test(d) ? " " : "") + tokens.join(" ") + " ";
+    return;
+  }
+  inPane(S, () => {
+    const ta = $("input");
+    const at = ta.selectionStart, end = ta.selectionEnd;
+    // Not inside another badge.
+    const inside = tokenAt(S, ta.value, at);
+    const s = inside ? inside.end : at, e = inside ? inside.end : end;
+    const before = ta.value.slice(0, s), after = ta.value.slice(e);
+    const ins = (before && !/\s$/.test(before) ? " " : "") + tokens.join(" ") + (/^\s/.test(after) ? "" : " ");
+    editPrompt(ta, ins, s, e);
+    autosize();
+    renderBackdrop(S);
+  });
+}
+
+/** Replace a range of the prompt so ⌘Z can undo it (setRangeText can't be undone). */
+function editPrompt(ta, text, start, end) {
+  ta.focus();
+  ta.setSelectionRange(start, end);
+  const ok = text ? document.execCommand("insertText", false, text) : document.execCommand("delete");
+  if (!ok) ta.setRangeText(text, start, end, "end");
+}
+
+/** The token (of one of S's attachments) around position i: {a, start, end}. */
+function tokenAt(S, text, i, strict = true) {
+  for (const a of S.attachments ?? []) {
+    if (!a.token) continue;
+    for (let at = text.indexOf(a.token); at >= 0; at = text.indexOf(a.token, at + 1)) {
+      const end = at + a.token.length;
+      if (strict ? at < i && i < end : at <= i && i <= end) return { a, start: at, end };
+    }
+  }
+  return null;
+}
+
+/** Take a badge out of the prompt: its token (and a space after it) and the attachment. */
+function removeToken(S, a) {
+  inPane(S, () => {
+    const ta = $("input");
+    const at = ta.value.indexOf(a.token);
+    if (at >= 0) {
+      const end = at + a.token.length + (ta.value[at + a.token.length] === " " ? 1 : 0);
+      editPrompt(ta, "", at, end);
+    }
+    // The attachment waits in case ⌘Z brings its token back.
+    syncTokens(S);
+    autosize();
+  });
+  if ((S.attachments ?? []).includes(a)) { S.attachments = S.attachments.filter((x) => x !== a); renderAttachments(); }
+  updateGlyph();
+}
+
+/** After an edit: attachments whose token is gone go too (an undo brings them back). */
+function syncTokens(S) {
+  const ta = $("input");
+  if (!S || !ta) return;
+  const text = ta.value;
+  S.goneAttachments ??= [];
+  const keep = [], gone = [];
+  for (const a of S.attachments ?? []) (!a.token || text.includes(a.token) ? keep : gone).push(a);
+  const back = S.goneAttachments.filter((a) => text.includes(a.token));
+  if (gone.length || back.length) {
+    S.attachments = [...keep, ...back];
+    S.goneAttachments = [...S.goneAttachments.filter((a) => !back.includes(a)), ...gone].slice(-20);
+    renderAttachments();
+  }
+  renderBackdrop(S);
+}
+
+/** Draw the prompt's text behind the textarea, its tokens as badges. */
+function renderBackdrop(S = curS()) {
+  const wrap = $("input-wrap"), back = $("input-backdrop"), ta = $("input");
+  if (!wrap || !back || !ta) return;
+  const atts = (S?.attachments ?? []).filter((a) => a.token);
+  const text = ta.value;
+  const spots = [];
+  for (const a of atts) for (let at = text.indexOf(a.token); at >= 0; at = text.indexOf(a.token, at + 1)) spots.push({ a, at });
+  wrap.classList.toggle("has-tokens", spots.length > 0);
+  if (!spots.length) { back.textContent = ""; return; }
+  spots.sort((x, y) => x.at - y.at);
+  let html = "", i = 0;
+  for (const { a, at } of spots) {
+    if (at < i) continue;
+    html += esc(text.slice(i, at));
+    const inner = a.token.slice(1, -3); // between "[" and " ×]"
+    html += `<span class="tok${isPasted(a) ? " text" : ""}" data-tok="${esc(a.token)}"><span class="tok-b">[</span>${esc(inner)} <span class="tok-x">×</span><span class="tok-b">]</span></span>`;
+    i = at + a.token.length;
+  }
+  // A last newline needs something after it to take up its line.
+  html += esc(text.slice(i)) + (text.endsWith("\n") ? " " : "");
+  back.innerHTML = html;
+  back.scrollTop = ta.scrollTop;
+}
+
+/** The badge (or its ×) under a point in the prompt, from the layer behind it. */
+function tokenUnder(S, x, y) {
+  const back = $("input-backdrop");
+  if (!back || !$("input-wrap")?.classList.contains("has-tokens")) return null;
+  const hit = (el) => [...el.getClientRects()].some((r) => x >= r.left - 2 && x <= r.right + 2 && y >= r.top - 2 && y <= r.bottom + 2);
+  for (const el of back.querySelectorAll(".tok")) {
+    if (!hit(el)) continue;
+    const a = (S.attachments ?? []).find((x) => x.token === el.dataset.tok);
+    if (a) return { a, el, onX: hit(el.querySelector(".tok-x")) };
+  }
+  return null;
+}
+
+/** Pasted text back into the prompt in place of its badge. */
+function expandToken(S, a) {
+  inPane(S, () => {
+    const ta = $("input");
+    const at = ta.value.indexOf(a.token);
+    if (at >= 0) editPrompt(ta, a.text, at, at + a.token.length);
+    syncTokens(S);
+    autosize();
+  });
+  if ((S.attachments ?? []).includes(a)) { S.attachments = S.attachments.filter((x) => x !== a); renderAttachments(); }
+  updateGlyph();
+}
+
+// ---------- files dropped on the window ----------
+// Finder (or anything else) dropping files: they go into the prompt of the
+// pane under the pointer, as badges at its caret. Paw gets the drop from the
+// window (tauri://drag-*), with the paths, not from the page.
+/** The pane under a drop's position (physical pixels), else the focused one. */
+function paneAtDrop(pos) {
+  const k = window.devicePixelRatio || 1;
+  const el = pos ? document.elementFromPoint(pos.x / k, pos.y / k) : null;
+  const id = el?.closest?.("[data-pane]")?.dataset.pane;
+  return (id != null && panes.get(Number(id))) || focusedPane;
+}
+function showDropTarget(pos) {
+  const P = pos === null ? null : paneAtDrop(pos);
+  for (const Q of panes.values()) withPane(Q, () => $("input-wrap")?.classList.toggle("drop-here", Q === P && Q.sid != null));
+}
+listen("tauri://drag-enter", (e) => showDropTarget(e.payload?.position));
+listen("tauri://drag-over", (e) => showDropTarget(e.payload?.position));
+listen("tauri://drag-leave", () => showDropTarget(null));
+listen("tauri://drag-drop", async (e) => {
+  showDropTarget(null);
+  const paths = e.payload?.paths ?? [];
+  const P = paneAtDrop(e.payload?.position);
+  const S = P?.sid != null ? sessions.get(P.sid) : null;
+  if (!S || !paths.length) return;
+  if (focusedPane !== P) focusPane(P, false);
+  let r;
+  try {
+    r = await invoke("attach_paths", { paths, session: S.pawId });
+  } catch (err) {
+    sys(S, `✗ ${err}`);
+    return;
+  }
+  inPane(S, () => $("input").focus());
+  if (r.attached.length) addAttachments(S, r.attached);
+  for (const k of r.skipped) {
+    const why = k.why === "folder" ? tx("folders can't be attached") : k.why === "missing" ? tx("it isn't there") : k.why;
+    sys(S, tx("✗ couldn't attach {path}: {why}", { path: tildify(k.path), why }));
+  }
+});
 
 // Long pasted text becomes a badge ("Pasted text · 12 lines") so the prompt
 // stays readable; the text goes along with the message, after what you type.
@@ -1953,14 +2165,26 @@ function pastedAttachment(text) {
   return { kind: "text", text, name: tx("Pasted text #{n}", { n }), path: `pasted:${Date.now()}:${n}`, size: new Blob([text]).size, lines: text.split("\n").length };
 }
 const shouldBadge = (text) => text.split("\n").length >= PASTE_BADGE_LINES || text.length > PASTE_BADGE_CHARS;
-/** The message: what was typed, then each pasted text. */
-const withPasted = (text, atts = []) => [text, ...atts.filter(isPasted).map((a) => a.text)].filter((t) => t?.trim()).join("\n\n");
+/** The message: what was typed, each pasted text in place of its badge's
+ *  reference (or after the text, for pasted text without one). */
+function withPasted(text, atts = []) {
+  const after = [];
+  for (const a of atts.filter(isPasted)) {
+    const ref = refOf(a);
+    if (a.token && text.includes(ref)) text = text.split(ref).join(a.text);
+    else after.push(a.text);
+  }
+  return [text, ...after].filter((t) => t?.trim()).join("\n\n");
+}
 const pastedLabel = (a) => tx(a.lines === 1 ? "Pasted text · {n} line" : "Pasted text · {n} lines", { n: a.lines });
 
 /** The badge nearest the caret (the tray's last): an attachment, else the $ badge. */
 function removeLastBadge(S) {
-  if (S.attachments?.length) {
-    S.attachments.pop();
+  // Badges in the text: Backspace after one takes it (see the prompt's keys);
+  // here only ones in the tray (the $ shell outputs, attachments without a token).
+  const loose = (S.attachments ?? []).filter((a) => !a.token);
+  if (loose.length) {
+    S.attachments = S.attachments.filter((a) => a !== loose.at(-1));
   } else if (shareShell() && S.shellContext?.length) {
     S.shellContext = [];
   } else return false;
@@ -1973,6 +2197,7 @@ function removeLastBadge(S) {
 function takeAttachments(S) {
   const list = S.attachments ?? [];
   S.attachments = [];
+  S.goneAttachments = [];
   renderAttachments();
   return list;
 }
@@ -1992,8 +2217,10 @@ function chipHtml(a, removable) {
 function renderAttachments() {
   const S = curS();
   const tray = $("att-tray");
-  const list = S?.attachments ?? [];
+  // Badges with a token are drawn in the text (renderBackdrop).
+  const list = (S?.attachments ?? []).filter((a) => !a.token);
   const ctx = shareShell() ? S?.shellContext ?? [] : [];
+  renderBackdrop(S);
   tray.classList.toggle("hidden", !list.length && !ctx.length);
   tray.innerHTML = "";
   if (ctx.length) {
@@ -2008,11 +2235,11 @@ function renderAttachments() {
       const el = div("att-badge paste-badge", `<span class="att-badge-icon">TXT</span><span class="att-badge-name">${esc(pastedLabel(a))}</span><button class="att-x" title="${tx("Remove")}">×</button>`);
       el.title = a.text.length > 600 ? a.text.slice(0, 600) + "…" : a.text;
       el.title += "\n\n" + tx("Click to edit it in the prompt.");
-      el.querySelector(".att-x").onclick = (e) => { e.stopPropagation(); S.attachments.splice(i, 1); renderAttachments(); $("input").focus(); };
+      el.querySelector(".att-x").onclick = (e) => { e.stopPropagation(); S.attachments = S.attachments.filter((x) => x !== a); renderAttachments(); $("input").focus(); };
       // Back into the prompt, at the cursor.
       el.onclick = () => {
         const ta = $("input");
-        S.attachments.splice(i, 1);
+        S.attachments = S.attachments.filter((x) => x !== a);
         ta.setRangeText(a.text, ta.selectionStart, ta.selectionEnd, "end");
         renderAttachments();
         autosize();
@@ -2028,7 +2255,7 @@ function renderAttachments() {
       : `<span class="att-badge-icon">${isInlineImage(a) ? "IMG" : esc(ext)}</span>`;
     const el = div("att-badge", `${icon}<span class="att-badge-name">${esc(a.name)}</span><button class="att-x" title="${tx("Remove")}">×</button>`);
     el.title = `${a.path} · ${fmtSize(a.size)}`;
-    el.querySelector(".att-x").onclick = (e) => { e.stopPropagation(); S.attachments.splice(i, 1); renderAttachments(); $("input").focus(); };
+    el.querySelector(".att-x").onclick = (e) => { e.stopPropagation(); S.attachments = S.attachments.filter((x) => x !== a); renderAttachments(); $("input").focus(); };
     tray.appendChild(el);
   });
 }
@@ -4886,10 +5113,13 @@ listen("agents:detected", ({ payload }) => {
 function autosize() {
   const ta = $("input");
   if (!ta) return;
+  renderBackdrop();
   // Empty: natural one-line height (measuring before layout made it 3 lines tall).
   if (!ta.value || !ta.clientWidth) { ta.style.height = ""; return; }
   ta.style.height = "auto";
   ta.style.height = Math.min(ta.scrollHeight, 200) + "px";
+  const b = $("input-backdrop");
+  if (b) b.scrollTop = ta.scrollTop;
 }
 function updateGlyph() {
   const S = curS();
@@ -5173,11 +5403,47 @@ function bindPane(P) {
         reader.readAsDataURL(file);
       }
     });
-    $("input").addEventListener("input", () => { autosize(); updateGlyph(); scheduleAutocomplete(); scheduleLookup(); });
+    $("input").addEventListener("input", () => { syncTokens(curS()); autosize(); updateGlyph(); scheduleAutocomplete(); scheduleLookup(); });
+    $("input").addEventListener("scroll", () => { const b = $("input-backdrop"); if (b) b.scrollTop = $("input").scrollTop; });
+    // A badge's ×: remove it; a double-click on pasted text: back to text.
+    $("input").addEventListener("mousedown", (e) => {
+      const S = curS();
+      const hit = S && tokenUnder(S, e.clientX, e.clientY);
+      if (hit?.onX) { e.preventDefault(); removeToken(S, hit.a); $("input").focus(); }
+    });
+    $("input").addEventListener("dblclick", (e) => {
+      const S = curS();
+      const hit = S && tokenUnder(S, e.clientX, e.clientY);
+      if (hit && isPasted(hit.a)) { e.preventDefault(); expandToken(S, hit.a); }
+    });
+    $("input").addEventListener("mousemove", (e) => {
+      const S = curS();
+      const ta = $("input");
+      const hit = S && tokenUnder(S, e.clientX, e.clientY);
+      for (const x of $("input-backdrop")?.querySelectorAll(".tok-x.hot") ?? []) x.classList.remove("hot");
+      if (hit?.onX) hit.el.querySelector(".tok-x")?.classList.add("hot");
+      ta.style.cursor = hit?.onX ? "default" : "";
+      const tip = !hit ? "" : hit.onX ? tx("Remove") : isPasted(hit.a)
+        ? (hit.a.text.length > 600 ? hit.a.text.slice(0, 600) + "…" : hit.a.text) + "\n\n" + tx("Double-click to edit it in the prompt.")
+        : `${tildify(hit.a.path)} · ${fmtSize(hit.a.size)}`;
+      if (ta.title !== tip) ta.title = tip;
+    });
     $("input").addEventListener("blur", () => setTimeout(closeAc, 120));
     $("input").addEventListener("keydown", (e) => {
       const ta = e.target;
       const S = curS();
+      // Badges in the text: Backspace right after one (or inside it), Delete
+      // right before one, take the whole badge; typing inside one goes after it.
+      if (S && !e.isComposing && !e.metaKey && !e.ctrlKey && !e.altKey && ta.selectionStart === ta.selectionEnd && S.attachments?.length) {
+        const i = ta.selectionStart, v = ta.value;
+        if (e.key === "Backspace" || e.key === "Delete") {
+          const t = tokenAt(S, v, i) ?? (S.attachments.map((a) => a.token && (e.key === "Backspace" ? v.slice(i - a.token.length, i) === a.token : v.slice(i, i + a.token.length) === a.token) && { a }).find(Boolean));
+          if (t) { e.preventDefault(); removeToken(S, t.a); return; }
+        } else if (e.key.length === 1) {
+          const t = tokenAt(S, v, i);
+          if (t) ta.setSelectionRange(t.end, t.end);
+        }
+      }
       // A question waiting in this tab: y / n + Enter, or Esc, answer it.
       const sure = S && !e.isComposing && sureIn(S);
       if (sure && e.key === "Escape") { e.preventDefault(); answerSure(sure, false); return; }

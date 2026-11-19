@@ -18,7 +18,7 @@ TAURI = ROOT / "src-tauri"
 VENDOR = [
     {"name": "xterm.js", "license": "MIT", "url": "https://github.com/xtermjs/xterm.js", "about": "Terminal emulator for the shell and full-screen programs"},
     {"name": "@xterm/addon-fit", "license": "MIT", "url": "https://github.com/xtermjs/xterm.js/tree/master/addons/addon-fit", "about": "Sizes the terminal to its pane"},
-    {"name": "Feather Icons", "license": "MIT", "url": "https://github.com/feathericons/feather", "about": "The shield on the status bar's sandbox button"},
+    {"name": "Feather Icons", "license": "MIT", "url": "https://github.com/feathericons/feather", "about": "The shields on the status bar's sandbox button"},
     {"name": "marked", "version": "12.0.2", "license": "MIT", "url": "https://github.com/markedjs/marked", "about": "Markdown in agent replies"},
     {"name": "DOMPurify", "version": "3.1.6", "license": "MPL-2.0 OR Apache-2.0", "url": "https://github.com/cure53/DOMPurify", "about": "Keeps rendered replies safe"},
 ]

@@ -269,7 +269,7 @@ I18N.add("tr", {
   "Its file and its run history go to the Trash, where you can put them back.": "Dosyası ve çalıştırma geçmişi Çöp Sepeti'ne gider; oradan geri alabilirsiniz.",
   "— factory {name} deleted: its file and run history are in the Trash.": "— {name} fabrikası silindi: dosyası ve çalıştırma geçmişi Çöp Sepeti'nde.",
   // laying the diagram out by hand
-  "Drag boxes, lines and their dots · double-click a line for an elbow, an elbow to remove it · ⌥ doesn't snap": "Kutuları, çizgileri ve noktalarını sürükleyin · bir çizgiye çift tıklamak dirsek ekler, dirseğe çift tıklamak kaldırır · ⌥ yapıştırmaz",
+  "Drag boxes and lines · click a line for its + handles · double-click adds or removes an elbow · ⌘Z undoes · ⌥ doesn't snap": "Kutuları ve çizgileri sürükleyin · + tutamaçları için bir çizgiye tıklayın · çift tıklama dirsek ekler ya da kaldırır · ⌘Z geri alır · ⌥ yapıştırmaz",
   "Lock the layout": "Yerleşimi kilitle",
   "Unlock the layout: move the boxes and where lines meet them": "Yerleşimin kilidini aç: kutuları ve çizgilerin onlara değdiği yerleri taşıyın",
   "Put the boxes and lines back where Paw puts them": "Kutuları ve çizgileri Paw'ın yerleştirdiği yere geri koy",
@@ -313,6 +313,6 @@ I18N.add("tr", {
   "No elbow points: it takes the shortest curve.": "Dirsek yok: en kısa eğriyi izler.",
   "Add an elbow point": "Dirsek ekle",
   "Remove the elbow point": "Dirseği kaldır",
-  "Drag the line, or a + on it, to bend it there. Click an elbow point to select it, then ⌫ removes it; a double-click adds or removes one too. Esc lets go.": "Çizgiyi ya da üzerindeki bir +'yı sürükleyerek orada bükün. Bir dirseği seçmek için tıklayın, ⌫ onu kaldırır; çift tıklama da ekler ya da kaldırır. Esc seçimi bırakır.",
+  "Drag a stretch of the line to move it; click or drag a + for an elbow point there. Click an elbow point to select it, then ⌫ removes it; a double-click adds or removes one too. ⌘Z undoes, Esc lets go.": "Taşımak için çizginin bir parçasını sürükleyin; oraya dirsek için bir +'ya tıklayın ya da sürükleyin. Bir dirseği seçmek için tıklayın, ⌫ onu kaldırır; çift tıklama da ekler ya da kaldırır. ⌘Z geri alır, Esc seçimi bırakır.",
   "Connection": "Bağlantı",
 });

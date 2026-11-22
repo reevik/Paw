@@ -523,7 +523,7 @@ function renderFactoryView(S, host) {
     const z = typeof S.factory.zoom === "number" ? S.factory.zoom : 1;
     // Unlocked: rulers over the view's top and left, and a hint.
     const open = S.factory.unlocked;
-    const rulers = open ? `<canvas class="fa-ruler fa-ruler-x"></canvas><canvas class="fa-ruler fa-ruler-y"></canvas><div class="fa-ruler-corner"></div><div class="fa-edit-hint">${tx("Drag boxes, lines and their dots · double-click a line for an elbow, an elbow to remove it · ⌥ doesn't snap")}</div>` : "";
+    const rulers = open ? `<canvas class="fa-ruler fa-ruler-x"></canvas><canvas class="fa-ruler fa-ruler-y"></canvas><div class="fa-ruler-corner"></div><div class="fa-edit-hint">${tx("Drag boxes and lines · click a line for its + handles · double-click adds or removes an elbow · ⌘Z undoes · ⌥ doesn't snap")}</div>` : "";
     const graph = `<div class="fa-graph-wrap${open ? " unlocked" : ""}"><div class="tk-graph fa-graph"><div class="fa-sizer"><div class="fa-zoom${loop}" data-zoom="${z}" style="transform: scale(${z})">${graphHtml(plan)}</div></div></div>${rulers}${zoomBarHtml(S)}</div>`;
     body = `<div class="tk-body">${graph}${vsplit}<aside class="tk-side">${factorySideHtml(S, plan, f)}</aside></div>`;
   }
@@ -896,18 +896,25 @@ function dragLine(S, e, host, zoomEl, hit) {
   }
   const pts = currentPoints(zoomEl, key);
   if (!pts) return;
-  const p0 = diagramPoint(zoomEl, e);
-  const at = segmentAt(pts, p0);
-  const bends = pts.slice(1, -1);
-  bends.splice(at, 0, p0);
-  const i = at; // the new elbow's index among the elbows
+  // The stretch pressed on moves, parallel to itself: a level stretch up or
+  // down, an upright one sideways (a slanted one with the pointer). Its ends
+  // that are elbows move along; an end at a box stays, with a new corner
+  // next to it (so a line without elbows moves as a whole, two corners added).
+  const seg = segmentAt(pts, diagramPoint(zoomEl, e));
+  const a = pts[seg], b = pts[seg + 1];
+  const level = Math.abs(b.x - a.x) > 3 * Math.abs(b.y - a.y), upright = Math.abs(b.y - a.y) > 3 * Math.abs(b.x - a.x);
+  const first = seg === 0, last = seg + 1 === pts.length - 1;
   const z = Number(zoomEl.dataset.zoom) || 1;
-  follow(e, host, (ev) => {
-    const p = diagramPoint(zoomEl, ev);
-    bends[i] = ev.altKey ? p : snapBend(p, [pts[0], ...bends][i], [...bends, pts.at(-1)][i + 1], SNAP_PX / z);
+  let bends = pts.slice(1, -1);
+  follow(e, host, (ev, dx, dy) => {
+    let mx = level ? 0 : dx / z, my = upright ? 0 : dy / z;
+    if (!ev.altKey) { mx = Math.round(mx / (GRID / 2)) * (GRID / 2); my = Math.round(my / (GRID / 2)) * (GRID / 2); }
+    const move = (p) => ({ x: p.x + mx, y: p.y + my });
+    const mid = [first ? move(a) : null, ...pts.slice(1, -1).map((p, j) => (j === seg - 1 || j === seg ? move(p) : p)), last ? move(b) : null].filter(Boolean);
+    bends = mid;
     setBends(S, key, bends, false);
     drawFactoryEdges(zoomEl, S, plan);
-  }, () => { setBends(S, key, bends); selectLine(S, key, i); }, () => selectLine(S, key));
+  }, () => { setBends(S, key, bends); selectLine(S, key); }, () => selectLine(S, key));
 }
 
 /** Move an elbow point. */
@@ -976,6 +983,7 @@ function selectLine(S, key, bend = null) {
 
 /** Remove the selected elbow, or add one in the middle of the line's longest stretch. */
 function editSelectedLine(S, what) {
+  layoutHistory(S);
   const key = S.factory.selLine;
   const zoomEl = $("task-view")?.querySelector(".fa-zoom");
   const pts = key && zoomEl && currentPoints(zoomEl, key);
@@ -1019,7 +1027,7 @@ function lineSideHtml(S, plan) {
   } else {
     parts.push(`<div class="tk-dim">${n ? tx(n === 1 ? "{n} elbow point" : "{n} elbow points", { n }) : tx("No elbow points: it takes the shortest curve.")}</div>`);
     parts.push(`<div class="tk-row"><button class="tk-btn" data-fact="line-add">${tx("Add an elbow point")}</button>${S.factory.selBend != null ? `<button class="tk-btn" data-fact="line-remove">${tx("Remove the elbow point")}</button>` : ""}${n ? `<button class="tk-btn" data-fact="line-straight">${tx("Straighten the line")}</button>` : ""}</div>`);
-    parts.push(`<div class="tk-hint">${tx("Drag the line, or a + on it, to bend it there. Click an elbow point to select it, then ⌫ removes it; a double-click adds or removes one too. Esc lets go.")}</div>`);
+    parts.push(`<div class="tk-hint">${tx("Drag a stretch of the line to move it; click or drag a + for an elbow point there. Click an elbow point to select it, then ⌫ removes it; a double-click adds or removes one too. ⌘Z undoes, Esc lets go.")}</div>`);
   }
   return parts.join("");
 }
@@ -1027,6 +1035,7 @@ function lineSideHtml(S, plan) {
 /** Right-click on a line or an elbow: add, remove, straighten. */
 function factoryLineMenu(S, e) {
   if (!S.factory.unlocked) return false;
+  layoutHistory(S);
   const zoomEl = e.target.closest?.(".fa-zoom");
   const dot = e.target.closest?.(".fa-bend"), hit = e.target.closest?.(".fa-hit");
   if (!zoomEl || (!dot && !hit)) return false;
@@ -1049,17 +1058,56 @@ function factoryLineMenu(S, e) {
 }
 
 
-async function saveLayout(S, L) {
+async function saveLayout(S, L, { history = true } = {}) {
   const f = factoryById(S.factory.id);
   if (f) f.layout = L;
+  // Undo: the layout before this change goes on the factory's history.
+  if (history) {
+    const h = layoutHistory(S), now = JSON.stringify(L ?? null);
+    if (now !== h.current) { h.undo.push(h.current); if (h.undo.length > 100) h.undo.shift(); h.redo = []; h.current = now; }
+  }
   await invoke("factory_set_layout", { factory: S.factory.id, layout: L }).catch((e) => { const T = curS(); if (T) sys(T, `✗ ${e}`); });
 }
+
+// ---------- undo and redo ----------
+// Each factory's layout changes (boxes, line ends, elbows, Reset layout)
+// can be undone with ⌘Z and redone with ⇧⌘Z, while the diagram has the
+// keys (not the prompt). The history starts when you start editing.
+const layoutHistories = new Map(); // factory id -> { undo: [json], redo: [json], current: json }
+/** The factory's history, begun from its layout as it is now (call before a change). */
+function layoutHistory(S) {
+  let h = layoutHistories.get(S.factory.id);
+  if (!h) layoutHistories.set(S.factory.id, (h = { undo: [], redo: [], current: JSON.stringify(layoutOf(S) ?? null) }));
+  return h;
+}
+function undoLayout(S, redo = false) {
+  const h = layoutHistories.get(S.factory.id);
+  const from = redo ? h?.redo : h?.undo, to = redo ? h?.undo : h?.redo;
+  if (!from?.length) return false;
+  to.push(h.current);
+  h.current = from.pop();
+  const L = JSON.parse(h.current);
+  S.factory.selLine = null;
+  S.factory.selBend = null;
+  saveLayout(S, L, { history: false });
+  renderTaskView();
+  return true;
+}
+document.addEventListener("keydown", (e) => {
+  const S = curS();
+  if (!S?.factory || !e.metaKey || e.altKey || e.ctrlKey || e.code !== "KeyZ") return;
+  if (document.activeElement?.matches?.("textarea, input, select, [contenteditable]")) return;
+  if (undoLayout(S, e.shiftKey)) { e.preventDefault(); e.stopPropagation(); }
+}, true);
 
 /** Unlocked: press on a box to move it, or on a line's dot to move that end. */
 function factoryPointer(S, e, host) {
   if (e.button !== 0 || !S.factory.unlocked) return;
   const zoomEl = e.target.closest?.(".fa-zoom");
   if (!zoomEl?.classList.contains("fa-free")) return;
+  // Editing the diagram: its history from here, and ⌘Z for it, not the prompt.
+  layoutHistory(S);
+  if (document.activeElement?.matches?.("textarea, input")) document.activeElement.blur();
   const dot = e.target.closest(".fa-anchor");
   if (dot) return dragEnd(S, e, host, zoomEl, dot);
   const bend = e.target.closest(".fa-bend"), hit = e.target.closest(".fa-hit"), mid = e.target.closest(".fa-mid");
@@ -1581,7 +1629,10 @@ async function factoryClick(S, e, P) {
         break;
       case "layout-reset":
         if (!await askSure(tx("Reset this diagram's layout? The boxes and lines go back to where Paw puts them."), { yes: tx("Reset") })) break;
+        layoutHistory(S);
         await saveLayout(S, null);
+        // ⌘Z undoes it (the question had the prompt take the keys).
+        if (document.activeElement?.matches?.("textarea, input")) document.activeElement.blur();
         withPane(P, renderTaskView);
         break;
       case "answer": {

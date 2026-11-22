@@ -269,7 +269,7 @@ I18N.add("de", {
   "Its file and its run history go to the Trash, where you can put them back.": "Ihre Datei und ihr Lauf-Verlauf kommen in den Papierkorb, wo du sie zurücklegen kannst.",
   "— factory {name} deleted: its file and run history are in the Trash.": "— Fabrik {name} gelöscht: Ihre Datei und ihr Lauf-Verlauf liegen im Papierkorb.",
   // laying the diagram out by hand
-  "Drag boxes, lines and their dots · double-click a line for an elbow, an elbow to remove it · ⌥ doesn't snap": "Zieh Kästen, Linien und ihre Punkte · Doppelklick auf eine Linie setzt einen Knick, auf einen Knick entfernt ihn · ⌥ rastet nicht ein",
+  "Drag boxes and lines · click a line for its + handles · double-click adds or removes an elbow · ⌘Z undoes · ⌥ doesn't snap": "Zieh Kästen und Linien · klick eine Linie für ihre +-Griffe · Doppelklick setzt oder entfernt einen Knick · ⌘Z macht rückgängig · ⌥ rastet nicht ein",
   "Lock the layout": "Anordnung sperren",
   "Unlock the layout: move the boxes and where lines meet them": "Anordnung entsperren: Kästen verschieben und wo Linien sie treffen",
   "Put the boxes and lines back where Paw puts them": "Kästen und Linien dorthin zurücksetzen, wo Paw sie hinsetzt",
@@ -313,6 +313,6 @@ I18N.add("de", {
   "No elbow points: it takes the shortest curve.": "Keine Knicke: Sie nimmt die kürzeste Kurve.",
   "Add an elbow point": "Knick setzen",
   "Remove the elbow point": "Knick entfernen",
-  "Drag the line, or a + on it, to bend it there. Click an elbow point to select it, then ⌫ removes it; a double-click adds or removes one too. Esc lets go.": "Zieh die Linie oder ein + darauf, um sie dort zu biegen. Klick einen Knick an, um ihn auszuwählen; ⌫ entfernt ihn. Ein Doppelklick setzt oder entfernt auch einen. Esc hebt die Auswahl auf.",
+  "Drag a stretch of the line to move it; click or drag a + for an elbow point there. Click an elbow point to select it, then ⌫ removes it; a double-click adds or removes one too. ⌘Z undoes, Esc lets go.": "Zieh einen Abschnitt der Linie, um ihn zu verschieben; klick oder zieh ein +, um dort einen Knick zu setzen. Klick einen Knick an, um ihn auszuwählen; ⌫ entfernt ihn. Ein Doppelklick setzt oder entfernt auch einen. ⌘Z macht rückgängig, Esc hebt die Auswahl auf.",
   "Connection": "Verbindung",
 });

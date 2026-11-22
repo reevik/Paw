@@ -540,8 +540,10 @@ function renderFactoryView(S, host) {
   host.innerHTML = head + body;
   const g = host.querySelector(".fa-graph");
   if (g) {
-    // Boxes where the layout puts them (now, before the first paint).
+    // Boxes where the layout puts them (now, before the first paint), and
+    // the lines and their handles too, so there's no moment without them.
     placeNodes(g.querySelector(".fa-zoom"), S);
+    drawFactoryEdges(g.querySelector(".fa-zoom"), S, plan);
     requestAnimationFrame(() => {
       drawFactoryEdges(g.querySelector(".fa-zoom"), S, plan);
       applyZoom(host, S);
@@ -670,6 +672,7 @@ const layoutOf = (S) => factoryById(S.factory.id)?.layout ?? null;
 const END_FROM = { side: "r", t: 0.5 }, END_TO = { side: "l", t: 0.5 };
 const GRID = 10, SNAP_PX = 6;
 let factoryDragAt = 0; // a drag just ended: the click that follows doesn't select
+let factoryPress = null; // the last press on a line or elbow (for double-clicks)
 
 /** Free positions: when unlocked, or when the layout places boxes. Each box
  *  goes where it was saved, else where the columns had it. */
@@ -761,9 +764,10 @@ function drawLinks(g, S, plan) {
       // Through its elbow points when it has some, else a curve between its ends.
       const elbows = bendsOf(S, key);
       const d = elbows ? polyPath([a, ...elbows, b]) : `M${a.x},${a.y} C${a.x + a.nx * k1},${a.y + a.ny * k1} ${b.x + b.nx * k2},${b.y + b.ny * k2} ${b.x},${b.y}`;
-      paths += `<path class="${live ? "live" : ""}${cond}" d="${d}"/>`;
+      const picked = S.factory.unlocked && S.factory.selLine === key ? " sel" : "";
+      paths += `<path class="${live ? "live" : ""}${cond}${picked}" d="${d}"/>`;
       if (S.factory.unlocked) {
-        dots += lineHandles(key, d, [a, ...(elbows ?? []), b]);
+        dots += lineHandles(key, d, [a, ...(elbows ?? []), b], S);
         for (const [end, p] of [["from", a], ["to", b]]) dots += `<circle class="fa-anchor" r="4.5" cx="${p.x}" cy="${p.y}" data-edge="${esc(key)}" data-end="${end}"><title>${esc(tx("Drag along the box's edge"))}</title></circle>`;
       }
     }
@@ -806,13 +810,24 @@ function polyPath(pts, r = 8) {
   return `${d} L${e.x},${e.y}`;
 }
 
-/** A line's handles: a wide invisible path to grab it, and its elbow dots. */
-function lineHandles(key, d, pts) {
+/** A line's handles: a wide invisible path to grab it, its elbow dots, and
+ *  when it's selected, a + in the middle of each stretch. */
+function lineHandles(key, d, pts, S) {
   const k = esc(key);
+  const sel = S?.factory.selLine === key;
   const at = esc(JSON.stringify(pts.map((p) => ({ x: Math.round(p.x * 10) / 10, y: Math.round(p.y * 10) / 10 }))));
-  let out = `<path class="fa-hit" d="${d}" data-line="${k}" data-pts="${at}"><title>${esc(tx("Drag to bend the line · double-click for an elbow point"))}</title></path>`;
+  let out = `<path class="fa-hit${sel ? " sel" : ""}" d="${d}" data-line="${k}" data-pts="${at}"><title>${esc(tx("Click to select · drag to bend · double-click for an elbow point"))}</title></path>`;
+  if (sel) {
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i], b = pts[i + 1];
+      if (Math.hypot(b.x - a.x, b.y - a.y) < 30) continue;
+      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      out += `<g class="fa-mid" data-line="${k}" data-seg="${i}" cx="${mx}" cy="${my}"><circle r="6" cx="${mx}" cy="${my}"/><path d="M${mx - 3},${my} H${mx + 3} M${mx},${my - 3} V${my + 3}"/><title>${esc(tx("Click or drag for an elbow point here"))}</title></g>`;
+    }
+  }
   for (let i = 1; i < pts.length - 1; i++) {
-    out += `<circle class="fa-bend" r="4" cx="${pts[i].x}" cy="${pts[i].y}" data-line="${k}" data-i="${i - 1}"><title>${esc(tx("Drag to move · double-click to remove"))}</title></circle>`;
+    const on = sel && S.factory.selBend === i - 1;
+    out += `<circle class="fa-bend${on ? " sel" : ""}" r="${on ? 5 : 4}" cx="${pts[i].x}" cy="${pts[i].y}" data-line="${k}" data-i="${i - 1}"><title>${esc(tx("Click to select · drag to move · double-click to remove"))}</title></circle>`;
   }
   return out;
 }
@@ -876,7 +891,7 @@ function dragLine(S, e, host, zoomEl, hit) {
       const L = structuredClone(layoutOf(S) ?? {}); L.v = 1; L.repeat_y = y;
       const f = factoryById(S.factory.id); if (f) f.layout = L;
       drawFactoryEdges(zoomEl, S, plan);
-    }, () => saveLayout(S, layoutOf(S)));
+    }, () => { saveLayout(S, layoutOf(S)); selectLine(S, "repeat"); }, () => selectLine(S, "repeat"));
     return;
   }
   const pts = currentPoints(zoomEl, key);
@@ -892,7 +907,7 @@ function dragLine(S, e, host, zoomEl, hit) {
     bends[i] = ev.altKey ? p : snapBend(p, [pts[0], ...bends][i], [...bends, pts.at(-1)][i + 1], SNAP_PX / z);
     setBends(S, key, bends, false);
     drawFactoryEdges(zoomEl, S, plan);
-  }, () => setBends(S, key, bends));
+  }, () => { setBends(S, key, bends); selectLine(S, key, i); }, () => selectLine(S, key));
 }
 
 /** Move an elbow point. */
@@ -910,27 +925,103 @@ function dragBend(S, e, host, zoomEl, dot) {
     bends[i] = ev.altKey ? p : snapBend(p, pts[i], pts[i + 2], SNAP_PX / z);
     setBends(S, key, bends, false);
     drawFactoryEdges(zoomEl, S, plan);
-  }, () => setBends(S, key, bends));
+  }, () => { setBends(S, key, bends); selectLine(S, key, i); }, () => selectLine(S, key, i));
 }
 
-/** Double-click: on an elbow takes it away, on a line adds one there. */
-function factoryDblClick(S, e, host) {
-  if (!S.factory.unlocked) return false;
-  const zoomEl = e.target.closest?.(".fa-zoom");
-  if (!zoomEl) return false;
-  const dot = e.target.closest(".fa-bend"), hit = e.target.closest(".fa-hit");
-  if (!dot && !hit) return false;
+/** A + in the middle of a selected line's stretch: click for an elbow there, or drag it. */
+function dragMid(S, e, host, zoomEl, mid) {
   e.preventDefault();
-  const key = (dot ?? hit).dataset.line;
-  if (key === "repeat") return true;
+  e.stopPropagation();
+  const key = mid.dataset.line, seg = Number(mid.dataset.seg);
   const pts = currentPoints(zoomEl, key);
-  if (!pts) return true;
+  if (!pts) return;
   const bends = pts.slice(1, -1);
-  if (dot) bends.splice(Number(dot.dataset.i), 1);
-  else { const p = diagramPoint(zoomEl, e); bends.splice(segmentAt(pts, p), 0, p); }
+  const p0 = { x: Number(mid.getAttribute("cx")), y: Number(mid.getAttribute("cy")) };
+  bends.splice(seg, 0, p0);
+  const plan = factoryPlan(S);
+  const z = Number(zoomEl.dataset.zoom) || 1;
+  follow(e, host, (ev) => {
+    const p = diagramPoint(zoomEl, ev);
+    bends[seg] = ev.altKey ? p : snapBend(p, [pts[0], ...bends][seg], [...bends, pts.at(-1)][seg + 1], SNAP_PX / z);
+    setBends(S, key, bends, false);
+    drawFactoryEdges(zoomEl, S, plan);
+  }, () => { setBends(S, key, bends); selectLine(S, key, seg); }, () => { setBends(S, key, bends); selectLine(S, key, seg); });
+}
+
+/** A double press: on an elbow takes it away, on a line adds one there. */
+function lineDouble(S, zoomEl, bend, hit, e) {
+  const key = (bend ?? hit).dataset.line;
+  if (key === "repeat") return;
+  const pts = currentPoints(zoomEl, key);
+  if (!pts) return;
+  const bends = pts.slice(1, -1);
+  let sel = null;
+  if (bend) bends.splice(Number(bend.dataset.i), 1);
+  else { const p = diagramPoint(zoomEl, e); sel = segmentAt(pts, p); bends.splice(sel, 0, p); }
   setBends(S, key, bends);
-  drawFactoryEdges(zoomEl, S, factoryPlan(S));
-  return true;
+  selectLine(S, key, sel);
+}
+
+/** Select a line (and one of its elbows), or nothing; the side panel shows it. */
+function selectLine(S, key, bend = null) {
+  S.factory.selLine = key || null;
+  S.factory.selBend = key && bend != null ? bend : null;
+  if (key) {
+    S.factory.selected = null;
+    // Keys (⌫, Esc) go to the diagram, not the prompt.
+    if (document.activeElement?.matches?.("textarea, input")) document.activeElement.blur();
+  }
+  renderTaskView();
+}
+
+/** Remove the selected elbow, or add one in the middle of the line's longest stretch. */
+function editSelectedLine(S, what) {
+  const key = S.factory.selLine;
+  const zoomEl = $("task-view")?.querySelector(".fa-zoom");
+  const pts = key && zoomEl && currentPoints(zoomEl, key);
+  if (!pts) return;
+  const bends = pts.slice(1, -1);
+  if (what === "straight") { setBends(S, key, null); return selectLine(S, key); }
+  if (what === "remove" && S.factory.selBend != null) { bends.splice(S.factory.selBend, 1); setBends(S, key, bends); return selectLine(S, key); }
+  if (what === "add") {
+    let at = 0, len = -1;
+    for (let i = 0; i < pts.length - 1; i++) { const l = Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y); if (l > len) { len = l; at = i; } }
+    bends.splice(at, 0, { x: (pts[at].x + pts[at + 1].x) / 2, y: (pts[at].y + pts[at + 1].y) / 2 });
+    setBends(S, key, bends);
+    selectLine(S, key, at);
+  }
+}
+
+// ⌫ / Delete removes the selected elbow, Esc lets go of the selection.
+document.addEventListener("keydown", (e) => {
+  const S = curS();
+  if (!S?.factory?.unlocked || !S.factory.selLine || document.activeElement?.matches?.("textarea, input, select, [contenteditable]")) return;
+  if ((e.key === "Backspace" || e.key === "Delete") && S.factory.selBend != null) {
+    e.preventDefault(); e.stopPropagation();
+    editSelectedLine(S, "remove");
+  } else if (e.key === "Escape") {
+    e.preventDefault(); e.stopPropagation();
+    selectLine(S, null);
+  }
+}, true);
+
+/** The side panel for a selected line. */
+function lineSideHtml(S, plan) {
+  const key = S.factory.selLine;
+  const title = (id) => plan.steps.find((x) => x.id === id)?.title ?? id;
+  const what = key === "repeat" ? tx("The repeat line")
+    : key.startsWith("loop:") ? tx("The loop back from {node}", { node: esc(title(key.slice(5))) })
+    : tx("From {from} to {to}", { from: esc(title(key.split(">")[0])), to: esc(title(key.split(">")[1])) });
+  const n = bendsOf(S, key)?.length ?? 0;
+  const parts = [`<div class="tk-side-title">${tx("Connection")}</div>`, `<div>${what}</div>`];
+  if (key === "repeat") {
+    parts.push(`<div class="tk-dim">${tx("Drag it up or down.")}</div>`);
+  } else {
+    parts.push(`<div class="tk-dim">${n ? tx(n === 1 ? "{n} elbow point" : "{n} elbow points", { n }) : tx("No elbow points: it takes the shortest curve.")}</div>`);
+    parts.push(`<div class="tk-row"><button class="tk-btn" data-fact="line-add">${tx("Add an elbow point")}</button>${S.factory.selBend != null ? `<button class="tk-btn" data-fact="line-remove">${tx("Remove the elbow point")}</button>` : ""}${n ? `<button class="tk-btn" data-fact="line-straight">${tx("Straighten the line")}</button>` : ""}</div>`);
+    parts.push(`<div class="tk-hint">${tx("Drag the line, or a + on it, to bend it there. Click an elbow point to select it, then ⌫ removes it; a double-click adds or removes one too. Esc lets go.")}</div>`);
+  }
+  return parts.join("");
 }
 
 /** Right-click on a line or an elbow: add, remove, straighten. */
@@ -971,16 +1062,31 @@ function factoryPointer(S, e, host) {
   if (!zoomEl?.classList.contains("fa-free")) return;
   const dot = e.target.closest(".fa-anchor");
   if (dot) return dragEnd(S, e, host, zoomEl, dot);
-  const bend = e.target.closest(".fa-bend");
+  const bend = e.target.closest(".fa-bend"), hit = e.target.closest(".fa-hit"), mid = e.target.closest(".fa-mid");
+  // A second press on the same line or elbow soon after: a double-click
+  // (counted here: a press that may start a drag keeps WebKit from sending one).
+  const target = bend ? `b:${bend.dataset.line}:${bend.dataset.i}` : hit ? `l:${hit.dataset.line}` : null;
+  if (target) {
+    const now = Date.now(), last = factoryPress;
+    factoryPress = { target, t: now, x: e.clientX, y: e.clientY };
+    if (last?.target === target && now - last.t < 450 && Math.hypot(e.clientX - last.x, e.clientY - last.y) < 8) {
+      factoryPress = null;
+      e.preventDefault();
+      return lineDouble(S, zoomEl, bend, hit, e);
+    }
+  }
+  if (mid) return dragMid(S, e, host, zoomEl, mid);
   if (bend) return dragBend(S, e, host, zoomEl, bend);
-  const hit = e.target.closest(".fa-hit");
   if (hit) return dragLine(S, e, host, zoomEl, hit);
+  // A press on empty space: nothing selected.
+  if (!e.target.closest(".tk-node") && S.factory.selLine) selectLine(S, null);
   const node = e.target.closest(".tk-node");
   if (node) dragBox(S, e, host, zoomEl, node);
 }
 
-/** Follow the pointer until it's let go (moves of 3px or more count). */
-function follow(e, host, move, done) {
+/** Follow the pointer until it's let go (moves of 3px or more count); not
+ *  moved, it was a click (`click`). */
+function follow(e, host, move, done, click) {
   const sx = e.clientX, sy = e.clientY;
   let moved = false;
   const mv = (ev) => {
@@ -992,7 +1098,7 @@ function follow(e, host, move, done) {
     window.removeEventListener("pointermove", mv);
     window.removeEventListener("pointerup", up);
     window.removeEventListener("pointercancel", up);
-    if (!moved) return;
+    if (!moved) { click?.(ev); return; }
     delete host.dataset.dragging;
     document.body.classList.remove("fa-dragging");
     factoryDragAt = Date.now();
@@ -1193,8 +1299,9 @@ function drawFactoryEdges(g, S, plan = factoryPlan(S)) {
     let li = 0, ll = -1;
     for (let i = 0; i < pts.length - 1; i++) { const l = Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y); if (l > ll) { ll = l; li = i; } }
     const mid = { x: (pts[li].x + pts[li + 1].x) / 2, y: (pts[li].y + pts[li + 1].y) / 2 };
-    svg.insertAdjacentHTML("beforeend", `<path class="fa-loop-line fa-back${live}" d="${d}"/>${head(pts.at(-2), pts.at(-1), " fa-back")}<text class="fa-loop-label" x="${mid.x}" y="${mid.y - 4}" text-anchor="middle">${esc(label.length > 60 ? label.slice(0, 59) + "…" : label)}</text>`);
-    if (S.factory.unlocked) handles += lineHandles(key, d, pts);
+    const picked = S.factory.unlocked && S.factory.selLine === key ? " sel" : "";
+    svg.insertAdjacentHTML("beforeend", `<path class="fa-loop-line fa-back${live}${picked}" d="${d}"/>${head(pts.at(-2), pts.at(-1), " fa-back")}<text class="fa-loop-label" x="${mid.x}" y="${mid.y - 4}" text-anchor="middle">${esc(label.length > 60 ? label.slice(0, 59) + "…" : label)}</text>`);
+    if (S.factory.unlocked) handles += lineHandles(key, d, pts, S);
   }
   if (!repeats(plan.def)) return done();
   const needed = new Set(plan.steps.flatMap((s) => s.needs));
@@ -1216,8 +1323,9 @@ function drawFactoryEdges(g, S, plan = factoryPlan(S)) {
   const o = typeof plan.def.repeat === "object" ? plan.def.repeat : {};
   const label = o.after ? tx("repeat after {after}", { after: o.after }) : tx("repeat");
   const live = plan.run?.state === "running" ? " live" : "";
-  svg.insertAdjacentHTML("beforeend", `<path class="fa-loop-line${live}" d="${d}"/>${arrows}<text class="fa-loop-label" x="${(left + right) / 2}" y="${y - 5}" text-anchor="middle">${esc(label)}</text>`);
-  if (S.factory.unlocked) handles += `<path class="fa-hit" d="M${Math.min(left, right) - r},${y} H${Math.max(left, right) + r}" data-line="repeat" data-lane="${y}"><title>${esc(tx("Drag the line up or down"))}</title></path>`;
+  const picked = S.factory.unlocked && S.factory.selLine === "repeat" ? " sel" : "";
+  svg.insertAdjacentHTML("beforeend", `<path class="fa-loop-line${live}${picked}" d="${d}"/>${arrows}<text class="fa-loop-label" x="${(left + right) / 2}" y="${y - 5}" text-anchor="middle">${esc(label)}</text>`);
+  if (S.factory.unlocked) handles += `<path class="fa-hit${S.factory.selLine === "repeat" ? " sel" : ""}" d="M${Math.min(left, right) - r},${y} H${Math.max(left, right) + r}" data-line="repeat" data-lane="${y}"><title>${esc(tx("Drag the line up or down"))}</title></path>`;
   done();
 }
 
@@ -1279,6 +1387,8 @@ function fmtWhen(ms) {
 const chips = (list) => list.map((x) => `<span class="fa-chip">${esc(x)}</span>`).join("");
 
 function factorySideHtml(S, plan, f) {
+  // A selected line (unlocked): its own panel.
+  if (S.factory.unlocked && S.factory.selLine) return lineSideHtml(S, plan);
   const { def, run } = plan;
   const node = def.nodes.find((n) => n.id === S.factory.selected);
   if (!node) return factorySummaryHtml(S, plan, f);
@@ -1434,6 +1544,8 @@ async function factoryClick(S, e, P) {
   if (node) {
     if (Date.now() - factoryDragAt < 300) return; // the end of a drag, not a click
     S.factory.selected = S.factory.selected === node.dataset.step ? null : node.dataset.step;
+    S.factory.selLine = null;
+    S.factory.selBend = null;
     saveWorkspaceSoon();
     withPane(P, renderTaskView);
     return;
@@ -1457,8 +1569,13 @@ async function factoryClick(S, e, P) {
       case "zoom-in": case "zoom-out": setZoom(S, withPane(P, () => $("task-view")), b.dataset.fact.slice(5)); break;
       case "zoom-100": setZoom(S, withPane(P, () => $("task-view")), 1); break;
       case "zoom-fit": setZoom(S, withPane(P, () => $("task-view")), "fit"); break;
+      case "line-add": editSelectedLine(S, "add"); break;
+      case "line-remove": editSelectedLine(S, "remove"); break;
+      case "line-straight": editSelectedLine(S, "straight"); break;
       case "lock":
         S.factory.unlocked = !S.factory.unlocked;
+        S.factory.selLine = null;
+        S.factory.selBend = null;
         saveWorkspaceSoon();
         withPane(P, renderTaskView);
         break;

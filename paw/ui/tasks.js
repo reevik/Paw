@@ -987,8 +987,7 @@ function bindTaskView(P) {
       for (const Q of panes.values()) withPane(Q, renderTaskView);
     });
   });
-  // A factory's unlocked diagram: elbow points on its lines.
-  host.addEventListener("dblclick", (e) => { const T = S(); if (T?.factory) factoryDblClick(T, e, host); });
+  // A factory's unlocked diagram: right-click a line or an elbow point.
   host.addEventListener("contextmenu", (e) => { const T = S(); if (T?.factory && factoryLineMenu(T, e)) e.stopPropagation(); });
   host.addEventListener("dblclick", (e) => {
     if (!e.target.classList?.contains("tk-vsplit")) return;

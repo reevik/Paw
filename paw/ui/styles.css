@@ -1407,6 +1407,15 @@ body.fa-dragging, body.fa-dragging * { cursor: grabbing !important; user-select:
 .fa-anchors .fa-hit:hover { stroke: color-mix(in srgb, var(--accent) 22%, transparent); }
 .fa-anchors .fa-bend { pointer-events: all; cursor: move; fill: var(--t-bg-solid, var(--t-bg, #fff)); stroke: var(--accent); stroke-width: 1.5; }
 .fa-anchors .fa-bend:hover { r: 5.5; }
+/* A selected line: drawn in the accent color, with + handles to add elbows. */
+.tk-edges path.sel { stroke: var(--accent); stroke-width: 2.5; }
+.tk-edges .fa-loop-line.sel { stroke: var(--accent); stroke-width: 2.5; }
+.fa-anchors .fa-hit.sel { stroke: color-mix(in srgb, var(--accent) 16%, transparent); }
+.fa-anchors .fa-bend.sel { fill: var(--accent); stroke: var(--t-bg-solid, var(--t-bg, #fff)); }
+.fa-anchors .fa-mid { pointer-events: all; cursor: copy; }
+.fa-anchors .fa-mid circle { fill: var(--t-bg-solid, var(--t-bg, #fff)); stroke: var(--accent); stroke-width: 1.2; opacity: .85; }
+.fa-anchors .fa-mid path { stroke: var(--accent); stroke-width: 1.4; stroke-linecap: round; }
+.fa-anchors .fa-mid:hover circle { opacity: 1; fill: color-mix(in srgb, var(--accent) 15%, var(--t-bg-solid, #fff)); }
 .fa-guide { position: absolute; z-index: 2; pointer-events: none; background: color-mix(in srgb, var(--accent) 75%, transparent); }
 .fa-guide-v { top: 0; bottom: 0; width: 1px; }
 .fa-guide-h { left: 0; right: 0; height: 1px; }

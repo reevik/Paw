@@ -509,4 +509,13 @@ I18N.add("de", {
   "OK": "OK",
   // a tab keeps its sandbox
   "Settings › Sandbox has changed since this tab started: new tabs get the new setting, this one keeps its own.": "Einstellungen › Sandbox wurde geändert, seit dieser Tab gestartet ist: Neue Tabs bekommen die neue Einstellung, dieser behält seine.",
+  // forking a tab
+  "— forked from “{tab}”: the conversation so far comes along; from here on, each tab goes its own way.": "— abgezweigt von „{tab}“: Die bisherige Unterhaltung kommt mit; ab hier geht jeder Tab seinen eigenen Weg.",
+  "Only a Paw Agent tab can be forked, not a plan's, a factory's or a factory node's.": "Nur ein Paw-Agent-Tab lässt sich abzweigen, nicht der eines Plans, einer Fabrik oder eines Fabrik-Knotens.",
+  "{name} is still answering: fork the tab once it's done.": "{name} antwortet noch: Zweig den Tab ab, wenn es fertig ist.",
+  "a new tab that goes on from this conversation (and sends the prompt there)": "ein neuer Tab, der von dieser Unterhaltung aus weitergeht (und den Prompt dort sendet)",
+  "fork this tab: a new tab going on from its conversation": "diesen Tab abzweigen: ein neuer Tab, der von seiner Unterhaltung aus weitergeht",
+  "what to ask in the new tab (optional)": "was im neuen Tab gefragt werden soll (optional)",
+  "Fork Tab": "Tab abzweigen",
+  "{tab} (fork)": "{tab} (Abzweigung)",
 });

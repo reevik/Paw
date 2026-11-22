@@ -796,3 +796,19 @@ fn a_node_with_some_tools_is_told_only_about_those() {
     let none = build_preamble(&dir, "plan", true, "", None, Some(&[]));
     assert!(none.contains("no built-in tools"));
 }
+
+#[test]
+fn a_fork_copies_the_conversation_under_a_new_id() {
+    let home = std::env::temp_dir().join(format!("paw-fork-test-{}", std::process::id()));
+    let conv = home.join("session").join("aaaa1111").join("conversations");
+    std::fs::create_dir_all(&conv).unwrap();
+    std::fs::write(conv.join("0123abcd-0000.json"), "[{\"role\":\"user\"}]").unwrap();
+    let id = fork_conversation_in(&home, "aaaa1111", "0123abcd-0000", "bbbb2222").unwrap();
+    assert_ne!(id, "0123abcd-0000");
+    let copy = home.join("session").join("bbbb2222").join("conversations").join(format!("{id}.json"));
+    assert_eq!(std::fs::read_to_string(copy).unwrap(), "[{\"role\":\"user\"}]");
+    assert!(fork_conversation_in(&home, "aaaa1111", "../etc", "bbbb2222").is_err(), "only conversation ids");
+    assert!(fork_conversation_in(&home, "../x", "0123abcd-0000", "bbbb2222").is_err(), "only session ids");
+    assert!(fork_conversation_in(&home, "aaaa1111", "0123abcd-9999", "bbbb2222").is_err(), "nothing to fork");
+    let _ = std::fs::remove_dir_all(&home);
+}

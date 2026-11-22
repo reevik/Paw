@@ -290,6 +290,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         file.append_items(&[
             &key("new-tab", "New Tab", "Cmd+T")?,
             &key("new-tab-with", "New Tab with Another Model…", "Shift+Cmd+T")?,
+            &item("fork-tab", "Fork Tab")?,
             &sep()?,
             &item("new-plan", "New Plan…")?,
             &item("new-factory", "New Factory…")?,
@@ -437,7 +438,7 @@ fn apply_menu_state(menu: &Menu<tauri::Wry>) {
 
 /// The menu's items the window acts on (ui:menu): Paw's own, by id.
 const MENU_ACTIONS: &[&str] = &[
-    "new-tab", "new-tab-with", "new-plan", "new-factory", "attach-files", "session-folder", "close-tab",
+    "new-tab", "new-tab-with", "fork-tab", "new-plan", "new-factory", "attach-files", "session-folder", "close-tab",
     "split-row", "split-column", "toggle-panel", "font-bigger", "font-smaller", "font-reset", "clear", "interrupt", "sandbox-toggle",
     "factory-run", "factory-stop", "factory-lock", "factory-reset-layout", "factory-edit", "factory-delete",
     "next-tab", "prev-tab", "check-updates", "help-readme", "help-factories", "help-sandbox", "help-issue",
@@ -696,6 +697,7 @@ fn main() {
             paw_agent::paw_agent_close,
             paw_agent::paw_agent_approve,
             paw_agent::paw_agent_sandbox,
+            paw_agent::paw_agent_fork_conversation,
             paw_agent::paw_key_status,
             paw_agent::paw_key_sources,
             paw_agent::paw_key_set,

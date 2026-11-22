@@ -509,4 +509,13 @@ I18N.add("tr", {
   "OK": "Tamam",
   // a tab keeps its sandbox
   "Settings › Sandbox has changed since this tab started: new tabs get the new setting, this one keeps its own.": "Bu sekme açıldığından beri Ayarlar › Korumalı Alan değişti: yeni sekmeler yeni ayarı alır, bu sekme kendininkini korur.",
+  // forking a tab
+  "— forked from “{tab}”: the conversation so far comes along; from here on, each tab goes its own way.": "— “{tab}” sekmesinden çatallandı: şimdiye kadarki konuşma da geldi; buradan sonra her sekme kendi yoluna gider.",
+  "Only a Paw Agent tab can be forked, not a plan's, a factory's or a factory node's.": "Yalnızca bir Paw Agent sekmesi çatallanabilir; bir planın, fabrikanın ya da fabrika düğümünün sekmesi çatallanamaz.",
+  "{name} is still answering: fork the tab once it's done.": "{name} hâlâ yanıtlıyor: bitince sekmeyi çatallayın.",
+  "a new tab that goes on from this conversation (and sends the prompt there)": "bu konuşmadan devam eden yeni bir sekme (ve istemi oraya gönderir)",
+  "fork this tab: a new tab going on from its conversation": "bu sekmeyi çatalla: konuşmasından devam eden yeni bir sekme",
+  "what to ask in the new tab (optional)": "yeni sekmede ne sorulacağı (isteğe bağlı)",
+  "Fork Tab": "Sekmeyi Çatalla",
+  "{tab} (fork)": "{tab} (çatal)",
 });

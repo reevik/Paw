@@ -38,6 +38,7 @@ fn tr_in(lang: &str, en: &'static str) -> &'static str {
         "Factory" => ("Fabrik", "Fabrika"),
         "New Tab" => ("Neuer Tab", "Yeni Sekme"),
         "New Tab with Another Model…" => ("Neuer Tab mit anderem Modell…", "Başka Modelle Yeni Sekme…"),
+        "Fork Tab" => ("Tab abzweigen", "Sekmeyi Çatalla"),
         "New Plan…" => ("Neuer Plan…", "Yeni Plan…"),
         "New Factory…" => ("Neue Fabrik…", "Yeni Fabrika…"),
         "Attach Files…" => ("Dateien anhängen…", "Dosya Ekle…"),

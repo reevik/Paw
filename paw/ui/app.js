@@ -339,15 +339,37 @@ async function newSession(agentId, opts = {}) {
   if (opts.factory) S.factory = opts.factory;
   if (opts.stepOf) S.stepOf = opts.stepOf;
   if (opts.nodeOf) S.nodeOf = opts.nodeOf; // a factory node's session: its agent is the node's
+  // A fork: the tab it comes from, its conversation so far (a copy), and how it was set up.
+  const F = opts.fork;
+  if (F) {
+    S.lines = structuredClone(F.lines ?? []);
+    S.history = [...(F.history ?? [])];
+    S.histIdx = S.history.length;
+    S.turns = structuredClone(F.turns ?? []);
+    S.inputMode = F.inputMode ?? S.inputMode;
+    if (F.sandboxMode) S.sandboxMode = F.sandboxMode;
+    if (F.sandboxPrograms?.length) S.sandboxPrograms = [...F.sandboxPrograms];
+    if (F.session) {
+      try {
+        S.session = await invoke("paw_agent_fork_conversation", { from: F.pawId, conversation: F.session, to: S.pawId });
+      } catch (e) {
+        S.lines.push({ stream: "system", ts: Date.now(), text: `✗ ${e}` });
+      }
+    }
+    S.lines.push({ stream: "system", ts: Date.now(), text: tx("— forked from “{tab}”: the conversation so far comes along; from here on, each tab goes its own way.", { tab: tabLabel(F) }) });
+    // Told apart from the tab it comes from (Rename… changes it).
+    S.title = tx("{tab} (fork)", { tab: tabLabel(F) });
+  }
   sessions.set(S.sid, S);
   openTabs.splice(opts.after ? tabInsertIndex(opts.after) : openTabs.length, 0, S.sid);
   // A task and its steps are a group; a step joins its task's.
   if (opts.task) ensureTaskGroup(S);
   if (opts.stepOf && opts.after) addToGroup(S, ensureTaskGroup(opts.after), false);
-  banner(S);
+  if (!F) banner(S);
   if (opts.background) { renderTabs(); saveWorkspaceSoon(); } else select(S.sid);
   openShell(S);
-  if (S.mode !== "oneshot" && !S.nodeOf) await startProc(S);
+  // A fork's agent goes on from the copy of the conversation.
+  if (S.mode !== "oneshot" && !S.nodeOf) await startProc(S, undefined, { resume: !!(F && S.session) });
   return S;
 }
 
@@ -625,6 +647,26 @@ async function restart(S, reason, { resume = true, quiet = false } = {}) {
   if (S.mode !== "oneshot") await startProc(S, undefined, { resume });
   else refresh(S);
 }
+
+// ---------- forking a tab ----------
+/** A new tab next to this one, going on from its conversation (a copy): the
+ *  same model, folder and sandbox, its transcript and prompt history; from
+ *  there each tab goes its own way. Plain Paw Agent tabs only. */
+async function forkTab(F) {
+  if (!F) return null;
+  if (!isPaw(F.agent) || F.nodeOf || F.factory || F.task || F.stepOf) {
+    sys(F, tx("Only a Paw Agent tab can be forked, not a plan's, a factory's or a factory node's."));
+    return null;
+  }
+  if (F.working || isBusy(F)) {
+    sys(F, tx("{name} is still answering: fork the tab once it's done.", { name: F.agent.name }));
+    return null;
+  }
+  const T = await newSession("paw", { cwd: F.cwd, model: F.model, approval: F.approval, after: F, fork: F });
+  if (T && F.group && groups.has(F.group)) addToGroup(T, F.group, false);
+  return T;
+}
+const canFork = (S) => !!S && isPaw(S.agent) && !S.nodeOf && !S.factory && !S.task && !S.stepOf && !S.working && !isBusy(S);
 
 // ---------- "Are you sure…?" in the tab ----------
 // Destructive actions ask in the tab, not in a dialog: the question with Yes
@@ -954,6 +996,7 @@ function helpHtml(S) {
     row("/restart", tx("restart the agent (conversation continues)")),
     row("/stop", tx("stop the agent or running command (⌘. · Ctrl-C)")),
     row(CLI_AGENTS ? "/new [agent]" : "/new [model]", tx("open a new tab with a new conversation")),
+    row("/fork [prompt]", tx("a new tab that goes on from this conversation (and sends the prompt there)")),
     row("/plan [what]", CLI_AGENTS ? tx("make a plan with {name} and run its steps on several agents (pasted text counts too)", { name }) : tx("make a plan with {name} and run its steps on several models (pasted text counts too)", { name })),
     row("/plans", tx("list the open plans and how far each one is (click one to open it)")),
     row("/factories", tx("list your factories and their last runs (click one to open it)")),
@@ -1082,6 +1125,11 @@ async function slashCommand(S, line) {
       echo();
       await interrupt(S);
       return true;
+    case "/fork": {
+      const T = await forkTab(S);
+      if (T && arg) { T.draft = ""; await submit(arg); }
+      return true;
+    }
     case "/new": {
       if (CLI_AGENTS || !arg) { await newSession(arg || undefined); return true; }
       const m = findModel(arg);
@@ -1578,6 +1626,7 @@ function slashSpecs(S) {
     { cmd: "/restart", desc: tx("restart the agent (conversation continues)") },
     { cmd: "/stop", desc: tx("stop the agent or running command") },
     { cmd: "/new", usage: "[model]", desc: tx("open a new tab with a new conversation"), args: (w) => (w.length ? {} : models()) },
+    { cmd: "/fork", usage: "[prompt]", desc: tx("fork this tab: a new tab going on from its conversation"), args: () => ({ free: tx("what to ask in the new tab (optional)") }) },
     { cmd: "/plan", usage: "[what]", desc: tx("make a plan with {name} and run its steps", { name }), args: () => ({ free: tx("what you want done (or leave it out, and describe it in the plan's tab)") }) },
     { cmd: "/plans", desc: tx("the open plans and how far each one is") },
     { cmd: "/factories", desc: tx("your factories and their last runs") },
@@ -3524,6 +3573,8 @@ function tabMenu(S, x, y) {
   items.push({ label: isPinned("sessions", S.pawId) ? tx("Unpin in the sidebar") : tx("Pin in the sidebar"), run: () => togglePin("sessions", S.pawId) });
   // A task tab is named by its plan.
   if (!S.task) items.unshift({ label: tx("Rename…"), run: () => renameSession(S) }, "-");
+  // A copy of its conversation in a new tab, going its own way from here.
+  if (canFork(S)) items.splice(1, 0, { label: tx("Fork Tab"), run: () => forkTab(S) });
   items.push("-", { label: tx("Close tab"), sub: "⌘W", run: () => closeSession(S.sid) });
   contextMenu(x, y, items);
 }
@@ -5852,6 +5903,7 @@ function runAction(id) {
   switch (id) {
     case "new-tab": newSession(); return true;
     case "new-tab-with": openMenu(); return true;
+    case "fork-tab": if (!canFork(S)) return false; forkTab(S); return true;
     case "close-tab": if (!S) return false; closeSession(S.sid); return true;
     case "clear": if (!S) return false; S.lines = []; renderOutput(); return true;
     case "interrupt": if (!S) return false; interrupt(S); return true;
@@ -6011,6 +6063,7 @@ function menuState() {
     const f = S?.factory ? factoryById(S.factory.id) : null;
     const on = {
       "close-tab": !!S,
+      "fork-tab": canFork(S),
       "clear": !!S,
       "interrupt": !!S && (isBusy(S) || !!S.shellBusy),
       "attach-files": !!S && !S.shellBusy,

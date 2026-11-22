@@ -1733,6 +1733,27 @@ fn valid_conversation_id(s: &str) -> bool {
     s.len() >= 8 && s.len() <= 64 && s.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
 }
 
+/// Fork a tab's conversation: a copy of it in another tab's folder, under a
+/// new id, for that tab's agent to go on from (Fork Tab). Returns the copy's id.
+#[tauri::command]
+pub fn paw_agent_fork_conversation(from: String, conversation: String, to: String) -> Result<String, String> {
+    let home = crate::paths::home().ok_or("Paw can't find its folder (~/.paw).")?;
+    fork_conversation_in(&home, &from, &conversation, &to)
+}
+
+fn fork_conversation_in(home: &Path, from: &str, conversation: &str, to: &str) -> Result<String, String> {
+    if !valid_conversation_id(conversation) || from == to {
+        return Err("That conversation can't be forked.".into());
+    }
+    let file = format!("{conversation}.json");
+    let src = crate::paths::session_dir_in(home, from).map(|d| d.join("conversations").join(&file)).filter(|p| p.is_file()).ok_or("There's no conversation to fork yet.")?;
+    let dst = crate::paths::session_dir_in(home, to).ok_or("Not a valid session id")?.join("conversations");
+    std::fs::create_dir_all(&dst).map_err(|e| e.to_string())?;
+    let id = new_conversation_id();
+    std::fs::copy(&src, dst.join(format!("{id}.json"))).map_err(|e| format!("Paw couldn't copy the conversation: {e}"))?;
+    Ok(id)
+}
+
 #[tauri::command]
 pub async fn paw_agent_start(
     app: tauri::AppHandle,

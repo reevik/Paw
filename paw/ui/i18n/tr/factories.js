@@ -269,7 +269,7 @@ I18N.add("tr", {
   "Its file and its run history go to the Trash, where you can put them back.": "Dosyası ve çalıştırma geçmişi Çöp Sepeti'ne gider; oradan geri alabilirsiniz.",
   "— factory {name} deleted: its file and run history are in the Trash.": "— {name} fabrikası silindi: dosyası ve çalıştırma geçmişi Çöp Sepeti'nde.",
   // laying the diagram out by hand
-  "Drag the boxes, and the dots where lines meet them · ⌥ doesn't snap": "Kutuları ve çizgilerin onlara değdiği noktaları sürükleyin · ⌥ hizalamaz",
+  "Drag boxes, lines and their dots · double-click a line for an elbow, an elbow to remove it · ⌥ doesn't snap": "Kutuları, çizgileri ve noktalarını sürükleyin · bir çizgiye çift tıklamak dirsek ekler, dirseğe çift tıklamak kaldırır · ⌥ yapıştırmaz",
   "Lock the layout": "Yerleşimi kilitle",
   "Unlock the layout: move the boxes and where lines meet them": "Yerleşimin kilidini aç: kutuları ve çizgilerin onlara değdiği yerleri taşıyın",
   "Put the boxes and lines back where Paw puts them": "Kutuları ve çizgileri Paw'ın yerleştirdiği yere geri koy",
@@ -294,4 +294,12 @@ I18N.add("tr", {
   "Runs in the factory's sandbox": "Fabrikanın korumalı alanında çalışır",
   "Its check command runs without a sandbox": "Denetim komutu korumalı alan olmadan çalışır",
   "Runs without a sandbox": "Korumalı alan olmadan çalışır",
+  // elbow points on a diagram's lines
+  "Drag to bend the line · double-click for an elbow point": "Sürükleyerek çizgiyi bükün · çift tıklama dirsek ekler",
+  "Drag to move · double-click to remove": "Sürükleyerek taşıyın · çift tıklama kaldırır",
+  "Put the line back where Paw puts it": "Çizgiyi Paw'ın koyduğu yere geri al",
+  "Remove this elbow point": "Bu dirseği kaldır",
+  "Add an elbow point here": "Buraya dirsek ekle",
+  "Straighten the line": "Çizgiyi düzleştir",
+  "Drag the line up or down": "Çizgiyi yukarı ya da aşağı sürükleyin",
 });

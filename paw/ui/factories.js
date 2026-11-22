@@ -523,7 +523,7 @@ function renderFactoryView(S, host) {
     const z = typeof S.factory.zoom === "number" ? S.factory.zoom : 1;
     // Unlocked: rulers over the view's top and left, and a hint.
     const open = S.factory.unlocked;
-    const rulers = open ? `<canvas class="fa-ruler fa-ruler-x"></canvas><canvas class="fa-ruler fa-ruler-y"></canvas><div class="fa-ruler-corner"></div><div class="fa-edit-hint">${tx("Drag the boxes, and the dots where lines meet them · ⌥ doesn't snap")}</div>` : "";
+    const rulers = open ? `<canvas class="fa-ruler fa-ruler-x"></canvas><canvas class="fa-ruler fa-ruler-y"></canvas><div class="fa-ruler-corner"></div><div class="fa-edit-hint">${tx("Drag boxes, lines and their dots · double-click a line for an elbow, an elbow to remove it · ⌥ doesn't snap")}</div>` : "";
     const graph = `<div class="fa-graph-wrap${open ? " unlocked" : ""}"><div class="tk-graph fa-graph"><div class="fa-sizer"><div class="fa-zoom${loop}" data-zoom="${z}" style="transform: scale(${z})">${graphHtml(plan)}</div></div></div>${rulers}${zoomBarHtml(S)}</div>`;
     body = `<div class="tk-body">${graph}${vsplit}<aside class="tk-side">${factorySideHtml(S, plan, f)}</aside></div>`;
   }
@@ -758,20 +758,205 @@ function drawLinks(g, S, plan) {
       const k2 = Math.max(16, Math.abs((a.x - b.x) * b.nx + (a.y - b.y) * b.ny) / 2);
       const live = stepView(s) === "running" || stepView(s) === "needs";
       const cond = s.condFrom === n ? " cond" : "";
-      paths += `<path class="${live ? "live" : ""}${cond}" d="M${a.x},${a.y} C${a.x + a.nx * k1},${a.y + a.ny * k1} ${b.x + b.nx * k2},${b.y + b.ny * k2} ${b.x},${b.y}"/>`;
+      // Through its elbow points when it has some, else a curve between its ends.
+      const elbows = bendsOf(S, key);
+      const d = elbows ? polyPath([a, ...elbows, b]) : `M${a.x},${a.y} C${a.x + a.nx * k1},${a.y + a.ny * k1} ${b.x + b.nx * k2},${b.y + b.ny * k2} ${b.x},${b.y}`;
+      paths += `<path class="${live ? "live" : ""}${cond}" d="${d}"/>`;
       if (S.factory.unlocked) {
+        dots += lineHandles(key, d, [a, ...(elbows ?? []), b]);
         for (const [end, p] of [["from", a], ["to", b]]) dots += `<circle class="fa-anchor" r="4.5" cx="${p.x}" cy="${p.y}" data-edge="${esc(key)}" data-end="${end}"><title>${esc(tx("Drag along the box's edge"))}</title></circle>`;
       }
     }
   }
   svg.innerHTML = paths;
-  // The dots go above the boxes (the lines go under them).
+  return dots;
+}
+
+/** The handles over the boxes (the lines go under them): written once a
+ *  drawing is done, with the loop lines' too. */
+function writeHandles(g, S, markup) {
   let over = g.querySelector(":scope > .fa-anchors");
   if (!S.factory.unlocked) { over?.remove(); return; }
+  const w = g.scrollWidth, h = g.scrollHeight;
   if (!over) { over = document.createElementNS("http://www.w3.org/2000/svg", "svg"); over.classList.add("fa-anchors"); g.appendChild(over); }
   over.setAttribute("width", w); over.setAttribute("height", h); over.setAttribute("viewBox", `0 0 ${w} ${h}`);
-  over.innerHTML = dots;
+  over.innerHTML = markup;
 }
+
+// ---------- elbow points ----------
+// A line can go through elbow points (layout.bends: {line: [{x, y}]}, a
+// line being "from>to", or "loop:<node>" for a loop's line back). Unlocked:
+// drag a line to bend it there, double-click it to add a point, double-click
+// a point to take it away; right-click for the same, and to straighten it.
+
+/** A line's elbow points, if it has its own. */
+const bendsOf = (S, key) => { const b = layoutOf(S)?.bends?.[key]; return Array.isArray(b) && b.length ? b : null; };
+
+/** A path through points, with rounded corners at the ones between. */
+function polyPath(pts, r = 8) {
+  let d = `M${pts[0].x},${pts[0].y}`;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const p = pts[i - 1], c = pts[i], n = pts[i + 1];
+    const l1 = Math.hypot(c.x - p.x, c.y - p.y), l2 = Math.hypot(n.x - c.x, n.y - c.y);
+    const rr = Math.min(r, l1 / 2, l2 / 2);
+    if (!l1 || !l2 || rr < 0.5) { d += ` L${c.x},${c.y}`; continue; }
+    d += ` L${c.x + (p.x - c.x) * rr / l1},${c.y + (p.y - c.y) * rr / l1} Q${c.x},${c.y} ${c.x + (n.x - c.x) * rr / l2},${c.y + (n.y - c.y) * rr / l2}`;
+  }
+  const e = pts[pts.length - 1];
+  return `${d} L${e.x},${e.y}`;
+}
+
+/** A line's handles: a wide invisible path to grab it, and its elbow dots. */
+function lineHandles(key, d, pts) {
+  const k = esc(key);
+  const at = esc(JSON.stringify(pts.map((p) => ({ x: Math.round(p.x * 10) / 10, y: Math.round(p.y * 10) / 10 }))));
+  let out = `<path class="fa-hit" d="${d}" data-line="${k}" data-pts="${at}"><title>${esc(tx("Drag to bend the line · double-click for an elbow point"))}</title></path>`;
+  for (let i = 1; i < pts.length - 1; i++) {
+    out += `<circle class="fa-bend" r="4" cx="${pts[i].x}" cy="${pts[i].y}" data-line="${k}" data-i="${i - 1}"><title>${esc(tx("Drag to move · double-click to remove"))}</title></circle>`;
+  }
+  return out;
+}
+
+/** Where on the line's segments a point is nearest: the index to put an elbow at. */
+function segmentAt(pts, p) {
+  let best = 0, bestD = Infinity;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i + 1], dx = b.x - a.x, dy = b.y - a.y, l = dx * dx + dy * dy;
+    const t = l ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l)) : 0;
+    const dd = Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+    if (dd < bestD) { bestD = dd; best = i; }
+  }
+  return best;
+}
+
+/** A point in the diagram's own (unscaled) space, from the pointer. */
+function diagramPoint(zoomEl, ev) {
+  const z = Number(zoomEl.dataset.zoom) || 1, zr = zoomEl.getBoundingClientRect();
+  return { x: (ev.clientX - zr.left) / z, y: (ev.clientY - zr.top) / z };
+}
+
+/** The line's points as drawn now: its ends, and its elbows (its own, or a loop's lane corners). */
+function currentPoints(zoomEl, key) {
+  const el = zoomEl.querySelector(`.fa-anchors .fa-hit[data-line="${CSS.escape(key)}"]`);
+  try { return JSON.parse(el?.dataset.pts || "null"); } catch { return null; }
+}
+
+/** Snap an elbow: in line with its neighbours (for right angles) when close, else to the grid. */
+function snapBend(p, prev, next, tol) {
+  const near = (v, list) => list.reduce((best, a) => (Math.abs(a - v) <= tol && (best == null || Math.abs(a - v) < Math.abs(best - v)) ? a : best), null);
+  const x = near(p.x, [prev.x, next.x]), y = near(p.y, [prev.y, next.y]);
+  return { x: x ?? Math.round(p.x / (GRID / 2)) * (GRID / 2), y: y ?? Math.round(p.y / (GRID / 2)) * (GRID / 2) };
+}
+
+/** Change a line's elbows (or the repeat line's lane) and draw and save it. */
+function setBends(S, key, bends, save = true) {
+  const L = structuredClone(layoutOf(S) ?? {});
+  L.v = 1;
+  L.bends ??= {};
+  if (bends?.length) L.bends[key] = bends.map((p) => ({ x: Math.round(p.x), y: Math.round(p.y) }));
+  else delete L.bends[key];
+  const f = factoryById(S.factory.id);
+  if (f) f.layout = L;
+  if (save) saveLayout(S, L);
+  return L;
+}
+
+/** Press on a line: an elbow there that follows the pointer (a click alone adds nothing). */
+function dragLine(S, e, host, zoomEl, hit) {
+  e.preventDefault();
+  e.stopPropagation();
+  const key = hit.dataset.line;
+  const plan = factoryPlan(S);
+  // The repeat line: its lane goes up or down.
+  if (key === "repeat") {
+    const y0 = Number(hit.dataset.lane) || 0, z = Number(zoomEl.dataset.zoom) || 1;
+    let y = y0;
+    follow(e, host, (ev, dx, dy) => {
+      y = Math.max(0, ev.altKey ? y0 + dy / z : Math.round((y0 + dy / z) / (GRID / 2)) * (GRID / 2));
+      const L = structuredClone(layoutOf(S) ?? {}); L.v = 1; L.repeat_y = y;
+      const f = factoryById(S.factory.id); if (f) f.layout = L;
+      drawFactoryEdges(zoomEl, S, plan);
+    }, () => saveLayout(S, layoutOf(S)));
+    return;
+  }
+  const pts = currentPoints(zoomEl, key);
+  if (!pts) return;
+  const p0 = diagramPoint(zoomEl, e);
+  const at = segmentAt(pts, p0);
+  const bends = pts.slice(1, -1);
+  bends.splice(at, 0, p0);
+  const i = at; // the new elbow's index among the elbows
+  const z = Number(zoomEl.dataset.zoom) || 1;
+  follow(e, host, (ev) => {
+    const p = diagramPoint(zoomEl, ev);
+    bends[i] = ev.altKey ? p : snapBend(p, [pts[0], ...bends][i], [...bends, pts.at(-1)][i + 1], SNAP_PX / z);
+    setBends(S, key, bends, false);
+    drawFactoryEdges(zoomEl, S, plan);
+  }, () => setBends(S, key, bends));
+}
+
+/** Move an elbow point. */
+function dragBend(S, e, host, zoomEl, dot) {
+  e.preventDefault();
+  e.stopPropagation();
+  const key = dot.dataset.line, i = Number(dot.dataset.i);
+  const pts = currentPoints(zoomEl, key);
+  if (!pts) return;
+  const bends = pts.slice(1, -1);
+  const plan = factoryPlan(S);
+  const z = Number(zoomEl.dataset.zoom) || 1;
+  follow(e, host, (ev) => {
+    const p = diagramPoint(zoomEl, ev);
+    bends[i] = ev.altKey ? p : snapBend(p, pts[i], pts[i + 2], SNAP_PX / z);
+    setBends(S, key, bends, false);
+    drawFactoryEdges(zoomEl, S, plan);
+  }, () => setBends(S, key, bends));
+}
+
+/** Double-click: on an elbow takes it away, on a line adds one there. */
+function factoryDblClick(S, e, host) {
+  if (!S.factory.unlocked) return false;
+  const zoomEl = e.target.closest?.(".fa-zoom");
+  if (!zoomEl) return false;
+  const dot = e.target.closest(".fa-bend"), hit = e.target.closest(".fa-hit");
+  if (!dot && !hit) return false;
+  e.preventDefault();
+  const key = (dot ?? hit).dataset.line;
+  if (key === "repeat") return true;
+  const pts = currentPoints(zoomEl, key);
+  if (!pts) return true;
+  const bends = pts.slice(1, -1);
+  if (dot) bends.splice(Number(dot.dataset.i), 1);
+  else { const p = diagramPoint(zoomEl, e); bends.splice(segmentAt(pts, p), 0, p); }
+  setBends(S, key, bends);
+  drawFactoryEdges(zoomEl, S, factoryPlan(S));
+  return true;
+}
+
+/** Right-click on a line or an elbow: add, remove, straighten. */
+function factoryLineMenu(S, e) {
+  if (!S.factory.unlocked) return false;
+  const zoomEl = e.target.closest?.(".fa-zoom");
+  const dot = e.target.closest?.(".fa-bend"), hit = e.target.closest?.(".fa-hit");
+  if (!zoomEl || (!dot && !hit)) return false;
+  e.preventDefault();
+  const key = (dot ?? hit).dataset.line;
+  const redraw = () => drawFactoryEdges(zoomEl, S, factoryPlan(S));
+  const p = diagramPoint(zoomEl, e);
+  const items = [];
+  if (key === "repeat") {
+    items.push({ label: tx("Put the line back where Paw puts it"), run: () => { const L = structuredClone(layoutOf(S) ?? {}); delete L.repeat_y; saveLayout(S, L); redraw(); } });
+  } else {
+    const pts = currentPoints(zoomEl, key) ?? [];
+    const bends = pts.slice(1, -1);
+    if (dot) items.push({ label: tx("Remove this elbow point"), run: () => { bends.splice(Number(dot.dataset.i), 1); setBends(S, key, bends); redraw(); } });
+    else items.push({ label: tx("Add an elbow point here"), run: () => { bends.splice(segmentAt(pts, p), 0, p); setBends(S, key, bends); redraw(); } });
+    items.push({ label: tx("Straighten the line"), run: () => { setBends(S, key, null); redraw(); } });
+  }
+  contextMenu(e.clientX, e.clientY, items);
+  return true;
+}
+
 
 async function saveLayout(S, L) {
   const f = factoryById(S.factory.id);
@@ -786,6 +971,10 @@ function factoryPointer(S, e, host) {
   if (!zoomEl?.classList.contains("fa-free")) return;
   const dot = e.target.closest(".fa-anchor");
   if (dot) return dragEnd(S, e, host, zoomEl, dot);
+  const bend = e.target.closest(".fa-bend");
+  if (bend) return dragBend(S, e, host, zoomEl, bend);
+  const hit = e.target.closest(".fa-hit");
+  if (hit) return dragLine(S, e, host, zoomEl, hit);
   const node = e.target.closest(".tk-node");
   if (node) dragBox(S, e, host, zoomEl, node);
 }
@@ -964,10 +1153,12 @@ const untilText = (u) => bothText(u?.matches && tx("matches “{text}”", { tex
 function drawFactoryEdges(g, S, plan = factoryPlan(S)) {
   if (!plan) return;
   const loops = plan.def.nodes.filter((n) => n.loop);
+  const L = layoutOf(S) ?? {};
   // Room under the graph for the loop lines (before the lines' canvas takes its size).
   g.style.paddingBottom = loops.length || repeats(plan.def) ? `${40 + loops.length * 22}px` : "";
-  drawLinks(g, S, plan);
-  if (!loops.length && !repeats(plan.def)) return;
+  let handles = drawLinks(g, S, plan) ?? "";
+  const done = () => writeHandles(g, S, handles);
+  if (!loops.length && !repeats(plan.def)) return done();
   const svg = g.querySelector(".tk-edges");
   const box = g.getBoundingClientRect();
   const z = Number(g.dataset.zoom) || 1; // measured on screen, drawn unscaled
@@ -975,31 +1166,45 @@ function drawFactoryEdges(g, S, plan = factoryPlan(S)) {
   const cx = (r) => (r.left + r.width / 2 - box.left) / z + g.scrollLeft;
   const bot = (r) => (r.bottom - box.top) / z + g.scrollTop;
   const lowest = Math.max(...plan.def.nodes.map((n) => at(n.id)).filter(Boolean).map(bot));
-  // Each loop: from the looping node down, back under the graph, up into back_to (one lane each).
+  const head = (p, q, cls) => {
+    // An arrowhead at q, pointing the way from p.
+    const l = Math.hypot(q.x - p.x, q.y - p.y) || 1, ux = (q.x - p.x) / l, uy = (q.y - p.y) / l;
+    return `<path class="fa-loop-head${cls}" d="M${q.x - ux * 7 - uy * 4},${q.y - uy * 7 + ux * 4} L${q.x},${q.y} L${q.x - ux * 7 + uy * 4},${q.y - uy * 7 - ux * 4}"/>`;
+  };
+  // Each loop: from the looping node down, back under the graph, up into
+  // back_to (one lane each), or through the elbows you gave it.
   let lane = 0;
   for (const n of loops) {
     const from = at(n.id), to = at(n.loop.back_to);
     if (!from || !to) continue;
-    const y = lowest + 20 + lane++ * 22, r = 8;
-    const x1 = cx(from), x2 = n.loop.back_to === n.id ? cx(to) - 26 : cx(to);
-    const xa = n.loop.back_to === n.id ? cx(from) + 26 : x1;
-    const d = `M${xa},${bot(from)} V${y - r} Q${xa},${y} ${xa - r},${y} H${x2 + r} Q${x2},${y} ${x2},${y - r} V${bot(to) + 6}`;
+    const y = lowest + 20 + lane++ * 22;
+    const x2 = n.loop.back_to === n.id ? cx(to) - 26 : cx(to);
+    const xa = n.loop.back_to === n.id ? cx(from) + 26 : cx(from);
+    const key = `loop:${n.id}`;
+    const pts = [{ x: xa, y: bot(from) }, ...(bendsOf(S, key) ?? [{ x: xa, y }, { x: x2, y }]), { x: x2, y: bot(to) + 4 }];
+    const d = polyPath(pts);
     const st = plan.run?.nodes.find((x) => x.id === n.id);
     const max = Math.min(Math.max(n.loop.max ?? 3, 1), 20);
     const live = (st?.round ?? 1) > 1 && plan.run?.state === "running" ? " live" : "";
     const u = n.loop.until;
     const cond = u ? (u.matches != null ? tx("until {text}", { text: u.matches }) : tx("until not {text}", { text: u.not_matches ?? "" })) : tx("until you approve");
     const label = `${cond} · ${tx("max {n}", { n: max })}${plan.run ? ` · ${tx("round {n}", { n: Math.max(st?.round ?? 1, 1) })}` : ""}`;
-    svg.insertAdjacentHTML("beforeend", `<path class="fa-loop-line fa-back${live}" d="${d}"/><path class="fa-loop-head fa-back" d="M${x2 - 4},${bot(to) + 11} L${x2},${bot(to) + 4} L${x2 + 4},${bot(to) + 11}"/><text class="fa-loop-label" x="${(Math.min(xa, x2) + Math.max(xa, x2)) / 2}" y="${y - 4}" text-anchor="middle">${esc(label.length > 60 ? label.slice(0, 59) + "…" : label)}</text>`);
+    // The label over its longest stretch.
+    let li = 0, ll = -1;
+    for (let i = 0; i < pts.length - 1; i++) { const l = Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y); if (l > ll) { ll = l; li = i; } }
+    const mid = { x: (pts[li].x + pts[li + 1].x) / 2, y: (pts[li].y + pts[li + 1].y) / 2 };
+    svg.insertAdjacentHTML("beforeend", `<path class="fa-loop-line fa-back${live}" d="${d}"/>${head(pts.at(-2), pts.at(-1), " fa-back")}<text class="fa-loop-label" x="${mid.x}" y="${mid.y - 4}" text-anchor="middle">${esc(label.length > 60 ? label.slice(0, 59) + "…" : label)}</text>`);
+    if (S.factory.unlocked) handles += lineHandles(key, d, pts);
   }
-  if (!repeats(plan.def)) return;
+  if (!repeats(plan.def)) return done();
   const needed = new Set(plan.steps.flatMap((s) => s.needs));
   const ends = plan.steps.filter((s) => !needed.has(s.id)).map((s) => at(s.id)).filter(Boolean);
   const starts = plan.steps.filter((s) => !s.needs.length).map((s) => at(s.id)).filter(Boolean);
-  if (!ends.length || !starts.length) return;
+  if (!ends.length || !starts.length) return done();
   const x = (r) => (r.left + r.width / 2 - box.left) / z + g.scrollLeft;
   const bottom = (r) => (r.bottom - box.top) / z + g.scrollTop;
-  const y = Math.max(...[...ends, ...starts].map(bottom)) + 22 + lane * 22; // below every node and loop
+  // Below every node and loop, or where you dragged its lane.
+  const y = Number.isFinite(L.repeat_y) ? L.repeat_y : Math.max(...[...ends, ...starts].map(bottom)) + 22 + lane * 22;
   const r = 10;
   let d = "";
   // Down from each last node, along the bottom, up into each first node.
@@ -1012,6 +1217,8 @@ function drawFactoryEdges(g, S, plan = factoryPlan(S)) {
   const label = o.after ? tx("repeat after {after}", { after: o.after }) : tx("repeat");
   const live = plan.run?.state === "running" ? " live" : "";
   svg.insertAdjacentHTML("beforeend", `<path class="fa-loop-line${live}" d="${d}"/>${arrows}<text class="fa-loop-label" x="${(left + right) / 2}" y="${y - 5}" text-anchor="middle">${esc(label)}</text>`);
+  if (S.factory.unlocked) handles += `<path class="fa-hit" d="M${Math.min(left, right) - r},${y} H${Math.max(left, right) + r}" data-line="repeat" data-lane="${y}"><title>${esc(tx("Drag the line up or down"))}</title></path>`;
+  done();
 }
 
 /** A factory's run on the time line: each node's span, tokens and state. */

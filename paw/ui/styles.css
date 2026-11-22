@@ -1402,6 +1402,11 @@ body.fa-dragging, body.fa-dragging * { cursor: grabbing !important; user-select:
 .fa-anchors { position: absolute; left: 0; top: 0; z-index: 3; pointer-events: none; overflow: visible; }
 .fa-anchors .fa-anchor { pointer-events: all; cursor: grab; fill: var(--accent); stroke: var(--t-bg-solid, var(--t-bg, #fff)); stroke-width: 1.5; }
 .fa-anchors .fa-anchor:hover { r: 6; }
+/* A line's grab area (wide and invisible until hovered) and its elbow points. */
+.fa-anchors .fa-hit { fill: none; stroke: transparent; stroke-width: 10; pointer-events: stroke; cursor: grab; stroke-linecap: round; }
+.fa-anchors .fa-hit:hover { stroke: color-mix(in srgb, var(--accent) 22%, transparent); }
+.fa-anchors .fa-bend { pointer-events: all; cursor: move; fill: var(--t-bg-solid, var(--t-bg, #fff)); stroke: var(--accent); stroke-width: 1.5; }
+.fa-anchors .fa-bend:hover { r: 5.5; }
 .fa-guide { position: absolute; z-index: 2; pointer-events: none; background: color-mix(in srgb, var(--accent) 75%, transparent); }
 .fa-guide-v { top: 0; bottom: 0; width: 1px; }
 .fa-guide-h { left: 0; right: 0; height: 1px; }

@@ -72,8 +72,21 @@ pub fn ensure_session_dir(id: &str) -> Result<PathBuf, String> {
 }
 
 /// The Keychain service Paw stores API keys under.
+/// For trying a first start (`PAW_HIDE_PROVIDERS=1`, with `PAW_CONFIG_DIR`):
+/// what Paw would find outside its own settings is left out (Claude's and
+/// Copilot CLI's sign-ins, API keys in the environment and other tools'
+/// files, Ollama), so only what's connected in this Paw counts. Its own keys
+/// and sign-ins go in a Keychain service of their own (`keychain_service`).
+/// Never without `PAW_CONFIG_DIR`: it can't hide anything from the real Paw.
+pub fn outside_hidden() -> bool {
+    override_dir().is_some() && std::env::var_os("PAW_HIDE_PROVIDERS").is_some_and(|v| !v.is_empty() && v != "0")
+}
+
 pub fn keychain_service() -> &'static str {
-    if override_dir().is_some() {
+    // A first-start try keeps its own (emptied by scripts/first-run.sh).
+    if outside_hidden() {
+        "net.reevik.paw.first-run"
+    } else if override_dir().is_some() {
         "net.reevik.paw.dev"
     } else {
         "net.reevik.paw"
@@ -82,7 +95,9 @@ pub fn keychain_service() -> &'static str {
 
 /// The service keys were saved under before the rename.
 pub fn legacy_keychain_service() -> &'static str {
-    if override_dir().is_some() {
+    if outside_hidden() {
+        "net.reevik.hive.first-run"
+    } else if override_dir().is_some() {
         "net.reevik.hive.dev"
     } else {
         HIVE_IDENTIFIER

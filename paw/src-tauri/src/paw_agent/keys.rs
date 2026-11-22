@@ -284,6 +284,10 @@ fn scan(p: &dyn Probe) -> Vec<Found> {
             .sign_in(),
         );
     }
+    // Trying a first start: only what was connected in this Paw.
+    if crate::paths::outside_hidden() {
+        out.retain(|f| f.source.id == PAW || f.source.id == PAW_CLAUDE);
+    }
     out
 }
 

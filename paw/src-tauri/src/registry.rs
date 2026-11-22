@@ -810,7 +810,11 @@ fn detect_anthropic(cfg: &ProviderConfig) -> ProviderView {
 /// account's models need Paw's own sign-in; otherwise the suggested ones.
 fn detect_copilot(cfg: &ProviderConfig) -> ProviderView {
     use crate::paw_agent::copilot;
-    let st = copilot::status(&copilot::user_home());
+    let mut st = copilot::status(&copilot::user_home());
+    // Trying a first start: not Copilot CLI's sign-in, only this Paw's.
+    if crate::paths::outside_hidden() {
+        st.cli = None;
+    }
     // Detection runs on its own thread, outside the async runtime.
     let listed = if st.signed_in { tauri::async_runtime::block_on(copilot::list_models()) } else { None };
     let who = match &st.cli {
@@ -874,6 +878,10 @@ fn detect_custom(c: &CustomProvider) -> ProviderView {
 /// Ollama: connected when `ollama list` answers from its address. Only the
 /// models that can call tools are listed.
 fn detect_ollama(cfg: &ProviderConfig) -> ProviderView {
+    // Trying a first start: Ollama on this Mac counts as not there.
+    if crate::paths::outside_hidden() {
+        return provider_view("ollama", "Ollama", "ollama", false, "not running (hidden: PAW_HIDE_PROVIDERS)".into(), vec![], &cfg.custom_models);
+    }
     let host = if cfg.base_url.trim().is_empty() { crate::paw_agent::DEFAULT_OLLAMA_URL } else { cfg.base_url.trim() };
     // Its table starts with a NAME header; when the server can't be reached
     // only an error comes, on stderr.

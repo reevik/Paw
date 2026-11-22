@@ -584,7 +584,9 @@ function zoomBarHtml(S) {
 /** The scale that shows the whole diagram in the view. */
 function fitScale(g, inner) {
   // A free diagram: its boxes (its canvas can be as big as the view).
-  const W = Number(inner.dataset.boxW) || inner.offsetWidth, H = Number(inner.dataset.boxH) || inner.offsetHeight;
+  // …and as far as its lines reach.
+  const W = Math.max(Number(inner.dataset.boxW) || inner.offsetWidth, Number(inner.dataset.lineW) || 0);
+  const H = Math.max(Number(inner.dataset.boxH) || inner.offsetHeight, Number(inner.dataset.lineH) || 0);
   if (!W || !H) return 1;
   return clampZoom(Math.min((g.clientWidth - 16) / W, (g.clientHeight - 16) / H, 2));
 }
@@ -778,6 +780,24 @@ function drawLinks(g, S, plan) {
 
 /** The handles over the boxes (the lines go under them): written once a
  *  drawing is done, with the loop lines' too. */
+/** The diagram's area reaches as far as its lines do (an elbow dragged
+ *  down, a loop's lane, a label), so the view scrolls to them; then the
+ *  lines' canvas takes that size. */
+function coverLines(g) {
+  const svg = g.querySelector(".tk-edges");
+  if (!svg) return;
+  let b;
+  try { b = svg.getBBox(); } catch { return; }
+  // Room past the last line: the zoom bar and the hint sit over the bottom.
+  const w = Math.ceil(b.x + b.width + 24), h = Math.ceil(b.y + b.height + 48);
+  g.style.minWidth = b.width ? `${w}px` : "";
+  g.style.minHeight = b.height ? `${h}px` : "";
+  g.dataset.lineW = b.width ? String(w) : "";
+  g.dataset.lineH = b.height ? String(h) : "";
+  const W = g.scrollWidth, H = g.scrollHeight;
+  svg.setAttribute("width", W); svg.setAttribute("height", H); svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+}
+
 function writeHandles(g, S, markup) {
   let over = g.querySelector(":scope > .fa-anchors");
   if (!S.factory.unlocked) { over?.remove(); return; }
@@ -1311,7 +1331,7 @@ function drawFactoryEdges(g, S, plan = factoryPlan(S)) {
   // Room under the graph for the loop lines (before the lines' canvas takes its size).
   g.style.paddingBottom = loops.length || repeats(plan.def) ? `${40 + loops.length * 22}px` : "";
   let handles = drawLinks(g, S, plan) ?? "";
-  const done = () => writeHandles(g, S, handles);
+  const done = () => { coverLines(g); writeHandles(g, S, handles); };
   if (!loops.length && !repeats(plan.def)) return done();
   const svg = g.querySelector(".tk-edges");
   const box = g.getBoundingClientRect();

@@ -518,4 +518,9 @@ I18N.add("de", {
   "what to ask in the new tab (optional)": "was im neuen Tab gefragt werden soll (optional)",
   "Fork Tab": "Tab abzweigen",
   "{tab} (fork)": "{tab} (Abzweigung)",
+  // a tab without an agent is a terminal
+  "No agent yet, so this tab is a terminal: every line runs in the shell. Connect a provider in {link} and Paw Agent starts here.": "Noch kein Agent, also ist dieser Tab ein Terminal: Jede Zeile läuft in der Shell. Verbinde einen Anbieter in {link}, dann startet Paw Agent hier.",
+  "There's no agent to send this to yet: connect a provider in Settings › Agents. (Your line is back in the prompt.)": "Es gibt noch keinen Agenten, an den das gehen könnte: Verbinde einen Anbieter in Einstellungen › Agenten. (Deine Zeile steht wieder im Prompt.)",
+  "Type a command… (no agent yet: connect a provider in Settings › Agents)": "Befehl eingeben… (noch kein Agent: verbinde einen Anbieter in Einstellungen › Agenten)",
+  "Paw Agent is here now, with {model}: lines that aren't commands go to it ({mode} mode).": "Paw Agent ist jetzt da, mit {model}: Zeilen, die keine Befehle sind, gehen an ihn (Modus {mode}).",
 });

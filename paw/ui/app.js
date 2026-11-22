@@ -229,6 +229,7 @@ function sessionState(S) {
   // A factory node's tab: how its node is doing (it has no agent of its own).
   if (S.nodeOf) { const r = nodeRunOf(S); return r?.question || r?.gate ? "ready" : r?.state === "running" ? "running" : "idle"; }
   if (isBusy(S)) return "running";
+  if (S.terminalOnly) return "ready"; // no agent yet: a terminal
   if (S.mode === "oneshot") return S.info && S.info.status === "failed" ? "failed" : "idle";
   if (!S.info) return "starting";
   return isRunning(S) ? "ready" : S.info.status;
@@ -448,10 +449,19 @@ async function pawStart(S, { resume = false } = {}) {
   // A tab opened (or restored) before any provider was connected takes the default model now.
   if (!S.model) S.model = defaultPawModel();
   if (!S.model) {
-    info(S, `<span class="dim">${tx("No model to run: no provider is connected yet. Connect one in {link}, then type a prompt or /restart.", { link: `</span>${connectLink()}<span class="dim">` })}</span>`);
+    // No provider yet: the tab is a terminal (Paw is one first); every line
+    // goes to its shell until a provider is connected (agentsAvailable).
+    if (!S.terminalOnly) {
+      S.terminalOnly = true;
+      S.modeBefore = S.inputMode;
+      S.inputMode = "shell";
+      info(S, `<span class="dim">${tx("No agent yet, so this tab is a terminal: every line runs in the shell. Connect a provider in {link} and Paw Agent starts here.", { link: `</span>${connectLink()}<span class="dim">` })}</span>`);
+    }
+    inPane(S, () => { renderModePill(); updateGlyph(); renderHeader(); });
     refresh(S);
     return;
   }
+  S.terminalOnly = false;
   try {
     const ext = await externalSetup();
     S.skillsSig = ext.signature; // its system prompt lists the skills
@@ -781,6 +791,12 @@ async function submit(text) {
   // Attachments only, no text, or pasted text: that's for the agent.
   const typed = (S.attachments ?? []).reduce((t, a) => t.split(refOf(a)).join(""), text);
   if (!typed.trim() || S.attachments?.some(isPasted)) route = { shell: false };
+  // No agent yet (a terminal tab): a line for it stays in the prompt.
+  if (!route.shell && S.terminalOnly && !S.task && !S.factory) {
+    sys(S, tx("There's no agent to send this to yet: connect a provider in Settings › Agents. (Your line is back in the prompt.)"));
+    inPane(S, () => { $("input").value = text; autosize(); });
+    return;
+  }
   const atts = takeAttachments(S);
   if (route.shell) {
     // Like dropping files into a terminal: each badge becomes its quoted
@@ -3968,7 +3984,8 @@ function renderHeader() {
     stdin: isRunning(S) ? tx("Write to stdin…") : tx("Process ended — ⏎ restarts it and sends"),
     oneshot: isRunning(S) ? tx("Running… (⌘. to stop)") : tx("Prompt for {name}…", { name: S.agent.name }),
   }[S.mode];
-  $("input").placeholder = S.shellBusy ? tx("Input for the running command…  (Ctrl-C interrupts)") : S.task ? taskPlaceholder(S) : S.nodeOf ? nodePlaceholder(S) : ph;
+  $("input").placeholder = S.shellBusy ? tx("Input for the running command…  (Ctrl-C interrupts)") : S.task ? taskPlaceholder(S) : S.nodeOf ? nodePlaceholder(S)
+    : S.terminalOnly ? tx("Type a command… (no agent yet: connect a provider in Settings › Agents)") : ph;
   updateGlyph();
   $("sl-left").textContent = [S.agent.name, S.model || tx("default model")].join("  ·  ") + "  ·";
   $("sl-path-text").textContent = shortPath(S.cwd);
@@ -5234,7 +5251,24 @@ listen("agents:detected", ({ payload }) => {
   detections = payload;
   detectionsReady = true;
   if (activeId == null) renderWelcome();
+  agentsAvailable();
 });
+
+/** A provider got connected: tabs that were terminals for lack of one get
+ *  Paw Agent (and the input mode they had), and an empty window a tab. */
+function agentsAvailable() {
+  const model = defaultPawModel();
+  if (!model) return;
+  for (const S of sessions.values()) {
+    if (!S.terminalOnly) continue;
+    S.terminalOnly = false;
+    S.model = model;
+    S.inputMode = S.modeBefore && S.modeBefore !== "shell" ? S.modeBefore : settings.general.input_mode || "auto";
+    delete S.modeBefore;
+    sys(S, tx("Paw Agent is here now, with {model}: lines that aren't commands go to it ({mode} mode).", { model: modelShort(model), mode: MODE_LABEL[S.inputMode] }));
+    startProc(S).then(() => inPane(S, () => { renderModePill(); updateGlyph(); renderHeader(); }));
+  }
+}
 
 // ---------- prompt line ----------
 function autosize() {
@@ -6194,10 +6228,11 @@ function waitForDetections(timeoutMs) {
   });
   if (restored) { saveWorkspaceSoon(); return; }
 
-  // Like a terminal: open a tab with the default model on launch (no model
-  // yet: the welcome screen says how to connect a provider).
+  // Like a terminal: open a tab on launch, with the default model (or, with
+  // none yet, as a terminal: see pawStart).
   select(null);
   await waitForDetections(15000);
-  if (!sessions.size && defaultAgent() && (CLI_AGENTS || defaultPawModel())) newSession();
+  // No model yet still opens one: it's a terminal until a provider is connected.
+  if (!sessions.size && defaultAgent()) newSession();
   else renderWelcome();
 })();

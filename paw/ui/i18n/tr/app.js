@@ -518,4 +518,9 @@ I18N.add("tr", {
   "what to ask in the new tab (optional)": "yeni sekmede ne sorulacağı (isteğe bağlı)",
   "Fork Tab": "Sekmeyi Çatalla",
   "{tab} (fork)": "{tab} (çatal)",
+  // a tab without an agent is a terminal
+  "No agent yet, so this tab is a terminal: every line runs in the shell. Connect a provider in {link} and Paw Agent starts here.": "Henüz ajan yok, bu yüzden bu sekme bir terminal: her satır kabukta çalışır. {link} bölümünde bir sağlayıcı bağlayın, Paw Agent burada başlasın.",
+  "There's no agent to send this to yet: connect a provider in Settings › Agents. (Your line is back in the prompt.)": "Bunu gönderecek bir ajan henüz yok: Ayarlar › Ajanlar bölümünde bir sağlayıcı bağlayın. (Satırınız istem alanına geri kondu.)",
+  "Type a command… (no agent yet: connect a provider in Settings › Agents)": "Bir komut yazın… (henüz ajan yok: Ayarlar › Ajanlar bölümünde bir sağlayıcı bağlayın)",
+  "Paw Agent is here now, with {model}: lines that aren't commands go to it ({mode} mode).": "Paw Agent artık burada, {model} ile: komut olmayan satırlar ona gider ({mode} modu).",
 });

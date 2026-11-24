@@ -157,7 +157,7 @@ function parsePlan(text, plannerModel) {
   for (const c of [...blocks, ...bare]) {
     const p = looseJson(c);
     if (!p || !Array.isArray(p.steps)) continue;
-    const plan = checkPlan(p, plannerAgentId);
+    const plan = checkPlan(p, plannerModel);
     if (!plan.error) return plan;
     lastError = plan.error;
   }

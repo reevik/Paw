@@ -27,13 +27,28 @@ Paw is a terminal multiplexer built for working with agents. Jump between an age
 
 - **Paw Agent.** A built-in agent on your own models: Anthropic, GitHub Copilot, ChatGPT, OpenRouter, Ollama or any OpenAI-compatible provider.
 - **Plans.** Describe a goal with `/plan`; a planner splits it into steps for your agents, you review the plan, and it runs them in order or side by side, shown as a graph (or in 3D). Steps that need you wait for your approval.
+
+  <img src="docs/anim/plans.webp" width="720" alt="/plan Add sign-in with GitHub: the planner proposes five steps as a graph, Run runs the two research steps side by side, then the rest, until the plan is done">
+
 - **Factories.** Pipelines of agents you describe once in a YAML file, started by a schedule, a watched command, a webhook or a file change. See [Factories](#factories) below.
+
+  <img src="docs/anim/factory.webp" width="720" alt="A factory in Paw: Run a task, its nodes run one after another and side by side, the draft waits for approval, and after Approve the reply is sent">
+
 - **A shell in every tab.** Run commands next to the agent in your own shell, then pass their output to the agent with one click.
+
+  <img src="docs/anim/agent.webp" width="720" alt="A tab with Paw Agent and the shell: git log runs in the shell, its output goes along to the agent, which runs the tests and explains why one fails">
+
 - **Keeps running.** Agents run in a background process with a menu bar icon, so closing the window doesn't stop their work.
 - **Sessions.** Each session's conversation, scripts and files are kept in `~/.paw`; reopen past sessions and see your usage per day, week and month.
 - **Fork a conversation.** **Fork Tab** (the tab's menu, File, or `/fork`) opens a new tab that goes on from a tab's conversation, so you can try another way without losing the first.
+
+  <img src="docs/anim/fork.webp" width="720" alt="Fork Tab from a tab's menu: a new tab carries on the conversation and tries another way, while the first stays as it was">
+
 - **Plugins.** Extend Paw with commands, status bar items and plan board views, from the [official catalog](plugins) or your own.
 - **Sandbox.** Paw Agent can work in macOS's sandbox: changes only in its project folder, only the programs you allow, and the network only if you let it. See [Sandbox](docs/sandbox.md).
+
+  <img src="docs/anim/sandbox.webp" width="720" alt="The sandbox turned on from the status bar: Paw Agent tries curl, the sandbox blocks it, and Allow in this tab lets it run">
+
 - **Your look and language.** Themes for light and dark, your choice of font and size, and Paw in English, German or Turkish; Paw Agent answers in the language you pick.
 - **Your keys.** Change Paw's shortcuts in **Settings › Keys**: click one and press the new keys. A key that's already taken (by another shortcut or by macOS) is turned down, with what uses it.
 
@@ -70,6 +85,10 @@ nodes:
 - **Started from a chat:** ask Paw Agent to run a factory on the project at hand; it starts the run once you confirm, and tells you how it's going.
 - **They ask you:** a node can ask a question or wait for you to approve its answer, with a notification; answer in the view or in the node's own session.
 - **Watched like a plan:** the graph shows each node's state (failed ones glow red, waiting ones amber), a click shows a node's task and activity, and the timeline shows where the time went. Approvals wait in the view until you answer them.
+- **Laid out by hand:** unlock the graph to move its boxes and route its lines: select a line, add elbow points with its + handles, drag a stretch to move it, and undo with ⌘Z.
+
+  <img src="docs/anim/layout.webp" width="720" alt="An unlocked factory graph: a box moved down, a line selected and routed with two right angles from its + handles, then undone and redone">
+
 
 The full format is in [docs/factories.md](docs/factories.md).
 

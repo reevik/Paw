@@ -151,6 +151,8 @@ I18N.add("de", {
   "No earlier line contains “{text}”": "Keine frühere Zeile enthält „{text}“",
   "↑↓ select · Tab accept · ⏎ run · Esc close": "↑↓ auswählen · Tab übernehmen · ⏎ ausführen · Esc schließen",
   "⏎ run · Esc close": "⏎ ausführen · Esc schließen",
+  "your shell is starting": "Ihre Shell startet",
+  "Your shell is asking something while it starts (from its startup files). Answer it in the terminal; commands run once the shell is ready.": "Ihre Shell fragt beim Start etwas (aus ihren Startdateien). Antworten Sie im Terminal; Befehle laufen, sobald die Shell bereit ist.",
   "History search, fuzzy · 'exact ^start end$ · ⌃R / ↑↓ next · ⏎ / Tab use · Esc close": "Verlaufssuche, unscharf · 'genau ^Anfang Ende$ · ⌃R / ↑↓ nächster · ⏎ / Tab verwenden · Esc schließen",
   "↑↓ select · Tab / ⏎ accept · Esc close": "↑↓ auswählen · Tab / ⏎ übernehmen · Esc schließen",
   "History · ↑↓ select · ⏎ accept · Tab for commands & files · Esc close": "Verlauf · ↑↓ auswählen · ⏎ übernehmen · Tab für Befehle & Dateien · Esc schließen",

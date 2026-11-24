@@ -151,6 +151,8 @@ I18N.add("tr", {
   "No earlier line contains “{text}”": "Önceki hiçbir satır “{text}” içermiyor",
   "↑↓ select · Tab accept · ⏎ run · Esc close": "↑↓ seç · Tab kabul et · ⏎ çalıştır · Esc kapat",
   "⏎ run · Esc close": "⏎ çalıştır · Esc kapat",
+  "your shell is starting": "kabuğunuz başlıyor",
+  "Your shell is asking something while it starts (from its startup files). Answer it in the terminal; commands run once the shell is ready.": "Kabuğunuz başlarken bir şey soruyor (başlangıç dosyalarından). Terminalde yanıtlayın; komutlar kabuk hazır olunca çalışır.",
   "History search, fuzzy · 'exact ^start end$ · ⌃R / ↑↓ next · ⏎ / Tab use · Esc close": "Geçmişte bulanık arama · 'tam ^baş son$ · ⌃R / ↑↓ sonraki · ⏎ / Tab kullan · Esc kapat",
   "↑↓ select · Tab / ⏎ accept · Esc close": "↑↓ seç · Tab / ⏎ kabul et · Esc kapat",
   "History · ↑↓ select · ⏎ accept · Tab for commands & files · Esc close": "Geçmiş · ↑↓ seç · ⏎ kabul et · komutlar ve dosyalar için Tab · Esc kapat",

@@ -144,6 +144,8 @@ struct RawEvent {
     id: u32,
     on: bool,
     forced: bool,
+    /// The shell isn't ready yet: its startup files wait for an answer.
+    startup: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -249,6 +251,9 @@ fn write_cmd(s: &mut Shell, command: &str) -> std::io::Result<()> {
 /// end-of-command marker arrives.
 struct Parser {
     pending: Vec<u8>,
+    /// What the shell printed before it was ready (normally dropped): shown
+    /// when its startup waits for an answer.
+    boot: Vec<u8>,
     ready: bool,
     raw: bool,
     /// Raw mode requested explicitly; only the end marker (or the UI) ends it.
@@ -262,10 +267,15 @@ enum Item {
     Done(i32, String),
     /// Alias / function / builtin names known to the shell.
     Names(String),
-    RawOn { forced: bool },
+    RawOn { forced: bool, startup: bool },
     RawOff,
     Data(Vec<u8>),
 }
+
+/// Startup output kept, at most, in case it has to be shown.
+const BOOT_KEEP: usize = 64 * 1024;
+/// How long a shell may take to start before its startup is shown.
+const STARTUP_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 
 const ALT_ENTER: [&[u8]; 3] = [b"\x1b[?1049h", b"\x1b[?1047h", b"\x1b[?47h"];
 const ALT_EXIT: [&[u8]; 3] = [b"\x1b[?1049l", b"\x1b[?1047l", b"\x1b[?47l"];
@@ -294,14 +304,32 @@ fn held_back(hay: &[u8], needles: &[&[u8]]) -> usize {
 
 impl Parser {
     fn new() -> Self {
-        Parser { pending: Vec::new(), ready: false, raw: false, raw_forced: false }
+        Parser { pending: Vec::new(), boot: Vec::new(), ready: false, raw: false, raw_forced: false }
+    }
+
+    /// The shell isn't ready after a while: something in its startup files
+    /// most likely waits for an answer (oh-my-zsh's "update? [Y/n]", a
+    /// passphrase…). Show what it printed in the terminal so it can be
+    /// answered; the ready marker ends the terminal as usual.
+    fn show_startup(&mut self, out: &mut Vec<Item>) {
+        if self.ready || self.raw {
+            return;
+        }
+        self.raw = true;
+        self.raw_forced = true;
+        out.push(Item::RawOn { forced: true, startup: true });
+        let boot = std::mem::take(&mut self.boot);
+        if !boot.is_empty() {
+            out.push(Item::Data(boot));
+        }
+        while self.step_raw(out) {}
     }
 
     fn enter_raw(&mut self, forced: bool, out: &mut Vec<Item>) {
         if !self.raw {
             self.raw = true;
             self.raw_forced = forced;
-            out.push(Item::RawOn { forced });
+            out.push(Item::RawOn { forced, startup: false });
         }
     }
 
@@ -401,6 +429,8 @@ impl Parser {
             let raw: Vec<u8> = self.pending.drain(..=n).collect();
             if self.ready {
                 self.push_line(&raw[..raw.len() - 1], out);
+            } else if self.boot.len() < BOOT_KEEP {
+                self.boot.extend_from_slice(&raw);
             }
             return true;
         }
@@ -516,23 +546,52 @@ pub fn shell_open(app: AppHandle, state: State<'_, ShellManager>, cwd: String) -
     );
 
     let shells = state.shells.clone();
+    // Reading blocks, so it has a thread of its own; the parser wakes up now
+    // and then without output too, to notice a shell whose startup waits.
+    let (chunks_tx, chunks) = std::sync::mpsc::channel::<Vec<u8>>();
     thread::spawn(move || {
-        let mut parser = Parser::new();
-        let mut batch = OutputBatch::default();
         let mut buf = [0u8; 16384];
         loop {
-            let n = match reader.read(&mut buf) {
+            match reader.read(&mut buf) {
                 Ok(0) | Err(_) => break,
-                Ok(n) => n,
+                Ok(n) => {
+                    if chunks_tx.send(buf[..n].to_vec()).is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+    thread::spawn(move || {
+        use std::sync::mpsc::RecvTimeoutError;
+        let mut parser = Parser::new();
+        let mut batch = OutputBatch::default();
+        let started = std::time::Instant::now();
+        let mut startup_shown = false;
+        loop {
+            let chunk = match chunks.recv_timeout(std::time::Duration::from_millis(250)) {
+                Ok(c) => Some(c),
+                Err(RecvTimeoutError::Timeout) => None,
+                Err(RecvTimeoutError::Disconnected) => break,
             };
             let mut items = Vec::new();
             if leave_raw.swap(false, Ordering::SeqCst) {
                 parser.leave_raw(&mut items);
             }
-            if want_raw.swap(false, Ordering::SeqCst) {
+            // A command's terminal: once the shell runs commands (one asked for
+            // before then waits in the queue until the shell is ready).
+            if parser.ready && want_raw.swap(false, Ordering::SeqCst) {
                 parser.enter_raw(true, &mut items);
             }
-            items.extend(parser.feed(&buf[..n]));
+            if !parser.ready && !startup_shown && started.elapsed() >= STARTUP_WAIT {
+                startup_shown = true;
+                parser.show_startup(&mut items);
+            }
+            match chunk {
+                Some(c) => items.extend(parser.feed(&c)),
+                None if items.is_empty() => continue,
+                None => {}
+            }
             for item in items {
                 // Lines and partials accumulate; anything else first sends them.
                 match &item {
@@ -540,15 +599,15 @@ pub fn shell_open(app: AppHandle, state: State<'_, ShellManager>, cwd: String) -
                     _ => batch.flush(&app, id),
                 }
                 match item {
-                    Item::RawOn { forced } => {
-                        let _ = app.emit("shell:raw", RawEvent { id, on: true, forced });
+                    Item::RawOn { forced, startup } => {
+                        let _ = app.emit("shell:raw", RawEvent { id, on: true, forced, startup });
                     }
                     Item::Names(list) => {
                         let names: Vec<String> = list.split_whitespace().map(String::from).collect();
                         let _ = app.emit("shell:names", NamesEvent { id, names });
                     }
                     Item::RawOff => {
-                        let _ = app.emit("shell:raw", RawEvent { id, on: false, forced: false });
+                        let _ = app.emit("shell:raw", RawEvent { id, on: false, forced: false, startup: false });
                     }
                     Item::Data(bytes) => {
                         let data = base64::engine::general_purpose::STANDARD.encode(bytes);
@@ -757,7 +816,7 @@ mod tests {
                 Item::Partial(t) => format!("P:{t}"),
                 Item::Ready(c) => format!("R:{c}"),
                 Item::Done(code, c) => format!("D:{code}:{c}"),
-                Item::RawOn { forced } => format!("RAW-ON{}", if forced { "!" } else { "" }),
+                Item::RawOn { forced, .. } => format!("RAW-ON{}", if forced { "!" } else { "" }),
                 Item::RawOff => "RAW-OFF".into(),
                 Item::Data(d) => format!("B:{}", String::from_utf8_lossy(&d)),
                 Item::Names(n) => format!("N:{n}"),
@@ -781,6 +840,24 @@ mod tests {
         // marker split across reads
         assert!(lines(p.feed(b"\x1b]7770;done;1")).is_empty());
         assert_eq!(lines(p.feed(b"30;/tmp\x07")), vec!["D:130:/tmp"]);
+    }
+
+    #[test]
+    fn a_startup_that_waits_is_shown_until_the_shell_is_ready() {
+        let mut p = Parser::new();
+        // Startup output is held back while the shell starts…
+        assert!(lines(p.feed(b"Last login: x\r\n[oh-my-zsh] Would you like to update? [Y/n] ")).is_empty());
+        // …and shown when it doesn't get ready: the question waits for an answer.
+        let mut out = vec![];
+        p.show_startup(&mut out);
+        assert_eq!(lines(out), vec!["RAW-ON!", "B:Last login: x\r\n", "B:[oh-my-zsh] Would you like to update? [Y/n] "]);
+        // Typed answers echo back in the terminal; the shell's markers end it.
+        assert_eq!(lines(p.feed(b"n\r\n\x1b]7770;names;0;ll gs\x07\x1b]7770;ready;0;/Users/me\x07")),
+            vec!["B:n\r\n", "RAW-OFF", "N:ll gs", "R:/Users/me"]);
+        // A ready shell's startup isn't shown again.
+        let mut out = vec![];
+        p.show_startup(&mut out);
+        assert!(out.is_empty());
     }
 
     #[test]
@@ -910,7 +987,7 @@ mod raw_pty_tests {
                         Item::Partial(_) => continue,
                         Item::Ready(_) => "ready".into(),
                         Item::Done(c, _) => format!("done {c}"),
-                        Item::RawOn { forced } => format!("RAW ON (forced={forced})"),
+                        Item::RawOn { forced, .. } => format!("RAW ON (forced={forced})"),
                         Item::RawOff => "RAW OFF".into(),
                         Item::Data(d) => format!("data {}B", d.len()),
                         Item::Names(_) => continue,

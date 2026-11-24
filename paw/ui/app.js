@@ -2089,7 +2089,10 @@ listen("shell:raw", ({ payload: r }) => {
   if (r.on) {
     S.raw = true;
     S.rawForced = r.forced;
-    S.rawCmd = S.shellBusy ? S.shellCmd : "";
+    // Its startup files wait for an answer (oh-my-zsh's "update? [Y/n]", a
+    // passphrase…): what the shell said, to answer here; a command waits.
+    S.rawCmd = r.startup ? tx("your shell is starting") : S.shellBusy ? S.shellCmd : "";
+    if (r.startup) sys(S, tx("Your shell is asking something while it starts (from its startup files). Answer it in the terminal; commands run once the shell is ready."));
     ensureTerm(S);
     inPane(S, showTermView);
     refresh(S);

@@ -25,6 +25,10 @@ Paw is a terminal multiplexer built for working with agents. Jump between an age
 
 ## Main features
 
+- **Tabs and split panes.** Every tab is a session with its own agent, model and shell. Split side by side (⌘D) or stacked (⌘⇧D), switch tabs within a pane, and keep related tabs in groups.
+
+  <img src="docs/anim/multiplexer.webp" width="720" alt="Paw Agent works in one pane while git status runs in a split beside it and a second agent on another model sums up the open pull requests below; a new tab opens in that pane, then the earlier one comes back">
+
 - **Paw Agent.** A built-in agent on your own models: Anthropic, GitHub Copilot, ChatGPT, OpenRouter, Ollama or any OpenAI-compatible provider.
 - **Plans.** Describe a goal with `/plan`; a planner splits it into steps for your agents, you review the plan, and it runs them in order or side by side, shown as a graph (or in 3D). Steps that need you wait for your approval.
 
@@ -38,8 +42,14 @@ Paw is a terminal multiplexer built for working with agents. Jump between an age
 
   <img src="docs/anim/agent.webp" width="720" alt="A tab with Paw Agent and the shell: git log runs in the shell, its output goes along to the agent, which runs the tests and explains why one fails">
 
-- **Keeps running.** Agents run in a background process with a menu bar icon, so closing the window doesn't stop their work.
-- **Sessions.** Each session's conversation, scripts and files are kept in `~/.paw`; reopen past sessions and see your usage per day, week and month.
+- **Keeps running.** Agents run in a background process with a menu bar icon, so closing or quitting the window doesn't stop their work. Open Paw again and each tab re-attaches to its agent and shell, with what happened meanwhile.
+
+  <img src="docs/anim/reattach.webp" width="720" alt="Paw Agent starts on a question, the window is quit with Command-Q, the menu bar icon shows the tab still working, and Open Paw brings the tab back re-attached with the finished answer">
+
+- **Sessions.** Each session's conversation, scripts and files are kept in `~/.paw`. `/sessions` (or the count in the status bar) lists them; a completed one reopens in a new tab and its conversation carries on. `/stats` shows your usage per day, week and month.
+
+  <img src="docs/anim/sessions.webp" width="720" alt="The status bar's session count opens /sessions: active and completed sessions with when, size, agent and folder; a click reopens a completed one in a new tab, where the conversation goes on">
+
 - **Fork a conversation.** **Fork Tab** (the tab's menu, File, or `/fork`) opens a new tab that goes on from a tab's conversation, so you can try another way without losing the first.
 
   <img src="docs/anim/fork.webp" width="720" alt="Fork Tab from a tab's menu: a new tab carries on the conversation and tries another way, while the first stays as it was">

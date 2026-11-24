@@ -17,9 +17,14 @@
   <img src="docs/multiplexer.webp" alt="Paw: Paw Agent's answer and your shell in one tab, nvim in a split pane beside it, and several agents' tabs along the top">
 </p>
 
+
+## What is Paw? 
+
+Paw is a terminal multiplexer built for working with agents. Jump between an agent and your shell without missing a beat.
+
+
 ## Main features
 
-- **Many agents, one window.** Run Claude Code, Codex CLI, Gemini CLI, Copilot CLI, Cursor Agent, opencode, Aider, Qwen Code and Goose side by side, in tabs, split panes and tab groups you can fold and drag.
 - **Paw Agent.** A built-in agent on your own models: Anthropic, GitHub Copilot, ChatGPT, OpenRouter, Ollama or any OpenAI-compatible provider.
 - **Plans.** Describe a goal with `/plan`; a planner splits it into steps for your agents, you review the plan, and it runs them in order or side by side, shown as a graph (or in 3D). Steps that need you wait for your approval.
 - **Factories.** Pipelines of agents you describe once in a YAML file, started by a schedule, a watched command, a webhook or a file change. See [Factories](#factories) below.

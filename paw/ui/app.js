@@ -1661,15 +1661,18 @@ async function slashAutocomplete(S, value) {
   let usage = "";
   const sp = value.indexOf(" ");
   if (sp < 0) {
-    // The command's name: the ones that start with what's typed, then the ones that contain it.
-    const w = value.toLowerCase();
-    const starts = specs.filter((c) => c.cmd.startsWith(w));
-    const has = specs.filter((c) => !c.cmd.startsWith(w) && c.cmd.includes(w.slice(1)));
-    for (const c of [...starts, ...has]) {
+    // The command's name, fuzzy (like fzf): "/pl" finds /plan, /plans, /plugins; the best first.
+    const w = value.slice(1);
+    const found = [];
+    specs.forEach((c, order) => {
+      const m = w ? fuzzyMatch(w, c.cmd.slice(1)) : { score: 0, positions: [] };
+      if (m) found.push({ c, m, order });
+    });
+    found.sort((x, y) => y.m.score - x.m.score || x.order - y.order);
+    for (const { c, m } of found) {
       const takes = !!(c.usage || c.args || c.dirs);
       if (c.cmd === value && !takes) continue; // typed in full: ⏎ runs it
-      const i = c.cmd.indexOf(w.length > 1 ? w : "/");
-      items.push({ kind: "slash", value: c.cmd + (takes ? " " : ""), label: c.cmd + (c.usage ? ` ${c.usage}` : ""), match: [Math.max(0, i), Math.max(0, i) + (w.length > 1 ? w.length : 1)], desc: c.desc, more: takes });
+      items.push({ kind: "slash", value: c.cmd + (takes ? " " : ""), label: c.cmd + (c.usage ? ` ${c.usage}` : ""), positions: [0, ...m.positions.map((p) => p + 1)], desc: c.desc, more: takes });
     }
   } else {
     const spec = specs.find((c) => c.cmd === value.slice(0, sp));
@@ -1685,15 +1688,14 @@ async function slashAutocomplete(S, value) {
       if (!items.length) usage = `${spec.cmd} ${spec.usage}: ${tx("a folder")}`;
     } else {
       const a = spec.args?.(done, S) ?? {};
-      const w = word.toLowerCase();
-      for (const o of a.options ?? []) {
-        const v = o.value.toLowerCase();
-        const i = a.match === "contains" ? v.indexOf(w) : v.startsWith(w) ? 0 : -1;
-        if (i < 0 || o.value === word) continue;
-        items.push({ kind: "arg", value: head + o.value + (o.more ? " " : ""), label: o.value, match: [i, i + w.length], desc: o.desc, more: o.more });
-      }
-      // Starting with what's typed first.
-      items.sort((x, y) => (y.match[0] === 0) - (x.match[0] === 0));
+      // Its values, fuzzy (models, levels, factories…): the best first.
+      (a.options ?? []).forEach((o, order) => {
+        if (o.value === word) return;
+        const m = fuzzyMatch(word, o.value);
+        if (!m) return;
+        items.push({ kind: "arg", value: head + o.value + (o.more ? " " : ""), label: o.value, positions: m.positions, score: m.score, order, desc: o.desc, more: o.more });
+      });
+      if (word) items.sort((x, y) => y.score - x.score || x.order - y.order);
       if (a.free) usage = `${spec.cmd}${spec.usage ? " " + spec.usage : ""} · ${a.free}`;
     }
   }
@@ -1705,6 +1707,92 @@ async function slashAutocomplete(S, value) {
   ac.items = items.slice(0, 60);
   ac.sel = -1;
   ac.items.length || usage ? renderAc() : closeAc();
+}
+
+// ---------- fuzzy matching (like fzf) ----------
+// A query is terms separated by spaces; every term has to match, in any
+// order. A term's letters match in that order with gaps between them ("gtst"
+// finds "git status"); 'term matches as written, ^term at the start, term$ at
+// the end. A term with a capital letter matches case exactly, else any case.
+// The score favours letters that follow each other and the starts of words
+// (after a space, / - _ . : = or a lower-case letter before a capital), and
+// shorter text; it's null when something doesn't match.
+
+const FZ_BOUNDARY = /[\s/\-_.:=,;()[\]{}'"`@#]/;
+function fzBoundary(text, i) {
+  if (i === 0) return 2;
+  if (FZ_BOUNDARY.test(text[i - 1])) return 1.6;
+  return /[a-z]/.test(text[i - 1]) && /[A-Z]/.test(text[i]) ? 1.2 : 0;
+}
+/** The best way a term's letters match in the text, in order: { score, positions } or null. */
+function fzSubsequence(text, t, q) {
+  let best = null;
+  for (let s = t.indexOf(q[0]); s >= 0; s = t.indexOf(q[0], s + 1)) {
+    const pos = [s];
+    let at = s + 1, ok = true;
+    for (let k = 1; k < q.length; k++) {
+      // Prefer the next letter right after the last one, else the next word start, else the nearest.
+      if (t[at] === q[k]) { pos.push(at++); continue; }
+      let next = -1, i = t.indexOf(q[k], at);
+      for (let j = i; j >= 0 && next < 0; j = t.indexOf(q[k], j + 1)) if (fzBoundary(text, j)) next = j;
+      if (next < 0) next = i;
+      if (next < 0) { ok = false; break; }
+      pos.push(next); at = next + 1;
+    }
+    if (!ok) break; // a later start can't match either
+    let score = 0, prev = -2;
+    for (const p of pos) {
+      score += 16 + 10 * fzBoundary(text, p);
+      if (p === prev + 1) score += 9;
+      else if (prev >= 0) score -= 3 + Math.min(p - prev - 1, 12) * 0.6;
+      prev = p;
+    }
+    if (!best || score > best.score) best = { score, positions: pos };
+  }
+  return best;
+}
+function fuzzyMatch(query, text) {
+  const terms = String(query).trim().split(/\s+/).filter(Boolean);
+  if (!terms.length) return { score: 0, positions: [] };
+  let score = 0;
+  const all = new Set();
+  for (let raw of terms) {
+    let exact = false, start = false, end = false;
+    if (raw.startsWith("'") && raw.length > 1) { exact = true; raw = raw.slice(1); }
+    if (raw.startsWith("^") && raw.length > 1) { exact = start = true; raw = raw.slice(1); }
+    if (raw.endsWith("$") && raw.length > 1) { exact = end = true; raw = raw.slice(0, -1); }
+    const smart = /[A-Z]/.test(raw);
+    const t = smart ? text : text.toLowerCase(), q = smart ? raw : raw.toLowerCase();
+    let m;
+    if (exact) {
+      let i = start ? (t.startsWith(q) ? 0 : -1) : end ? (t.endsWith(q) ? t.length - q.length : -1) : t.indexOf(q);
+      if (start && end && t !== q) i = -1;
+      if (i < 0) return null;
+      m = { score: 25 * q.length + 10 * fzBoundary(text, i), positions: Array.from({ length: q.length }, (_, k) => i + k) };
+    } else {
+      m = fzSubsequence(text, t, q);
+      if (!m) return null;
+    }
+    score += m.score;
+    for (const p of m.positions) all.add(p);
+  }
+  // Shorter text first among equals.
+  score -= Math.min(text.length, 300) * 0.08;
+  return { score, positions: [...all].sort((a, b) => a - b) };
+}
+/** A label with the given letters in bold. */
+function fzHighlight(label, positions) {
+  if (!positions?.length) return esc(label);
+  const on = new Set(positions);
+  let out = "", run = "", bold = false;
+  const flush = () => { if (run) out += bold ? `<b>${esc(run)}</b>` : esc(run); run = ""; };
+  for (let i = 0; i < label.length; i++) {
+    const b = on.has(i);
+    if (b !== bold) { flush(); bold = b; }
+    run += label[i];
+  }
+  flush();
+  return out;
 }
 
 // ---------- ⌃R: history search ----------
@@ -1720,19 +1808,21 @@ function historySearch(step = false) {
     return;
   }
   const q = $("input").value;
-  const needle = q.trim().toLowerCase();
   const items = [];
   const seen = new Set();
   const inShell = new Set(shellHistory);
+  // Like fzf: fuzzy, the best matches first, the newest among equals.
   const add = (line, kind) => {
     if (!line.trim() || seen.has(line)) return;
-    const i = needle ? line.toLowerCase().indexOf(needle) : 0;
-    if (i < 0) return;
+    const label = line.replace(/\n/g, " ⏎ ");
+    const m = fuzzyMatch(q, label);
+    if (!m) return;
     seen.add(line);
-    items.push({ kind, value: line, label: line.replace(/\n/g, " ⏎ "), match: needle ? [i, i + needle.length] : [0, 0] });
+    items.push({ kind, value: line, label, positions: m.positions, score: m.score, order: items.length });
   };
   for (const h of [...S.history].reverse()) add(h, inShell.has(h) ? "history" : "prompt");
   for (const h of [...shellHistory].reverse()) add(h, "history");
+  if (q.trim()) items.sort((a, b) => b.score - a.score || a.order - b.order);
   ac.seq++;
   ac.search = true;
   ac.full = false;
@@ -1754,7 +1844,7 @@ function renderAc() {
     const row = document.createElement("div");
     row.className = "ac-item" + (i === ac.sel ? " sel" : "");
     const [a, b] = it.match ?? [0, 0];
-    const label = `${esc(it.label.slice(0, a))}<b>${esc(it.label.slice(a, b))}</b>${esc(it.label.slice(b))}`;
+    const label = it.positions ? fzHighlight(it.label, it.positions) : `${esc(it.label.slice(0, a))}<b>${esc(it.label.slice(a, b))}</b>${esc(it.label.slice(b))}`;
     row.innerHTML = `<span class="ac-icon ${it.kind}">${AC_ICON[it.kind]}</span><span class="ac-label">${label}</span>` +
       (it.desc != null ? `<span class="ac-desc">${esc(it.desc)}</span>` : `<span class="ac-kind">${AC_KIND[it.kind] ?? it.kind}</span>`);
     row.onmousedown = (e) => { e.preventDefault(); acceptAc(i); };
@@ -1764,7 +1854,7 @@ function renderAc() {
   if (ac.slash && ac.usage) el.insertAdjacentHTML("beforeend", `<div class="ac-usage">${esc(ac.usage)}</div>`);
   const hint = document.createElement("div");
   hint.className = "ac-hint";
-  hint.textContent = ac.slash ? (ac.items.length ? tx("↑↓ select · Tab accept · ⏎ run · Esc close") : tx("⏎ run · Esc close")) : ac.search ? tx("History search · type to filter · ⌃R / ↑↓ older · ⏎ / Tab use · Esc close")
+  hint.textContent = ac.slash ? (ac.items.length ? tx("↑↓ select · Tab accept · ⏎ run · Esc close") : tx("⏎ run · Esc close")) : ac.search ? tx("History search, fuzzy · 'exact ^start end$ · ⌃R / ↑↓ next · ⏎ / Tab use · Esc close")
     : ac.full ? tx("↑↓ select · Tab / ⏎ accept · Esc close")
     : tx("History · ↑↓ select · ⏎ accept · Tab for commands & files · Esc close");
   el.appendChild(hint);

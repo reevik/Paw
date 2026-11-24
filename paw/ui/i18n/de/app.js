@@ -151,7 +151,7 @@ I18N.add("de", {
   "No earlier line contains “{text}”": "Keine frühere Zeile enthält „{text}“",
   "↑↓ select · Tab accept · ⏎ run · Esc close": "↑↓ auswählen · Tab übernehmen · ⏎ ausführen · Esc schließen",
   "⏎ run · Esc close": "⏎ ausführen · Esc schließen",
-  "History search · type to filter · ⌃R / ↑↓ older · ⏎ / Tab use · Esc close": "Verlaufssuche · tippen zum Filtern · ⌃R / ↑↓ älter · ⏎ / Tab verwenden · Esc schließen",
+  "History search, fuzzy · 'exact ^start end$ · ⌃R / ↑↓ next · ⏎ / Tab use · Esc close": "Verlaufssuche, unscharf · 'genau ^Anfang Ende$ · ⌃R / ↑↓ nächster · ⏎ / Tab verwenden · Esc schließen",
   "↑↓ select · Tab / ⏎ accept · Esc close": "↑↓ auswählen · Tab / ⏎ übernehmen · Esc schließen",
   "History · ↑↓ select · ⏎ accept · Tab for commands & files · Esc close": "Verlauf · ↑↓ auswählen · ⏎ übernehmen · Tab für Befehle & Dateien · Esc schließen",
   "red": "Rot",

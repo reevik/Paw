@@ -1542,10 +1542,10 @@ function scheduleAutocomplete() {
 }
 
 /**
- * Refresh the popup.
- *  - While typing (`full` = false): only Paw's own history.
- *  - On Tab (`full` = true): history plus command names (first word) or
- *    file/folder paths (later words), like a shell's completion.
+ * Refresh the popup, like a shell's completion: command names for the first
+ * word ("gre" → grep), files and folders for the words after it. While typing
+ * (`full` = false) once a word has two characters; on Tab (`full` = true) for
+ * any word, an empty one too. History only when you ask: ⌃R (historySearch).
  */
 async function updateAutocomplete(full = false) {
   const S = curS();
@@ -1560,7 +1560,6 @@ async function updateAutocomplete(full = false) {
 
   const seq = ++ac.seq;
   const bang = forced ? "!" : "";
-  const line = forced ? value.slice(1) : value;
   const items = [];
   const seen = new Set();
   const add = (it) => {
@@ -1568,50 +1567,39 @@ async function updateAutocomplete(full = false) {
     seen.add(it.value);
     items.push(it);
   };
-
-  // History: lines that start with the input (newest first), then — only for
-  // input that already looks like a command — lines that contain it.
-  const newestFirst = [...shellHistory].reverse();
-  for (const h of newestFirst) {
-    if (h.startsWith(line)) add({ kind: "history", value: bang + h, label: h, match: [0, line.length] });
-  }
-  if (looksShell && line.trim().length >= 2) {
-    for (const h of newestFirst) {
-      const i = h.indexOf(line.trim());
-      if (i > 0) add({ kind: "history", value: bang + h, label: h, match: [i, i + line.trim().length] });
-    }
-  }
-  items.splice(full ? 6 : 12);
-
-  if (full) {
-    const word = value.match(/(\S*)$/)[1];
-    const start = value.length - word.length;
-    const head = value.slice(0, start);
-    if (!head.replace(/^!/, "").trim()) {
-      const w = word.replace(/^!/, "");
-      let n = 0;
-      if (w) {
-        for (const c of shellCommands) {
-          if (c.startsWith(w) && c !== w) {
-            add({ kind: "command", value: bang + c + " ", label: c, match: [0, w.length] });
-            if (++n >= 30) break;
-          }
+  const word = value.match(/(\S*)$/)[1];
+  const start = value.length - word.length;
+  const head = value.slice(0, start);
+  const w = word.replace(/^!/, "");
+  const first = !head.replace(/^!/, "").trim();
+  // While typing: a command name from two characters on (whatever the line
+  // looks like so far: "gre" isn't a command yet); a path from the first
+  // character, for a line that goes to the shell (a prompt gets none).
+  if (!full && (first ? w.length < 2 : !w || !looksShell)) return closeAc();
+  if (first) {
+    let n = 0;
+    if (w) {
+      for (const c of shellCommands) {
+        if (c.startsWith(w) && c !== w) {
+          add({ kind: "command", value: bang + c + " ", label: c, match: [0, w.length] });
+          if (++n >= 30) break;
         }
       }
-    } else {
-      const cmd = head.replace(/^!/, "").trim().split(/\s+/)[0];
-      const dirsOnly = ["cd", "pushd", "rmdir"].includes(cmd);
-      const paths = await invoke("complete_path", { cwd: S.cwd, word });
-      if (seq !== ac.seq) return;
-      for (const p of paths) {
-        if (dirsOnly && !p.is_dir) continue;
-        add({ kind: p.is_dir ? "dir" : "file", value: head + p.value, label: p.value, match: [0, word.length] });
-      }
+    }
+  } else {
+    const cmd = head.replace(/^!/, "").trim().split(/\s+/)[0];
+    const dirsOnly = ["cd", "pushd", "rmdir"].includes(cmd);
+    const paths = await invoke("complete_path", { cwd: S.cwd, word }).catch(() => []);
+    if (seq !== ac.seq) return;
+    for (const p of paths ?? []) {
+      if (dirsOnly && !p.is_dir) continue;
+      add({ kind: p.is_dir ? "dir" : "file", value: head + p.value, label: p.value, match: [0, word.length] });
     }
   }
   if (seq !== ac.seq) return;
   ac.full = full;
   ac.slash = false;
+  ac.search = false;
   ac.usage = "";
   ac.items = items.slice(0, 50);
   ac.sel = -1;

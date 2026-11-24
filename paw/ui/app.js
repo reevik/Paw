@@ -1241,7 +1241,8 @@ function refreshShellCommands() {
 
 async function openShell(S) {
   try {
-    S.shell = await invoke("shell_open", { cwd: S.cwd });
+    // Settings › General › Shell (empty: the login shell).
+    S.shell = await invoke("shell_open", { cwd: S.cwd, shell: settings.general.shell?.trim() || null });
     shellToSid.set(S.shell, S.sid);
   } catch (e) {
     S.shell = null;

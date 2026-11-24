@@ -226,6 +226,65 @@ fn prepare_zdotdir() -> std::io::Result<PathBuf> {
     Ok(dir)
 }
 
+/// The shell a tab runs: the one chosen in Settings › General › Shell (a
+/// path, or `zsh` / `bash` found in the usual places), else the login shell.
+/// Only zsh and bash: Paw's line protocol is set up for those two.
+fn resolve_shell(choice: Option<&str>) -> Result<String, String> {
+    let choice = choice.map(str::trim).unwrap_or("");
+    if choice.is_empty() {
+        return Ok(pick_shell());
+    }
+    let path = if choice.contains('/') {
+        crate::agents::expand_home(choice)
+    } else {
+        SHELL_DIRS.iter().map(|d| PathBuf::from(d).join(choice)).find(|p| p.is_file()).unwrap_or_else(|| PathBuf::from(choice))
+    };
+    if !is_supported_shell(&path) {
+        return Err(format!("{choice} isn't zsh or bash: tabs run zsh or bash (Settings › General › Shell)"));
+    }
+    if !is_executable(&path) {
+        return Err(format!("{choice} isn't there (Settings › General › Shell)"));
+    }
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// Where `zsh` / `bash` are looked for, and installed ones listed from.
+const SHELL_DIRS: [&str; 4] = ["/bin", "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"];
+
+fn is_supported_shell(p: &std::path::Path) -> bool {
+    matches!(p.file_name().and_then(|n| n.to_str()), Some("zsh" | "bash"))
+}
+
+#[derive(Serialize)]
+pub struct ShellChoices {
+    /// The login shell, which tabs run unless another is chosen.
+    login: String,
+    /// zsh and bash installed here (/etc/shells and the usual folders).
+    installed: Vec<String>,
+}
+
+/// For Settings › General › Shell.
+#[tauri::command]
+pub fn shell_choices() -> ShellChoices {
+    let mut installed: Vec<String> = vec![];
+    let listed = std::fs::read_to_string("/etc/shells").unwrap_or_default();
+    let candidates = listed
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.starts_with('/'))
+        .map(String::from)
+        .chain(SHELL_DIRS.iter().flat_map(|d| ["zsh", "bash"].map(|n| format!("{d}/{n}"))));
+    for c in candidates {
+        let p = std::path::Path::new(&c);
+        // /usr/bin/zsh and /bin/zsh are one shell on macOS: keep the first.
+        let real = std::fs::canonicalize(p).ok();
+        if is_supported_shell(p) && is_executable(p) && !installed.iter().any(|x| x == &c || std::fs::canonicalize(x).ok() == real && real.is_some()) {
+            installed.push(c);
+        }
+    }
+    ShellChoices { login: pick_shell(), installed }
+}
+
 fn pick_shell() -> String {
     let user = std::env::var("SHELL").unwrap_or_default();
     if user.ends_with("/zsh") || user.ends_with("/bash") {
@@ -496,8 +555,8 @@ fn expand_home(p: &str) -> PathBuf {
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn shell_open(app: AppHandle, state: State<'_, ShellManager>, cwd: String) -> Result<u32, String> {
-    let shell = pick_shell();
+pub fn shell_open(app: AppHandle, state: State<'_, ShellManager>, cwd: String, shell: Option<String>) -> Result<u32, String> {
+    let shell = resolve_shell(shell.as_deref())?;
     let pair = native_pty_system()
         .openpty(PtySize { rows: 50, cols: 160, pixel_width: 0, pixel_height: 0 })
         .map_err(|e| e.to_string())?;
@@ -840,6 +899,22 @@ mod tests {
         // marker split across reads
         assert!(lines(p.feed(b"\x1b]7770;done;1")).is_empty());
         assert_eq!(lines(p.feed(b"30;/tmp\x07")), vec!["D:130:/tmp"]);
+    }
+
+    #[test]
+    fn the_chosen_shell_is_zsh_or_bash() {
+        // Nothing chosen: the login shell.
+        assert_eq!(resolve_shell(None).unwrap(), pick_shell());
+        assert_eq!(resolve_shell(Some("  ")).unwrap(), pick_shell());
+        // A name is looked up, a path taken as it is.
+        assert_eq!(resolve_shell(Some("zsh")).unwrap(), "/bin/zsh");
+        assert_eq!(resolve_shell(Some("/bin/bash")).unwrap(), "/bin/bash");
+        // Others are turned down, with where to change it.
+        assert!(resolve_shell(Some("/bin/sh")).unwrap_err().contains("isn't zsh or bash"));
+        assert!(resolve_shell(Some("/nowhere/zsh")).unwrap_err().contains("isn't there"));
+        let c = shell_choices();
+        assert!(c.installed.iter().any(|p| p == "/bin/zsh"), "{:?}", c.installed);
+        assert!(!c.installed.iter().any(|p| p.ends_with("/sh")), "{:?}", c.installed);
     }
 
     #[test]

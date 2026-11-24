@@ -472,7 +472,7 @@ async fn dispatch(app: AppHandle, cmd: String, a: Value) -> Result<Value, String
         "remove_agent" => ok(agents::remove_agent(app.state(), arg(&a, "id")?)?),
         "list_agents" => ok(agents::list_agents(app.state())),
         "agent_output" => ok(agents::agent_output(app.state(), arg(&a, "id")?)),
-        "shell_open" => ok(shell::shell_open(app.clone(), app.state(), arg(&a, "cwd")?)?),
+        "shell_open" => ok(shell::shell_open(app.clone(), app.state(), arg(&a, "cwd")?, arg(&a, "shell")?)?),
         "shell_run" => ok(shell::shell_run(app.state(), arg(&a, "id")?, arg(&a, "command")?, arg(&a, "raw")?)?),
         "shell_write" => ok(shell::shell_write(app.state(), arg(&a, "id")?, arg(&a, "text")?)?),
         "shell_interrupt" => ok(shell::shell_interrupt(app.state(), arg(&a, "id")?)?),

@@ -56,6 +56,7 @@ if (!CLI_AGENTS) document.querySelectorAll(".cli-only").forEach((el) => el.class
 // ---------- general ----------
 function renderGeneral() {
   $("g-cwd").value = settings.general.default_cwd;
+  renderShell();
   // Deprecated: CLI agents (CLI_AGENTS).
   if (CLI_AGENTS) $("g-only-installed").checked = settings.general.only_installed;
   $("g-history").value = settings.general.history_size ?? 1000;
@@ -161,6 +162,29 @@ $("g-max-sessions").addEventListener("input", (e) => {
   sessionsTimer = setTimeout(showSessionCount, 900);
 });
 $("g-cwd").addEventListener("input", (e) => { settings.general.default_cwd = e.target.value; save(); });
+
+// The shell new tabs run: the login shell, an installed zsh / bash, or a path.
+let shellChoices = null;
+async function renderShell() {
+  shellChoices ??= await invoke("shell_choices").catch(() => ({ login: "/bin/zsh", installed: ["/bin/zsh", "/bin/bash"] }));
+  const pick = $("g-shell"), cur = (settings.general.shell ?? "").trim();
+  pick.innerHTML = "";
+  pick.appendChild(new Option(tx("Login shell ({path})", { path: shellChoices.login }), ""));
+  for (const p of shellChoices.installed) pick.appendChild(new Option(p, p));
+  pick.appendChild(new Option(tx("Other…"), "other"));
+  const listed = !cur || shellChoices.installed.includes(cur);
+  pick.value = listed ? cur : "other";
+  $("g-shell-path").classList.toggle("hidden", listed);
+  if (!listed && document.activeElement !== $("g-shell-path")) $("g-shell-path").value = cur;
+}
+$("g-shell").addEventListener("change", (e) => {
+  const other = e.target.value === "other";
+  $("g-shell-path").classList.toggle("hidden", !other);
+  if (other) { $("g-shell-path").focus(); settings.general.shell = $("g-shell-path").value.trim(); }
+  else settings.general.shell = e.target.value;
+  save();
+});
+$("g-shell-path").addEventListener("input", (e) => { settings.general.shell = e.target.value.trim(); save(); });
 // Deprecated: CLI agents (CLI_AGENTS).
 if (CLI_AGENTS) $("g-only-installed").addEventListener("change", (e) => { settings.general.only_installed = e.target.checked; save(); });
 

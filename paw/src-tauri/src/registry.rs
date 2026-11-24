@@ -115,6 +115,10 @@ pub struct General {
     /// A release you chose to skip ("0.12.0"): not offered again, newer ones are.
     #[serde(default)]
     pub skip_version: String,
+    /// The shell new tabs run: a path to zsh or bash, or `zsh` / `bash`;
+    /// empty: your login shell ($SHELL).
+    #[serde(default)]
+    pub shell: String,
 }
 
 fn default_true() -> bool {
@@ -146,6 +150,7 @@ impl Default for General {
             language: default_language(),
             check_updates: true,
             skip_version: String::new(),
+            shell: String::new(),
         }
     }
 }

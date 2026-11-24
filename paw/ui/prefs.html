@@ -50,6 +50,13 @@
         <p class="hint" data-i18n>Where new sessions start. <code>~</code> is your home folder; use <code>/cd</code> in a tab to move.</p>
       </div>
 
+      <label for="g-shell">Shell</label>
+      <div>
+        <select id="g-shell"></select>
+        <input id="g-shell-path" class="hidden" style="margin-top: 6px" placeholder="/opt/homebrew/bin/zsh" spellcheck="false" />
+        <p class="hint" id="g-shell-hint" data-i18n>What new tabs run: zsh or bash. Open tabs keep their shell.</p>
+      </div>
+
       <!-- Deprecated: CLI agents (CLI_AGENTS). -->
       <label for="g-agent" class="cli-only">Default agent</label>
       <div class="cli-only">

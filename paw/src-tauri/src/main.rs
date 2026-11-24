@@ -639,6 +639,7 @@ fn main() {
             shell::shell_resize,
             shell::shell_raw_exit,
             shell::shell_commands,
+            shell::shell_choices,
             shell::command_exists,
             history::history_list,
             history::history_add,

@@ -3865,8 +3865,8 @@ function renderSessionList() {
   }
 }
 
-// Specs: Markdown files in named groups, linked where they are. Clicking one
-// attaches it to the focused session's prompt; drag one onto another group
+// Specs: Markdown files in named groups, linked where they are. Double-clicking
+// one attaches it to the focused session's prompt; drag one onto another group
 // (or between specs) to move it.
 const specs = { groups: [], dragged: false };
 function specsMsg(text, error = false) {
@@ -3896,7 +3896,7 @@ function renderSpecs() {
   const body = $("specs-body");
   if (!specs.groups.length) { body.innerHTML = `<div class="sk-empty">${tx("Import Markdown specs with +.")}</div>`; return; }
   const q = navFilter("specs");
-  const item = (s, si) => `<div class="nav-item${s.missing ? " missing" : ""}" data-spec="${si}" title="${esc(tildify(s.path))}${s.missing ? ` — ${tx("not there any more")}` : ` — ${tx("click to attach it to the session")}`}">
+  const item = (s, si) => `<div class="nav-item${s.missing ? " missing" : ""}" data-spec="${si}" title="${esc(tildify(s.path))}${s.missing ? ` — ${tx("not there any more")}` : ` — ${tx("double-click to attach it to the session")}`}">
       <svg class="nav-ico" viewBox="0 0 12 12"><path d="M3 1.5h4l2.5 2.5v6.5h-6.5z"/><path d="M7 1.5v2.5h2.5"/></svg>
       <span class="nav-text"><span class="nav-name">${esc(s.title)}</span></span>
       ${pinButton("specs", s.path)}
@@ -4015,9 +4015,13 @@ $("specs-body").addEventListener("click", async (e) => {
     data[gi].specs.splice(si, 1);
     return saveSpecs(data);
   }
-  attachSpec(specs.groups[gi].specs[si]);
 });
 $("specs-body").addEventListener("dblclick", (e) => {
+  const item = e.target.closest(".nav-item[data-spec]");
+  if (item && !e.target.closest("button")) {
+    const gi = +item.closest(".nav-group").dataset.group;
+    return attachSpec(specs.groups[gi].specs[+item.dataset.spec]);
+  }
   const head = e.target.closest(".nav-sub");
   if (head && !e.target.closest("button, input")) renameSpecGroup(+head.closest(".nav-group").dataset.group);
 });

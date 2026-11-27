@@ -277,7 +277,7 @@ I18N.add("tr", {
   "No open sessions.": "Açık oturum yok.",
   "Import Markdown specs with +.": "Markdown belirtimlerini + ile içe aktarın.",
   "not there any more": "artık orada değil",
-  "click to attach it to the session": "oturuma eklemek için tıklayın",
+  "double-click to attach it to the session": "oturuma eklemek için çift tıklayın",
   "Remove from the group (the file stays)": "Gruptan çıkar (dosya kalır)",
   "Double-click to rename": "Yeniden adlandırmak için çift tıklayın",
   "Import specs into {group}": "Belirtimleri {group} grubuna aktar",

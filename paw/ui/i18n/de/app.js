@@ -277,7 +277,7 @@ I18N.add("de", {
   "No open sessions.": "Keine offenen Sitzungen.",
   "Import Markdown specs with +.": "Importiere Markdown-Specs mit +.",
   "not there any more": "nicht mehr vorhanden",
-  "click to attach it to the session": "klicken, um es an die Sitzung anzuhängen",
+  "double-click to attach it to the session": "doppelklicken, um es an die Sitzung anzuhängen",
   "Remove from the group (the file stays)": "Aus der Gruppe entfernen (die Datei bleibt)",
   "Double-click to rename": "Doppelklicken zum Umbenennen",
   "Import specs into {group}": "Specs in {group} importieren",

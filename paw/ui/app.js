@@ -1250,7 +1250,7 @@ async function openShell(S) {
   }
 }
 
-async function runShell(S, command) {
+async function runShell(S, command, { raw = false } = {}) {
   command = command.trim();
   if (!command) return;
   closeAc();
@@ -1264,7 +1264,7 @@ async function runShell(S, command) {
   S.shellSince = Date.now();
   refresh(S);
   try {
-    await invoke("shell_run", { id: S.shell, command, raw: needsTty(command) });
+    await invoke("shell_run", { id: S.shell, command, raw: raw || needsTty(command) });
   } catch (e) {
     S.shellBusy = false;
     sys(S, `✗ ${e}`);
@@ -3929,6 +3929,35 @@ async function attachSpec(spec) {
   } catch (e) { specsMsg(String(e), true); }
 }
 
+/** Open a spec in the shell's editor ($VISUAL, else $EDITOR, else vi), in the
+ *  focused tab's terminal; in a new tab there when that shell is busy. */
+async function openSpec(spec) {
+  if (spec.missing) return specsMsg(tx("{path} isn't there any more.", { path: tildify(spec.path) }), true);
+  let S = focusedS();
+  if (!S || S.shellBusy || S.raw) S = await newSession(undefined, S ? { cwd: S.cwd } : {});
+  if (!S) return;
+  specsMsg("");
+  // eval: so an editor with arguments ("code --wait") works in zsh as in bash.
+  const path = shq(spec.path).replace(/[$`"\\]/g, "\\$&");
+  await runShell(S, `eval "\${VISUAL:-\${EDITOR:-vi}} ${path}"`, { raw: true });
+}
+
+/** Move a spec's file to the Trash (asked first); a missing one just leaves the list. */
+async function trashSpec(spec) {
+  if (!spec.missing && !await askSure(tx("Move {path} to the Trash? Finder's Put Back brings it back.", { path: tildify(spec.path) }), { yes: tx("Move to Trash") })) return;
+  specsCall("specs_trash", { path: spec.path });
+}
+
+function specMenu(spec, x, y) {
+  const items = spec.missing ? [] : [
+    { label: tx("Open"), sub: "$EDITOR", run: () => openSpec(spec) },
+    { label: tx("Attach to Session"), sub: tx("double-click"), run: () => attachSpec(spec) },
+    "-",
+  ];
+  items.push({ label: tx("Delete"), run: () => trashSpec(spec) });
+  contextMenu(x, y, items);
+}
+
 function renameSpecGroup(gi) {
   const title = $("specs-body").querySelector(`[data-group="${gi}"] .nav-sub .sk-sec-title`);
   if (!title) return;
@@ -4026,6 +4055,12 @@ $("specs-body").addEventListener("dblclick", (e) => {
   if (head && !e.target.closest("button, input")) renameSpecGroup(+head.closest(".nav-group").dataset.group);
 });
 $("specs-body").addEventListener("contextmenu", (e) => {
+  const item = e.target.closest(".nav-item[data-spec]");
+  if (item) {
+    e.preventDefault();
+    const gi = +item.closest(".nav-group").dataset.group;
+    return specMenu(specs.groups[gi].specs[+item.dataset.spec], e.clientX, e.clientY);
+  }
   const head = e.target.closest(".nav-sub");
   if (!head) return;
   e.preventDefault();

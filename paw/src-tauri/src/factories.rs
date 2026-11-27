@@ -686,7 +686,7 @@ pub fn delete(id: &str) -> Result<Vec<PathBuf>, String> {
 
 /// Move a file or folder to the Trash (Finder's Put Back works).
 #[cfg(target_os = "macos")]
-fn to_trash(p: &Path) -> Result<(), String> {
+pub(crate) fn to_trash(p: &Path) -> Result<(), String> {
     use objc2_foundation::{NSFileManager, NSString, NSURL};
     let url = NSURL::fileURLWithPath(&NSString::from_str(&p.to_string_lossy()));
     NSFileManager::defaultManager()
@@ -695,7 +695,7 @@ fn to_trash(p: &Path) -> Result<(), String> {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn to_trash(p: &Path) -> Result<(), String> {
+pub(crate) fn to_trash(p: &Path) -> Result<(), String> {
     if p.is_dir() { std::fs::remove_dir_all(p) } else { std::fs::remove_file(p) }.map_err(|e| e.to_string())
 }
 

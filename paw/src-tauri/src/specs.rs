@@ -157,6 +157,36 @@ pub async fn specs_save(groups: Vec<Group>) -> Result<Vec<GroupView>, String> {
     .map_err(|e| e.to_string())?
 }
 
+/// Move a spec's file to the Trash (Finder's Put Back works) and take it out
+/// of its group. Only a listed spec: the sidebar can't trash other files.
+/// A missing one just leaves the list. Answers every group.
+#[tauri::command]
+pub async fn specs_trash(path: String) -> Result<Vec<GroupView>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = paw_home()?;
+        let mut store = load(&home);
+        if !store.groups.iter().any(|g| g.specs.contains(&path)) {
+            return Err(format!("{path} isn't one of your specs."));
+        }
+        let p = Path::new(&path);
+        if p.exists() {
+            crate::factories::to_trash(p).map_err(|e| format!("Paw couldn't move {path} to the Trash: {e}"))?;
+        }
+        forget(&mut store, &path);
+        save(&home, &store)?;
+        Ok(view(&store.groups))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Take `path` out of every group.
+fn forget(store: &mut Store, path: &str) {
+    for g in &mut store.groups {
+        g.specs.retain(|s| s != path);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -169,6 +199,13 @@ mod tests {
     fn groups_are_named_unique_and_list_each_spec_once() {
         let out = tidy(vec![g(" Auth ", &["/a.md", "/a.md"]), g("", &["/x.md"]), g("Billing", &[]), g("Auth", &["/b.md", "/a.md"])]);
         assert_eq!(out, [g("Auth", &["/a.md", "/b.md"]), g("Billing", &[])]);
+    }
+
+    #[test]
+    fn a_trashed_spec_leaves_its_group() {
+        let mut store = Store { groups: vec![g("Auth", &["/a.md", "/b.md"]), g("Billing", &["/c.md"])] };
+        forget(&mut store, "/a.md");
+        assert_eq!(store.groups, [g("Auth", &["/b.md"]), g("Billing", &["/c.md"])]);
     }
 
     #[test]

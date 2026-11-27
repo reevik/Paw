@@ -681,6 +681,7 @@ fn main() {
             specs::specs_list,
             specs::specs_import,
             specs::specs_save,
+            specs::specs_trash,
             skills::skills_scan,
             skills::skills_pick_folder,
             skills::skills_add_source,

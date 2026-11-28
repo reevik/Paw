@@ -137,7 +137,7 @@ static RENEWING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 async fn paw_tokens() -> Result<Tokens, String> {
     let _one = RENEWING.lock().await;
     let saved = blocking(|| keychain::item(TOKEN_ITEM)).await;
-    let t: Tokens = saved.and_then(|s| serde_json::from_str(&s).ok()).ok_or(NOT_SIGNED_IN)?;
+    let t: Tokens = saved.and_then(|s| serde_json::from_str(&s).ok()).ok_or_else(|| keychain::explain(NOT_SIGNED_IN))?;
     // A sign-in from before the account name was kept outside the Keychain: keep it now.
     if keychain::note(LOGIN_ITEM).is_none() {
         if let Some(login) = blocking(|| keychain::item(LOGIN_ITEM)).await {

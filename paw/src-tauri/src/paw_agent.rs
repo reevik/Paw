@@ -1563,11 +1563,38 @@ pub mod keychain {
         format!("{provider}-api-key")
     }
 
+    /// Set when a saved item couldn't be read because Paw was replaced on
+    /// disk while this process ran (see `explain`).
+    static STALE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+    pub const STALE_MSG: &str = "Paw was updated or rebuilt while its background process kept running, so macOS won't let \
+that older process read Paw's sign-ins and keys from the Keychain. Quit Paw from its menu bar icon (Quit Paw) and open it again.";
+
     fn read(service: &str, account: &str) -> Option<String> {
-        get_generic_password(service, account)
-            .ok()
-            .and_then(|b| String::from_utf8(b).ok())
-            .filter(|s| !s.is_empty())
+        match get_generic_password(service, account) {
+            Ok(b) => String::from_utf8(b).ok().filter(|s| !s.is_empty()),
+            Err(_) => {
+                if crate::paths::binary_replaced() && exists(service, account) {
+                    STALE.store(true, std::sync::atomic::Ordering::SeqCst);
+                }
+                None
+            }
+        }
+    }
+
+    /// Did macOS refuse this process an item because Paw was replaced on disk?
+    pub fn stale() -> bool {
+        STALE.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// A "not signed in" / "no key" message, or why it only looks so: this
+    /// process is older than the Paw on disk and macOS refused it an item.
+    pub fn explain(msg: impl Into<String>) -> String {
+        if stale() {
+            STALE_MSG.into()
+        } else {
+            msg.into()
+        }
     }
 
     /// Does this item exist? Its attributes only: no secret, no prompt.
@@ -1809,7 +1836,8 @@ pub async fn paw_agent_start(
         Ok::<_, String>((cred, copilot_source, tools, build_preamble(&cwd2, &approval2, tools, &skills, scripts2.as_deref(), only_tools.as_deref())))
     })
     .await
-    .map_err(|e| e.to_string())??;
+    .map_err(|e| e.to_string())?
+    .map_err(keychain::explain)?;
     // The agent's own address wins; else the one that came with the key.
     if base_url.is_empty() {
         if let Some(b) = cred.as_ref().and_then(|c| c.base_url.clone()) {
@@ -1818,7 +1846,7 @@ pub async fn paw_agent_start(
     }
     let model_handle = match copilot_source {
         Some(source) => copilot::model(source, &model).await?,
-        None => make_model(&provider, &model, &base_url, cred)?,
+        None => make_model(&provider, &model, &base_url, cred).map_err(keychain::explain)?,
     };
     // Paw Agent's MCP servers (Settings-free: the MCP panel keeps the list).
     let path_env = crate::registry::login_path().to_string();

@@ -22,6 +22,8 @@
 //! copies that folder to `~/.paw` (see [`move_to_paw_home`]).
 
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+use std::time::SystemTime;
 use tauri::{AppHandle, Manager};
 
 const HIVE_IDENTIFIER: &str = "net.reevik.hive";
@@ -69,6 +71,33 @@ pub fn ensure_session_dir(id: &str) -> Result<PathBuf, String> {
         std::fs::create_dir_all(dir.join(sub)).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
     Ok(dir)
+}
+
+/// The file a path names, as of now: when it was written and its size.
+fn stamp(path: &Path) -> Option<(SystemTime, u64)> {
+    let m = std::fs::metadata(path).ok()?;
+    Some((m.modified().ok()?, m.len()))
+}
+
+/// This process's binary as it was when it started (see `note_binary`).
+static BINARY_AT_START: OnceLock<Option<(PathBuf, (SystemTime, u64))>> = OnceLock::new();
+
+/// Note this process's binary, first thing in `main`.
+pub fn note_binary() {
+    BINARY_AT_START.get_or_init(|| {
+        let exe = std::env::current_exe().ok()?;
+        stamp(&exe).map(|s| (exe, s))
+    });
+}
+
+/// Was this process's binary replaced (an update, a rebuild) since it
+/// started? Then macOS no longer trusts the running process with Paw's
+/// Keychain items: it isn't the code on disk any more.
+pub fn binary_replaced() -> bool {
+    match BINARY_AT_START.get() {
+        Some(Some((exe, at_start))) => stamp(exe).as_ref() != Some(at_start),
+        _ => false,
+    }
 }
 
 /// The Keychain service Paw stores API keys under.
@@ -251,6 +280,21 @@ fn copy_tree(src: &Path, dst: &Path, from: &str, to: &str) -> std::io::Result<()
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_rewritten_file_has_a_new_stamp() {
+        let dir = std::env::temp_dir().join(format!("paw-stamp-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("paw");
+        std::fs::write(&f, "old build").unwrap();
+        let before = super::stamp(&f);
+        assert!(before.is_some());
+        assert_eq!(super::stamp(&f), before);
+        std::fs::write(&f, "the new build").unwrap();
+        assert_ne!(super::stamp(&f), before);
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(super::stamp(&f), None);
+    }
+
     use super::*;
 
     #[test]

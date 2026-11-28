@@ -50,6 +50,9 @@ impl TokenStore for KeychainStore {
         Box::pin(async move {
             let name = item.clone();
             let record = blocking(move || keychain::item(&item)).await?;
+            if record.is_none() && keychain::stale() {
+                return Err(keychain::STALE_MSG.into());
+            }
             // Keep the account's email outside the Keychain, for the status (no prompt).
             if let Some(email) = record.as_deref().and_then(login_of) {
                 if keychain::note(&name).as_deref() != Some(email.as_str()) {

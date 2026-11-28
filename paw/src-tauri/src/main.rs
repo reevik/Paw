@@ -526,6 +526,8 @@ fn create_main_window(app: &AppHandle) -> tauri::Result<()> {
 }
 
 fn main() {
+    // Before anything reads the Keychain: an update or rebuild while this runs is told apart.
+    paths::note_binary();
     // `paw --daemon` runs the agents and the menu bar; `paw` is the window.
     let daemon_mode = std::env::args().any(|a| a == "--daemon");
     let builder = tauri::Builder::default()
